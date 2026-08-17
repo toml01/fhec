@@ -4,3 +4,14 @@ version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 description = "FHE type checker, definite assignment, legality"
+
+[dependencies]
+fhec-ir = { path = "../fhec-ir" }
+fhec-targets = { path = "../fhec-targets" }
+fhec-bind = { path = "../fhec-bind" }
+solar-ast = { path = "../vendor/solar-ast" }
+solar-interface = { path = "../vendor/solar-interface" }
+solar-data-structures = { path = "../vendor/solar-data-structures" }
+
+[dev-dependencies]
+solar-parse = { path = "../vendor/solar-parse" }
