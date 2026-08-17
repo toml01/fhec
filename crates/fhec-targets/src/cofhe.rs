@@ -1,0 +1,361 @@
+//! The CoFHE target profile, verified against
+//! `@fhenixprotocol/cofhe-contracts` (`FHE.sol` / `ICofhe.sol`) at the
+//! pinned revision.
+
+use fhec_ir::{EType, FheOp};
+
+use crate::profile::{Capabilities, ProfileError, TargetProfile};
+
+/// Which encrypted type kinds an operation accepts (all operands the same
+/// type after the checker's widening, spec §4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Applicability {
+    /// `euintN` only (arithmetic, shifts, ordering comparisons, min/max).
+    Euint,
+    /// `euintN` or `ebool` (bitwise/logical ops, `not`).
+    EuintOrEbool,
+    /// `euintN`, `ebool`, or `eaddress` (`eq`/`ne`).
+    AnyEncrypted,
+}
+
+/// The encrypted result of an operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResultKind {
+    /// Same type as the value operands.
+    Same,
+    /// Always `ebool` (comparisons).
+    Ebool,
+    /// No encrypted result (ACL operations).
+    Void,
+}
+
+/// One row of the signature table: operation, library spelling, accepted
+/// operand kinds, result.
+struct OpEntry {
+    op: FheOp,
+    name: &'static str,
+    applicability: Applicability,
+    result: ResultKind,
+}
+
+const fn entry(
+    op: FheOp,
+    name: &'static str,
+    applicability: Applicability,
+    result: ResultKind,
+) -> OpEntry {
+    OpEntry {
+        op,
+        name,
+        applicability,
+        result,
+    }
+}
+
+/// Signature table for cofhe-contracts 0.1.x, transcribed from `FHE.sol`:
+/// every payload-free [`FheOp`] with its spelling and shape. Cast and
+/// input-conversion operations are name-formula-driven (`asEuintN`…) and are
+/// handled structurally in [`CofheProfile`].
+const COFHE_0_1_OPS: &[OpEntry] = &[
+    entry(FheOp::Add, "add", Applicability::Euint, ResultKind::Same),
+    entry(FheOp::Sub, "sub", Applicability::Euint, ResultKind::Same),
+    entry(FheOp::Mul, "mul", Applicability::Euint, ResultKind::Same),
+    entry(FheOp::Div, "div", Applicability::Euint, ResultKind::Same),
+    entry(FheOp::Rem, "rem", Applicability::Euint, ResultKind::Same),
+    entry(
+        FheOp::And,
+        "and",
+        Applicability::EuintOrEbool,
+        ResultKind::Same,
+    ),
+    entry(
+        FheOp::Or,
+        "or",
+        Applicability::EuintOrEbool,
+        ResultKind::Same,
+    ),
+    entry(
+        FheOp::Xor,
+        "xor",
+        Applicability::EuintOrEbool,
+        ResultKind::Same,
+    ),
+    entry(FheOp::Shl, "shl", Applicability::Euint, ResultKind::Same),
+    entry(FheOp::Shr, "shr", Applicability::Euint, ResultKind::Same),
+    entry(
+        FheOp::Not,
+        "not",
+        Applicability::EuintOrEbool,
+        ResultKind::Same,
+    ),
+    entry(
+        FheOp::Eq,
+        "eq",
+        Applicability::AnyEncrypted,
+        ResultKind::Ebool,
+    ),
+    entry(
+        FheOp::Ne,
+        "ne",
+        Applicability::AnyEncrypted,
+        ResultKind::Ebool,
+    ),
+    entry(FheOp::Lt, "lt", Applicability::Euint, ResultKind::Ebool),
+    entry(FheOp::Lte, "lte", Applicability::Euint, ResultKind::Ebool),
+    entry(FheOp::Gt, "gt", Applicability::Euint, ResultKind::Ebool),
+    entry(FheOp::Gte, "gte", Applicability::Euint, ResultKind::Ebool),
+    entry(FheOp::Min, "min", Applicability::Euint, ResultKind::Same),
+    entry(FheOp::Max, "max", Applicability::Euint, ResultKind::Same),
+    entry(
+        FheOp::Square,
+        "square",
+        Applicability::Euint,
+        ResultKind::Same,
+    ),
+    entry(FheOp::Rol, "rol", Applicability::Euint, ResultKind::Same),
+    entry(FheOp::Ror, "ror", Applicability::Euint, ResultKind::Same),
+    entry(
+        FheOp::Select,
+        "select",
+        Applicability::AnyEncrypted,
+        ResultKind::Same,
+    ),
+    entry(
+        FheOp::AllowThis,
+        "allowThis",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
+    entry(
+        FheOp::AllowSender,
+        "allowSender",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
+    entry(
+        FheOp::AllowTransient,
+        "allowTransient",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
+    entry(
+        FheOp::AllowGlobal,
+        "allowGlobal",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
+];
+
+/// The CoFHE target profile.
+///
+/// Holds its signature table as data so a future `cofhe@HEAD` variant is a
+/// data delta (different table / different version string), not a new
+/// implementation.
+pub struct CofheProfile {
+    version: &'static str,
+    lib: &'static str,
+    pragma_range: &'static str,
+    import_lines: &'static [&'static str],
+    ops: &'static [OpEntry],
+}
+
+impl CofheProfile {
+    /// The profile for cofhe-contracts 0.1.x (the pinned published release).
+    pub fn v0_1() -> Self {
+        CofheProfile {
+            version: "0.1.x",
+            lib: "FHE",
+            pragma_range: ">=0.8.25 <0.9.0",
+            import_lines: &["import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";"],
+            ops: COFHE_0_1_OPS,
+        }
+    }
+
+    fn lookup(&self, op: FheOp) -> Option<&OpEntry> {
+        self.ops.iter().find(|e| e.op == op)
+    }
+
+    /// `InEuint32` → `asEuint32`, `InEbool` → `asEbool`, etc.
+    fn cast_fn_name(ty: EType) -> String {
+        format!("as{}", &ty.in_struct_name()[2..])
+    }
+
+    fn unsupported(op: FheOp, operands: &[EType]) -> ProfileError {
+        ProfileError::Unsupported {
+            op,
+            operands: operands.to_vec(),
+        }
+    }
+
+    /// The number of *encrypted* operands the op is typed over (differs from
+    /// [`FheOp::arity`] for ops with plaintext arguments).
+    fn encrypted_operand_count(op: FheOp) -> usize {
+        match op {
+            FheOp::TrivialEncrypt { .. } | FheOp::FromInStruct { .. } => 0,
+            FheOp::AllowTransient => 1,
+            _ => op.arity(),
+        }
+    }
+
+    fn accepts(applicability: Applicability, ty: EType) -> bool {
+        match applicability {
+            Applicability::Euint => ty.is_euint(),
+            Applicability::EuintOrEbool => ty.is_euint() || ty == EType::Ebool,
+            Applicability::AnyEncrypted => true,
+        }
+    }
+}
+
+impl TargetProfile for CofheProfile {
+    fn id(&self) -> &str {
+        "cofhe"
+    }
+
+    fn version(&self) -> &str {
+        self.version
+    }
+
+    fn pragma_range(&self) -> &str {
+        self.pragma_range
+    }
+
+    fn import_lines(&self) -> Vec<String> {
+        self.import_lines.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities { has_decrypt: false }
+    }
+
+    fn result_type(&self, op: FheOp, operands: &[EType]) -> Result<Option<EType>, ProfileError> {
+        let expected = Self::encrypted_operand_count(op);
+        if operands.len() != expected {
+            return Err(ProfileError::WrongArity {
+                op,
+                expected,
+                got: operands.len(),
+            });
+        }
+
+        match op {
+            FheOp::TrivialEncrypt { to } => Ok(Some(to)),
+            FheOp::FromInStruct { ty } => Ok(Some(ty)),
+            FheOp::Widen { from, to } => {
+                // Widening exists only strictly narrow-to-wide (spec §3.3);
+                // the operand must match the declared source width.
+                if from >= to || operands[0] != EType::Euint(from) {
+                    return Err(Self::unsupported(op, operands));
+                }
+                Ok(Some(EType::Euint(to)))
+            }
+            _ => {
+                let Some(entry) = self.lookup(op) else {
+                    return Err(Self::unsupported(op, operands));
+                };
+                // Value operands: everything except select's leading ebool
+                // condition. All value operands must be the same type.
+                let value_operands = match op {
+                    FheOp::Select => {
+                        if operands[0] != EType::Ebool {
+                            return Err(Self::unsupported(op, operands));
+                        }
+                        &operands[1..]
+                    }
+                    _ => operands,
+                };
+                let first = value_operands[0];
+                if !Self::accepts(entry.applicability, first)
+                    || value_operands.iter().any(|t| *t != first)
+                {
+                    return Err(Self::unsupported(op, operands));
+                }
+                Ok(match entry.result {
+                    ResultKind::Same => Some(first),
+                    ResultKind::Ebool => Some(EType::Ebool),
+                    ResultKind::Void => None,
+                })
+            }
+        }
+    }
+
+    fn render_call(
+        &self,
+        op: FheOp,
+        operands: &[EType],
+        args: &[&str],
+    ) -> Result<String, ProfileError> {
+        if args.len() != op.arity() {
+            return Err(ProfileError::WrongArity {
+                op,
+                expected: op.arity(),
+                got: args.len(),
+            });
+        }
+        self.result_type(op, operands)?;
+
+        let callee = match op {
+            FheOp::TrivialEncrypt { to } => self.conversion_fn(to),
+            FheOp::FromInStruct { ty } => self.conversion_fn(ty),
+            FheOp::Widen { to, .. } => self.conversion_fn(EType::Euint(to)),
+            _ => {
+                // result_type above guarantees the entry exists.
+                let entry = self.lookup(op).expect("validated by result_type");
+                format!("{}.{}", self.lib, entry.name)
+            }
+        };
+        Ok(format!("{}({})", callee, args.join(", ")))
+    }
+
+    fn can_cast(&self, from: EType, to: EType) -> bool {
+        // Transcribed from FHE.sol's cast matrix: every pair has an
+        // `asX(fromType)` overload except casts *to* eaddress and
+        // self-casts (which do not exist — none are needed).
+        if from == to {
+            return false;
+        }
+        !matches!(to, EType::Eaddress)
+    }
+
+    fn acl_fn_name(&self, op: FheOp) -> Option<String> {
+        if !op.is_acl() {
+            return None;
+        }
+        self.lookup(op).map(|e| e.name.to_string())
+    }
+
+    fn in_struct_type(&self, ty: EType) -> String {
+        ty.in_struct_name().to_string()
+    }
+
+    fn conversion_fn(&self, ty: EType) -> String {
+        format!("{}.{}", self.lib, Self::cast_fn_name(ty))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fhec_ir::EWidth;
+
+    #[test]
+    fn cast_fn_names() {
+        assert_eq!(CofheProfile::cast_fn_name(EType::Ebool), "asEbool");
+        assert_eq!(
+            CofheProfile::cast_fn_name(EType::Euint(EWidth::W128)),
+            "asEuint128"
+        );
+        assert_eq!(CofheProfile::cast_fn_name(EType::Eaddress), "asEaddress");
+    }
+
+    #[test]
+    fn signature_table_covers_every_payload_free_op_once() {
+        for e in COFHE_0_1_OPS {
+            assert_eq!(
+                COFHE_0_1_OPS.iter().filter(|o| o.op == e.op).count(),
+                1,
+                "duplicate table row for {}",
+                e.op
+            );
+        }
+    }
+}
