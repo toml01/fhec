@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.1.0 |
+| **Version** | 0.1.1 |
 | **Status** | Draft |
 | **Date** | 2026-08-17 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -410,9 +410,12 @@ Assigned in this version:
 | FHE1001 | error | unsupported-pragma-range |
 | FHE1002 | error | dialect-parse-error |
 | FHE1003 | error | import-not-found |
+| FHE1004 | error | config-not-found (no `fhec.toml` for a command that requires one) |
+| FHE1005 | error | config-invalid (`fhec.toml` parse or validation failure) |
 | FHE1010 | error | in-sugar-non-encrypted-type |
 | FHE1011 | error | in-sugar-name-collision (§2.3) |
 | FHE1012 | error | in-sugar-bad-position (§2.3) |
+| FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
 | FHE2002 | error | incompatible-encrypted-operands (e.g. eaddress + euint32) |
 | FHE2003 | error | literal-out-of-range (§3.3) |
@@ -509,3 +512,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 ## Changelog
 
 - **0.1.0 (2026-08-17)** — first draft. Covers: conformance clauses, `in` sugar, encryptedness typing, operator table, select lowering with branch versioning, definite assignment, reject list, ACL rules R1–R3, error catalog, conformance test format.
+- **0.1.1 (2026-08-17)** — error-catalog additions from implementation: FHE1004 config-not-found, FHE1005 config-invalid, FHE1020 duplicate-definition.
