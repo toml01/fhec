@@ -34,7 +34,7 @@ thiserror = ">=1"
 
 dunce = "1"
 inturn = "0.2.0"
-itertools = ">=0.10, <=0.14"
+itertools = ">=0.10, <=0.15"
 itoa = "1.0"
 normalize-path = "0.2.1"
 once_map = { version = "0.4.20", default-features = false, features = ["std"] }
