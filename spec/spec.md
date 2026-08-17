@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.1.1 |
+| **Version** | 0.1.2 |
 | **Status** | Draft |
 | **Date** | 2026-08-17 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -269,6 +269,8 @@ Naive per-assignment select-rewriting is unsound: because both branches execute,
 
 Merge writes MUST be emitted in a deterministic order (**⚠ Draft decision:** order of first write occurrence in source).
 
+Variables **declared inside a branch** are branch-local: they are not part of the write set, need no pre-value, and are not merged; the transpiler MUST keep them scoped to the rendered branch body (e.g. by emitting each branch body in its own sub-block). Statement forms inside encrypted branches that this specification does not enumerate (e.g. tuple declarations) MUST be rejected with FHE3013 rather than lowered by guesswork.
+
 ### §5.3 Nesting
 
 Encrypted `if` statements nested inside encrypted branches MUST be lowered innermost-first. Conjunction of conditions composes automatically through the merges (the inner select's result feeds the outer merge); the transpiler MUST NOT synthesize explicit condition conjunctions.
@@ -354,10 +356,14 @@ immediately after the write statement. When the written slot is keyed by an addr
 Before an external call taking one or more encrypted arguments, the transpiler MUST insert, per encrypted argument `a`:
 
 ```solidity
-FHE.allowTransient(a, <callee>);
+FHE.allowTransient(a, address(<callee>));
 ```
 
-**⚠ Draft decision (callee hoisting):** when the callee address expression is not a plain identifier, `this`-derived constant, or literal, it MUST be hoisted to `address __fhe_callee_n` and that temp used in both the `allowTransient` call and the call itself, preserving single evaluation.
+The second argument of `allowTransient` is an `address`; contract-typed callee expressions do not convert implicitly, so the transpiler MUST wrap the callee in an explicit `address(...)` cast.
+
+**⚠ Draft decision (callee hoisting):** when the callee expression is not a plain identifier, `this`-derived constant, or literal, it MUST be hoisted to a temp `__fhe_callee_n` **of the callee's declared type** and that temp used in both the `allowTransient` call (wrapped in `address(...)`) and the call itself, preserving single evaluation. When the declared type cannot be derived, the transpiler MUST refuse the file with FHE4003 rather than guess.
+
+When the callee expression's type is `Unknown` to the checker, no R2 fact exists and no grant is inserted (conservative under-grant: the call reverts on the ACL check instead of leaking access). The transpiler SHOULD surface this as a note in a future revision.
 
 ### §8.3 R3 — encrypted returns
 
@@ -379,7 +385,7 @@ The transpiler MUST NOT auto-insert `FHE.allow(x, <address>)` for any address ot
 
 ### §8.6 Dedupe and idempotence
 
-An insertion is suppressed when an equivalent call is already present. **⚠ Draft decision (dedupe window):** "already present" means: a statement calling the same ACL function with an argument that is syntactically identical (after trivial parenthesis stripping) to the would-be inserted argument, occurring in the same block after the triggering statement and before the next write to the same location, the next external call (for R2), or the end of the block, whichever comes first. Method-syntax calls (`x.allowThis()`) count as equivalent to library-syntax calls (`FHE.allowThis(x)`).
+An insertion is suppressed when an equivalent call is already present. **⚠ Draft decision (dedupe window):** "already present" means: a statement calling the same ACL function with an argument that is syntactically identical (after trivial parenthesis stripping) to the would-be inserted argument. For R1 the window looks **forward**: in the same block after the triggering statement and before the next write to the same location, the next external call, or the end of the block, whichever comes first. For R2 and R3 the window looks **backward**: in the same block before the triggering call or `return`, after the previous write to the granted value, since the grant must precede the statement it serves. Method-syntax calls (`x.allowThis()`) count as equivalent to library-syntax calls (`FHE.allowThis(x)`). An existing grant modulo the `address(...)` wrapper counts as equivalent for R2.
 
 This rule is what makes §1.4 idempotence hold through the ACL pass: re-transpiling output inserts nothing.
 
@@ -439,11 +445,13 @@ Assigned in this version:
 | FHE3010 | error | delete-on-encrypted |
 | FHE3011 | error | undecidable-write-aliasing (§5.2) |
 | FHE3012 | error | side-effecting-encrypted-operand (§5.5) |
+| FHE3013 | error | unsupported-statement-in-encrypted-branch (§5.2) |
 | FHE3020 | error | encrypted-index |
 | FHE3021 | error | encrypted-loop-condition |
 | FHE3022 | error | ebool-in-plaintext-bool-context |
 | FHE4001 | warning | non-sender-keyed-encrypted-write (§8.1) |
 | FHE4002 | warning | view-return-without-acl (§8.4) |
+| FHE4003 | error | acl-callee-type-underivable (§8.2) |
 | FHE4010 | note | suggest-allow-after-write (`--acl=suggest`) |
 | FHE4011 | note | suggest-transient-for-argument (`--acl=suggest`) |
 | FHE4012 | note | suggest-transient-for-return (`--acl=suggest`) |
@@ -513,3 +521,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 
 - **0.1.0 (2026-08-17)** — first draft. Covers: conformance clauses, `in` sugar, encryptedness typing, operator table, select lowering with branch versioning, definite assignment, reject list, ACL rules R1–R3, error catalog, conformance test format.
 - **0.1.1 (2026-08-17)** — error-catalog additions from implementation: FHE1004 config-not-found, FHE1005 config-invalid, FHE1020 duplicate-definition.
+- **0.1.2 (2026-08-17)** — findings from the lowering implementation: §8.2 requires the explicit `address(...)` wrapper, typed callee hoisting, FHE4003 for underivable callee types, and documents the Unknown-callee under-grant; §8.6 splits the dedupe window (forward for R1, backward for R2/R3); §5.2 defines branch-local declarations and FHE3013 for unsupported statement forms in encrypted branches.
