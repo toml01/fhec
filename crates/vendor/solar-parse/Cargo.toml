@@ -1,0 +1,47 @@
+# Vendored from https://github.com/paradigmxyz/solar @ v0.2.0.
+# Manifest rewritten to be self-contained (workspace inheritance removed); see crates/vendor/VENDOR.md.
+
+[package]
+name = "solar-parse"
+description = "Solidity and Yul lexer and parser"
+homepage = "https://github.com/paradigmxyz/solar/tree/main/crates/parse"
+version = "0.2.0"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/paradigmxyz/solar"
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[dependencies]
+solar-ast = { version = "=0.2.0", path = "../solar-ast", default-features = false }
+solar-data-structures = { version = "=0.2.0", path = "../solar-data-structures", default-features = false }
+solar-interface = { version = "=0.2.0", path = "../solar-interface", default-features = false }
+
+alloy-primitives = "1.3"
+bitflags = "2.4"
+bumpalo = "3.14"
+itertools = ">=0.10, <=0.14"
+memchr = "2.7"
+num-bigint = "0.4"
+num-rational = "0.4"
+num-traits = "0.2"
+ruint = { version = "1.16", features = ["num-integer"] }
+smallvec = { version = "1", features = ["const_generics", "union"] }
+tracing = "0.1"
+
+[dev-dependencies]
+snapbox = { version = "1.2", features = ["json"] }
+
+[features]
+nightly = ["solar-ast/nightly", "solar-interface/nightly"]

@@ -1,0 +1,52 @@
+# Vendored from https://github.com/paradigmxyz/solar @ v0.2.0.
+# Manifest rewritten to be self-contained (workspace inheritance removed); see crates/vendor/VENDOR.md.
+
+[package]
+name = "solar-config"
+description = "Solar compiler configuration"
+homepage = "https://github.com/paradigmxyz/solar/tree/main/crates/config"
+version = "0.2.0"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/paradigmxyz/solar"
+
+[lints]
+workspace = true
+
+[build-dependencies]
+vergen = { package = "vergen-gitcl", version = "10", optional = true, features = [
+    "build",
+    "cargo",
+    "emit_and_set",
+    "vcs_info",
+] }
+
+[dependencies]
+colorchoice = "1.0"
+strum = { version = "0.28", features = ["derive"] }
+
+clap = { version = "4.4", optional = true, features = ["derive"] }
+serde = { version = "1.0", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+[features]
+nightly = []
+
+clap = ["version", "dep:clap"]
+version = ["dep:vergen"]
+serde = ["dep:serde"]
+
+# solar-cli features, only used by build.rs to include in the version string.
+asm = []
+jemalloc = []
+mimalloc = []
+tracing = []
+tracing-off = []
+tracing-chrome = []
+tracy = []
+tracy-allocator = []
+tracing-samply = []

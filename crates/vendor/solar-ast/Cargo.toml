@@ -1,0 +1,42 @@
+# Vendored from https://github.com/paradigmxyz/solar @ v0.2.0.
+# Manifest rewritten to be self-contained (workspace inheritance removed); see crates/vendor/VENDOR.md.
+
+[package]
+name = "solar-ast"
+description = "Solidity and Yul AST type and visitor trait definitions"
+homepage = "https://github.com/paradigmxyz/solar/tree/main/crates/ast"
+version = "0.2.0"
+authors = ["DaniPopes <57450786+DaniPopes@users.noreply.github.com>"]
+edition = "2024"
+rust-version = "1.95"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/paradigmxyz/solar"
+
+[lints]
+workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = [
+    "-Zunstable-options",
+    "--generate-link-to-definition",
+    "--show-type-layout",
+]
+
+[dependencies]
+solar-data-structures = { version = "=0.2.0", path = "../solar-data-structures", default-features = false }
+solar-interface = { version = "=0.2.0", path = "../solar-interface", default-features = false }
+solar-macros = { version = "=0.2.0", path = "../solar-macros", default-features = false }
+
+alloy-primitives = "1.3"
+bumpalo = { version = "3.14", features = ["std", "boxed"] }
+either = "1"
+semver = "1.0"
+num-rational = "0.4"
+strum = "0.28"
+
+[dev-dependencies]
+snapbox = { version = "1.2", features = ["json"] }
+
+[features]
+nightly = ["solar-data-structures/nightly", "solar-interface/nightly"]
