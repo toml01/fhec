@@ -4,3 +4,17 @@ version = "0.0.0"
 edition.workspace = true
 license.workspace = true
 description = "operator / if-select / ACL passes → RewritePlan"
+
+[dependencies]
+fhec-bind = { path = "../fhec-bind" }
+fhec-check = { path = "../fhec-check" }
+fhec-emit = { path = "../fhec-emit" }
+fhec-ir = { path = "../fhec-ir" }
+fhec-targets = { path = "../fhec-targets" }
+solar-ast = { path = "../vendor/solar-ast" }
+solar-data-structures = { path = "../vendor/solar-data-structures" }
+solar-interface = { path = "../vendor/solar-interface" }
+
+[dev-dependencies]
+fhec-verify = { path = "../fhec-verify" }
+solar-parse = { path = "../vendor/solar-parse" }

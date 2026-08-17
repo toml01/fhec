@@ -1158,6 +1158,18 @@ version = "0.0.0"
 [[package]]
 name = "fhec-lower"
 version = "0.0.0"
+dependencies = [
+ "fhec-bind",
+ "fhec-check",
+ "fhec-emit",
+ "fhec-ir",
+ "fhec-targets",
+ "fhec-verify",
+ "solar-ast",
+ "solar-data-structures",
+ "solar-interface",
+ "solar-parse",
+]
 
 [[package]]
 name = "fhec-syntax"
