@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use fhec_cli::commands::{self, GlobalArgs};
+use fhec_cli::config::AclMode;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -21,17 +22,25 @@ struct Cli {
     #[arg(long, global = true)]
     verbose: bool,
 
-    /// Fail when regeneration would change the out dir (reserved, CI mode).
+    /// CI mode: write nothing; fail when regeneration would change the out dir.
     #[arg(long, global = true)]
     frozen: bool,
 
-    /// Auto-apply safe fix-its (reserved).
+    /// Apply safe fix-its to the original sources, then re-check.
     #[arg(long, global = true)]
     fix: bool,
 
-    /// Override the ACL mode: insert | suggest (reserved).
+    /// Override the ACL mode: insert | suggest.
     #[arg(long, global = true, value_name = "MODE")]
     acl: Option<String>,
+
+    /// Skip the solc verification gate (stage 8).
+    #[arg(long, global = true)]
+    no_verify: bool,
+
+    /// Re-transpile the generated output and assert byte identity (spec §1.4).
+    #[arg(long, global = true, hide = true)]
+    self_check: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -56,21 +65,24 @@ enum Command {
 
 fn main() {
     let cli = Cli::parse();
-    // Reserved flags: parsed so they are claimed, rejected until implemented.
-    for (set, name) in [
-        (cli.frozen, "--frozen"),
-        (cli.fix, "--fix"),
-        (cli.acl.is_some(), "--acl"),
-    ] {
-        if set {
-            eprintln!("fhec: {name} is not implemented yet");
+    let acl = match cli.acl.as_deref() {
+        None => None,
+        Some("insert") => Some(AclMode::Insert),
+        Some("suggest") => Some(AclMode::Suggest),
+        Some(other) => {
+            eprintln!("fhec: invalid --acl mode {other:?} (expected insert or suggest)");
             std::process::exit(2);
         }
-    }
+    };
     let g = GlobalArgs {
         config: cli.config,
         json: cli.json,
         verbose: cli.verbose,
+        frozen: cli.frozen,
+        fix: cli.fix,
+        acl,
+        no_verify: cli.no_verify,
+        self_check: cli.self_check,
     };
     let code = match cli.command {
         Command::Build => commands::cmd_build(&g),

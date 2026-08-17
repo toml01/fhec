@@ -20,6 +20,8 @@ pub static CATALOG: &[CatalogEntry] = &[
     CatalogEntry { code: "FHE1003", severity: "error", name: "import-not-found", rule: "§2.2", summary: "An import specifier cannot be resolved." },
     CatalogEntry { code: "FHE1004", severity: "error", name: "config-not-found (draft)", rule: "—", summary: "No fhec.toml was found upward from the working directory (draft code, pending spec §9 inclusion)." },
     CatalogEntry { code: "FHE1005", severity: "error", name: "config-invalid (draft)", rule: "—", summary: "fhec.toml is unreadable or invalid (draft code, pending spec §9 inclusion)." },
+    CatalogEntry { code: "FHE1006", severity: "error", name: "frozen-drift (draft)", rule: "§1.4", summary: "--frozen: regenerating the out dir would change it; run `fhec build` and commit (draft code, pending spec §9 inclusion)." },
+    CatalogEntry { code: "FHE1020", severity: "error", name: "duplicate-definition", rule: "§9", summary: "The same name is declared twice in one scope." },
     CatalogEntry { code: "FHE1010", severity: "error", name: "in-sugar-non-encrypted-type", rule: "§2.3", summary: "`in` parameter sugar used with a type that is not an encrypted value type." },
     CatalogEntry { code: "FHE1011", severity: "error", name: "in-sugar-name-collision", rule: "§2.3", summary: "The generated `<name>_input` identifier collides with an existing declaration." },
     CatalogEntry { code: "FHE1012", severity: "error", name: "in-sugar-bad-position", rule: "§2.3", summary: "`in` sugar outside a function/constructor parameter list." },

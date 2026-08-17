@@ -41,7 +41,11 @@ fn init_then_check_succeeds() {
 fn parse_error_reports_fhe1002_human_and_json() {
     let tmp = tempfile::tempdir().unwrap();
     assert_eq!(fhec(tmp.path(), &["init"]).status.code(), Some(0));
-    std::fs::write(tmp.path().join("contracts/Bad.fsol"), "contract {\n").unwrap();
+    std::fs::write(
+        tmp.path().join("contracts/Bad.fsol"),
+        "pragma solidity ^0.8.25;\ncontract {\n",
+    )
+    .unwrap();
 
     let out = fhec(tmp.path(), &["check"]);
     assert_eq!(out.status.code(), Some(1));
@@ -75,16 +79,17 @@ fn missing_config_reports_draft_code() {
 }
 
 #[test]
-fn build_is_a_noop_with_seams() {
+fn bad_pragma_reports_fhe1001() {
     let tmp = tempfile::tempdir().unwrap();
     assert_eq!(fhec(tmp.path(), &["init"]).status.code(), Some(0));
-    let out = fhec(tmp.path(), &["build", "--verbose"]);
-    assert_eq!(out.status.code(), Some(0), "build: {}", stderr(&out));
-    assert!(
-        stderr(&out).contains("nothing to emit yet"),
-        "stderr: {}",
-        stderr(&out)
-    );
+    std::fs::write(
+        tmp.path().join("contracts/Old.fsol"),
+        "pragma solidity ^0.8.0;\ncontract Old {}\n",
+    )
+    .unwrap();
+    let out = fhec(tmp.path(), &["check"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("FHE1001"), "stderr: {}", stderr(&out));
 }
 
 #[test]
@@ -101,15 +106,11 @@ fn explain_known_and_unknown() {
 }
 
 #[test]
-fn reserved_flags_are_rejected() {
+fn invalid_acl_mode_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
-    for flag in ["--frozen", "--fix"] {
-        let out = fhec(tmp.path(), &["check", flag]);
-        assert_eq!(out.status.code(), Some(2), "{flag}");
-        assert!(stderr(&out).contains("not implemented yet"), "{flag}");
-    }
-    let out = fhec(tmp.path(), &["check", "--acl", "suggest"]);
+    let out = fhec(tmp.path(), &["check", "--acl", "bogus"]);
     assert_eq!(out.status.code(), Some(2));
+    assert!(stderr(&out).contains("invalid --acl mode"));
 }
 
 #[test]
