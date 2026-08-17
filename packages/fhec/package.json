@@ -1,0 +1,14 @@
+{
+  "name": "fhec",
+  "version": "0.0.0",
+  "private": true,
+  "bin": {
+    "fhec": "bin/fhec.js"
+  },
+  "description": "npm wrapper for the fhec native binary (platform-package distribution model, a la esbuild/biome)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toml01/fhec.git"
+  },
+  "license": "MIT"
+}

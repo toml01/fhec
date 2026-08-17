@@ -1,0 +1,4 @@
+* text=auto eol=lf
+crates/vendor/** linguist-vendored
+pnpm-lock.yaml linguist-generated
+Cargo.lock linguist-generated

@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fhec-syntax",
+    "crates/fhec-bind",
+    "crates/fhec-check",
+    "crates/fhec-ir",
+    "crates/fhec-targets",
+    "crates/fhec-lower",
+    "crates/fhec-emit",
+    "crates/fhec-verify",
+    "crates/fhec-cli",
+    "crates/vendor/solar-parse",
+    "crates/vendor/solar-ast",
+    "crates/vendor/solar-interface",
+    "crates/vendor/solar-data-structures",
+    "crates/vendor/solar-macros",
+    "crates/vendor/solar-config",
+]
+
+# Lint tables replicated from upstream solar's workspace so the vendored crates
+# (crates/vendor/*, which declare `[lints] workspace = true`) keep their upstream
+# lint expectations. fhec crates do not opt into these tables.
+[workspace.lints.clippy]
+dbg-macro = "warn"
+manual-string-new = "warn"
+uninlined-format-args = "warn"
+use-self = "warn"
+redundant-clone = "warn"
+test-attr-in-doctest = "allow"
+
+[workspace.lints.rust]
+rust-2018-idioms = "warn"
+unreachable-pub = "warn"
+unused-must-use = "warn"
+redundant-lifetimes = "warn"
+unnameable-types = "warn"
+unused-crate-dependencies = "warn"
+
+[workspace.lints.rustdoc]
+all = "warn"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/toml01/fhec"
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+
+# vendored solar parser (see crates/vendor/VENDOR.md)
+solar-parse = { path = "crates/vendor/solar-parse" }
+solar-ast = { path = "crates/vendor/solar-ast" }
