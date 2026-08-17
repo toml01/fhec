@@ -62,7 +62,13 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
-  packages/fhec: {}
+  packages/fhec:
+    optionalDependencies:
+      '@fhec/cli-darwin-arm64':
+        specifier: workspace:*
+        version: link:../fhec-darwin-arm64
+
+  packages/fhec-darwin-arm64: {}
 
 packages:
 

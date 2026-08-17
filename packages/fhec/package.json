@@ -5,6 +5,13 @@
   "bin": {
     "fhec": "bin/fhec.js"
   },
+  "scripts": {
+    "build:native": "node scripts/build-native.mjs",
+    "test": "node --test test/**/*.test.mjs"
+  },
+  "optionalDependencies": {
+    "@fhec/cli-darwin-arm64": "workspace:*"
+  },
   "description": "npm wrapper for the fhec native binary (platform-package distribution model, a la esbuild/biome)",
   "repository": {
     "type": "git",

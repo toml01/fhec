@@ -1,9 +1,53 @@
 # fhec
 
-This package is currently a stub entry point for the `fhec` CLI.
+npm wrapper for the `fhec` native binary (the Rust CLI in `crates/fhec-cli`),
+following the platform-package distribution model used by esbuild and
+biome: this package is a thin JS entry point (`bin/fhec.js`) that finds a
+prebuilt native binary for the current platform/arch and execs it,
+forwarding args and exit code.
 
-Once the native toolchain is wired up, this package will dispatch to a
-platform-specific native Rust binary, distributed as an optional
-per-platform npm package, following the same model used by esbuild and
-biome: a thin JS entry point selects and execs/requires the right
-prebuilt binary for the current `process.platform` / `process.arch`.
+## Binary resolution order
+
+`bin/fhec.js` looks for the native binary in this order, stopping at the
+first one it finds:
+
+1. **`FHEC_BINARY_PATH`** — if set, used as-is (existence-checked).
+2. **The platform package** for the current `process.platform`/`process.arch`,
+   e.g. `@fhec/cli-darwin-arm64`. Resolved via `require.resolve`, with the
+   binary expected at `<package>/bin/fhec`.
+3. **Dev fallback** — `../../target/release/fhec`, then
+   `../../target/debug/fhec`, resolved relative to `bin/fhec.js` (i.e. a
+   `cargo build` done directly in this monorepo checkout).
+
+If none of these resolve, `fhec.js` exits 1 and prints every location it
+tried.
+
+## Dogfooding locally
+
+From the repo root:
+
+```sh
+pnpm --filter fhec run build:native
+pnpm --filter fhec exec node bin/fhec.js --help
+```
+
+(`pnpm exec fhec` does not resolve here — pnpm does not symlink a package's
+own `bin` entry into its own `node_modules/.bin`; running the entry point
+with `node` directly works the same way `fhec` would once it is actually
+installed as a dependency somewhere.)
+
+`build:native` runs `cargo build --release -p fhec-cli` and copies the
+resulting binary into `packages/fhec-darwin-arm64/bin/fhec` (today this only
+covers darwin-arm64; the binary itself is never committed, see that
+package's `.gitignore`).
+
+## Tests
+
+```sh
+pnpm --filter fhec run test
+```
+
+`test/smoke.test.mjs` builds the native binary via `build:native` if it is
+missing (skipping gracefully if `cargo` is not available), then checks
+`fhec explain`, `fhec check`, and the `FHEC_BINARY_PATH` override against
+the real binary.
