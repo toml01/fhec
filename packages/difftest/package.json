@@ -1,0 +1,37 @@
+{
+  "name": "difftest",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Differential-execution test harness for the fhec transpiler: runs identical transaction sequences against a transpiled contract and a hand-written reference contract on the CoFHE mocks, then asserts plaintext and ACL parity.",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "src/index.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "hardhat test",
+    "compile": "hardhat compile",
+    "clean": "hardhat clean",
+    "check:types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cofhe/mock-contracts": "0.6.1",
+    "@fhenixprotocol/cofhe-contracts": "0.1.4",
+    "@nomicfoundation/hardhat-chai-matchers": "2.0.8",
+    "@nomicfoundation/hardhat-ethers": "3.0.8",
+    "@nomicfoundation/hardhat-network-helpers": "1.0.12",
+    "@openzeppelin/contracts": "5.4.0",
+    "@openzeppelin/contracts-upgradeable": "5.4.0",
+    "@types/chai": "4.3.20",
+    "@types/chai-as-promised": "7.1.8",
+    "@types/mocha": "10.0.10",
+    "@types/node": "22.10.5",
+    "chai": "4.5.0",
+    "chai-as-promised": "7.1.2",
+    "ethers": "6.13.5",
+    "hardhat": "2.26.3",
+    "ts-node": "10.9.2",
+    "typescript": "5.5.4"
+  }
+}
