@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.1.2 |
+| **Version** | 0.1.3 |
 | **Status** | Draft |
 | **Date** | 2026-08-17 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -102,7 +102,7 @@ contract EncryptedCounter {
 ### §2.1 Files and pragma
 
 1. Dialect source files use the extension `.fsol`. Plain `.sol` files in the same project MUST pass through unmodified except §2.6.
-2. A `.fsol` file MUST carry a `pragma solidity` constraint whose satisfiable range lies within `>=0.8.25 <0.9.0`. Constraints outside this range are FHE1001 errors. (The CoFHE interface file itself requires `>=0.8.25`; CoFHE deployments require the `cancun` EVM target.)
+2. A `.fsol` file MUST carry a `pragma solidity` constraint whose satisfiable range lies within `>=0.8.25 <0.9.0`. Constraints outside this range are FHE1001 errors, enforced by the load stage; a pragma the load stage cannot parse defers to solc rather than erroring. (The CoFHE interface file itself requires `>=0.8.25`; CoFHE deployments require the `cancun` EVM target.)
 3. Except for the extension in §2.3, the grammar of `.fsol` is exactly the grammar of Solidity in the supported pragma range. Every valid Solidity file in that range is a valid `.fsol` file.
 
 ### §2.2 Parse errors
@@ -338,7 +338,7 @@ Every FHE3xxx diagnostic MUST carry the source span of the offending construct a
 
 ## §8 ACL insertion
 
-ACL insertion is always on. With `--acl=suggest`, insertions are downgraded to fix-it diagnostics (FHE4010–FHE4012, severity `note`) and NOT applied; the rest of the transpile proceeds unchanged.
+ACL insertion is always on. With `--acl=suggest`, insertions are downgraded to fix-it diagnostics (FHE4010–FHE4012, severity `note`) and NOT applied; the rest of the transpile proceeds unchanged. These notes appear on `check` as well as `build`. The R1 suggest fix-it is the canonical `safe: true` fix-it that `--fix` auto-applies; fix-its that change semantics non-mechanically (e.g. the §3.3 unary-minus rewrite) MUST be marked `safe: false`.
 
 ### §8.1 R1 — storage writes
 
@@ -418,6 +418,7 @@ Assigned in this version:
 | FHE1003 | error | import-not-found |
 | FHE1004 | error | config-not-found (no `fhec.toml` for a command that requires one) |
 | FHE1005 | error | config-invalid (`fhec.toml` parse or validation failure) |
+| FHE1006 | error | frozen-drift (`--frozen`: regeneration differs from the committed output tree) |
 | FHE1010 | error | in-sugar-non-encrypted-type |
 | FHE1011 | error | in-sugar-name-collision (§2.3) |
 | FHE1012 | error | in-sugar-bad-position (§2.3) |
@@ -522,3 +523,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.1.0 (2026-08-17)** — first draft. Covers: conformance clauses, `in` sugar, encryptedness typing, operator table, select lowering with branch versioning, definite assignment, reject list, ACL rules R1–R3, error catalog, conformance test format.
 - **0.1.1 (2026-08-17)** — error-catalog additions from implementation: FHE1004 config-not-found, FHE1005 config-invalid, FHE1020 duplicate-definition.
 - **0.1.2 (2026-08-17)** — findings from the lowering implementation: §8.2 requires the explicit `address(...)` wrapper, typed callee hoisting, FHE4003 for underivable callee types, and documents the Unknown-callee under-grant; §8.6 splits the dedupe window (forward for R1, backward for R2/R3); §5.2 defines branch-local declarations and FHE3013 for unsupported statement forms in encrypted branches.
+- **0.1.3 (2026-08-17)** — findings from the CLI wiring: FHE1006 frozen-drift; §2.1 names the load stage as the pragma-gate owner; §8.4 states that suggest-mode notes appear on `check` and defines the safe-fix-it boundary for `--fix`.
