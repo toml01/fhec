@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE1011",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 126,
+      "end_byte": 182,
+      "start_line": 7,
+      "start_col": 5,
+      "end_line": 7,
+      "end_col": 61
+    },
+    "message": "the expansion appends a `bytes memory inputProof` parameter, but `inputProof` is already used in this function; rename one of them (the transpiler never renames silently)",
+    "rule": "§2.3"
+  }
+]

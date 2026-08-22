@@ -56,7 +56,7 @@ fn with_checked<R: Send>(
             "bind must be clean: {:?}",
             bound.diagnostics()
         );
-        let profile = CofheProfile::v0_1();
+        let profile = CofheProfile::v0_2();
         let checked = check(&files, &bound, &profile, sess.source_map());
         let sm = sess.source_map();
         let snippet = move |span| sm.span_to_snippet(span).expect("span must resolve");

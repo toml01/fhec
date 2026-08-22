@@ -221,9 +221,17 @@ fn internal(span: Span, err: fhec_targets::ProfileError) -> LowerFailure {
 // `in` parameter sugar (spec §2.3)
 // ---------------------------------------------------------------------------
 
-/// Expands every sugar site of one file: the parameter is replaced by its
-/// input-struct declaration, and the conversion statement is inserted at the
-/// start of the body (parameter-list order = site order at one offset).
+/// The fixed name of the shared proof parameter appended to a function with
+/// `in` sugar (spec §2.3; the checker guarantees it is collision-free).
+const INPUT_PROOF: &str = "inputProof";
+
+/// Expands every sugar site of one file. Per function with sugar: each `in`
+/// parameter is replaced by its external-input handle declaration, one shared
+/// `bytes memory inputProof` parameter is appended to the parameter list, and
+/// the verified conversion prelude is inserted at the start of the body — a
+/// direct conversion call for one parameter, a single batch verification for
+/// several (one signature covers the whole batch; per-parameter conversion
+/// calls would not verify).
 pub(crate) fn expand_sugar(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan) -> Result<()> {
     let mut sites: Vec<&fhec_check::InSugarSite> = ctx
         .checked
@@ -233,42 +241,112 @@ pub(crate) fn expand_sugar(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePl
         .collect();
     sites.sort_by_key(|s| ctx.range(s.param_span).start);
 
+    // Parameter lists never interleave, so sorting by parameter position
+    // makes each function's sites contiguous.
+    let mut groups: Vec<Vec<&fhec_check::InSugarSite>> = Vec::new();
     for site in sites {
-        let in_ty = ctx.profile.in_struct_type(site.ty);
+        match groups.last_mut() {
+            Some(group) if group[0].function == site.function => group.push(site),
+            _ => groups.push(vec![site]),
+        }
+    }
+
+    for group in groups {
+        expand_function_sugar(ctx, &group, plan)?;
+    }
+    Ok(())
+}
+
+/// Expands the sugar sites of one function (all of `sites` share it).
+fn expand_function_sugar(
+    ctx: &Ctx<'_, '_>,
+    sites: &[&fhec_check::InSugarSite],
+    plan: &mut FilePlan,
+) -> Result<()> {
+    let first = sites[0];
+
+    // 1. Each `in eT name` parameter becomes `externalET name_input`.
+    for site in sites {
+        let external_ty = ctx.profile.external_input_type(site.ty);
         plan.push(Patch::replace(
             ctx.range(site.param_span),
-            format!("{in_ty} memory {}_input", site.name),
+            format!("{external_ty} {}_input", site.name),
             Provenance::new("§2.3 in-sugar-param", ctx.range(site.param_span)),
         ));
-        if !site.has_body {
-            continue;
-        }
-        let Some(body_span) = site.body_span else {
-            return fail(
-                site.param_span,
-                "sugar site has a body but no body span (internal)",
-            );
-        };
-        let body_range = ctx.range(body_span);
-        let file_text = ctx.text(site.file);
-        // Insert right after the opening `{`, indented like the first body
-        // line (or the body's line + 4 when the body is empty).
-        let brace = body_range.start;
-        debug_assert_eq!(&file_text[brace..brace + 1], "{");
-        let indent = body_indent(file_text, body_range.start, body_range.end);
-        let conv = ctx.profile.conversion_fn(site.ty);
-        plan.push(Patch::insert(
-            brace + 1,
-            format!(
-                "\n{indent}{} {} = {}({}_input);",
-                site.ty.solidity_name(),
-                site.name,
-                conv,
-                site.name
-            ),
-            Provenance::new("§2.3 in-sugar-conversion", ctx.range(site.param_span)),
-        ));
     }
+
+    // 2. One shared proof parameter, appended before the list's closing `)`.
+    let params_range = ctx.range(first.params_span);
+    let file_text = ctx.text(first.file);
+    debug_assert_eq!(&file_text[params_range.end - 1..params_range.end], ")");
+    plan.push(Patch::insert(
+        params_range.end - 1,
+        format!(", {}", ctx.profile.input_proof_param()),
+        Provenance::new("§2.3 in-sugar-proof-param", ctx.range(first.params_span)),
+    ));
+
+    // 3. The conversion prelude (bodiless functions: signature rewrite only).
+    if !first.has_body {
+        return Ok(());
+    }
+    let Some(body_span) = first.body_span else {
+        return fail(
+            first.param_span,
+            "sugar site has a body but no body span (internal)",
+        );
+    };
+    let body_range = ctx.range(body_span);
+    // Insert right after the opening `{`, indented like the first body
+    // line (or the body's line + 4 when the body is empty).
+    let brace = body_range.start;
+    debug_assert_eq!(&file_text[brace..brace + 1], "{");
+    let indent = body_indent(file_text, body_range.start, body_range.end);
+
+    let statements: Vec<String> = if let [site] = sites {
+        let input = format!("{}_input", site.name);
+        let call = ctx
+            .profile
+            .render_call(
+                FheOp::FromExternal { ty: site.ty },
+                &[],
+                &[&input, INPUT_PROOF],
+            )
+            .map_err(|e| internal(site.param_span, e))?;
+        vec![format!(
+            "{} {} = {};",
+            site.ty.solidity_name(),
+            site.name,
+            call
+        )]
+    } else {
+        let mut namer = fhec_emit::TempNamer::new(crate::idents::file_idents(
+            ctx.files[first.file.index()].ast,
+        ));
+        let inputs_tmp = namer.fresh(fhec_emit::TempHint::Inputs);
+        let hashes_tmp = namer.fresh(fhec_emit::TempHint::Hashes);
+        let inputs: Vec<(fhec_ir::EType, String, String)> = sites
+            .iter()
+            .map(|s| (s.ty, format!("{}_input", s.name), s.name.clone()))
+            .collect();
+        let params: Vec<(fhec_ir::EType, &str, &str)> = inputs
+            .iter()
+            .map(|(t, i, n)| (*t, i.as_str(), n.as_str()))
+            .collect();
+        ctx.profile
+            .batch_input_statements(&params, INPUT_PROOF, &inputs_tmp, &hashes_tmp)
+    };
+
+    let mut prelude = String::new();
+    for stmt in &statements {
+        prelude.push('\n');
+        prelude.push_str(&indent);
+        prelude.push_str(stmt);
+    }
+    plan.push(Patch::insert(
+        brace + 1,
+        prelude,
+        Provenance::new("§2.3 in-sugar-conversion", ctx.range(first.param_span)),
+    ));
     Ok(())
 }
 

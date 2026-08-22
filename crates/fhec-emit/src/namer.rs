@@ -27,6 +27,10 @@ pub enum TempHint {
     Ret,
     /// Hoisted callee address (§8.2 R2).
     Callee,
+    /// Batch input array of a multi-`in`-parameter expansion (§2.3).
+    Inputs,
+    /// Verified handle array of a multi-`in`-parameter expansion (§2.3).
+    Hashes,
 }
 
 impl TempHint {
@@ -41,6 +45,8 @@ impl TempHint {
             TempHint::Val => "val",
             TempHint::Ret => "ret",
             TempHint::Callee => "callee",
+            TempHint::Inputs => "inputs",
+            TempHint::Hashes => "hashes",
         }
     }
 }

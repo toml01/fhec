@@ -102,7 +102,7 @@ fn corpus_is_a_no_op_at_check_level() {
                     })
                     .collect(),
             );
-            let profile = CofheProfile::v0_1();
+            let profile = CofheProfile::v0_2();
             let checked = check(&files, &bound, &profile, sess.source_map());
 
             for d in &checked.diagnostics {

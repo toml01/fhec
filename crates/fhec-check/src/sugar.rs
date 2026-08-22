@@ -23,6 +23,7 @@ pub(crate) fn scan<'ast>(
             f.ast.kind,
             ast::FunctionKind::Function | ast::FunctionKind::Constructor
         );
+        let sites_before = out.sugar_sites.len();
         for &p in &f.params {
             let v = unit.var(p);
             let Some(in_span) = v.decl.in_sugar else {
@@ -75,6 +76,7 @@ pub(crate) fn scan<'ast>(
             }
             out.sugar_sites.push(InSugarSite {
                 param_span: v.decl.span,
+                params_span: f.ast.header.parameters.span,
                 in_span,
                 ty: ety,
                 name: name.as_str().to_string(),
@@ -83,6 +85,20 @@ pub(crate) fn scan<'ast>(
                 function: fid,
                 file: f.file,
             });
+        }
+        // The expansion appends one shared `inputProof` parameter per
+        // function with sugar (spec §2.3); that name must be free too.
+        if out.sugar_sites.len() > sites_before && ident_occurs(f.ast, "inputProof") {
+            out.diagnostics.push(
+                Diagnostic::error(
+                    codes::IN_SUGAR_NAME_COLLISION,
+                    f.ast.header.span,
+                    "the expansion appends a `bytes memory inputProof` parameter, but \
+                     `inputProof` is already used in this function; rename one of them \
+                     (the transpiler never renames silently)",
+                )
+                .with_rule("§2.3"),
+            );
         }
         // Return-parameter lists (named and unnamed): never legal.
         for r in f.ast.header.returns() {

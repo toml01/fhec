@@ -67,7 +67,7 @@ fn transpile_with(sources: &[(&str, &str)], acl: AclMode) -> Out {
             "bind must be clean: {:?}",
             bound.diagnostics()
         );
-        let profile = CofheProfile::v0_1();
+        let profile = CofheProfile::v0_2();
         let checked = fhec_check::check(&files, &bound, &profile, sess.source_map());
         let check_error_codes: Vec<String> = checked
             .diagnostics
@@ -476,8 +476,8 @@ fn sugar_expands_param_and_conversion() {
          \n\
          contract C {\n\
          \x20   euint32 a;\n\
-         \x20   function setA(InEuint32 memory amount_input) external {\n\
-         \x20       euint32 amount = FHE.asEuint32(amount_input);\n\
+         \x20   function setA(externalEuint32 amount_input, bytes memory inputProof) external {\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
          \x20       FHE.allowSender(a);\n\

@@ -79,13 +79,14 @@ impl std::error::Error for ProfileError {}
 /// - select: `[cond, if_true, if_false]`
 /// - `AllowThis`/`AllowSender`/`AllowGlobal`: `[handle]`
 /// - `AllowTransient`: `[handle]` (the account argument is a plain address)
-/// - `TrivialEncrypt`/`FromInStruct`: `[]` (input is plaintext / a struct)
+/// - `TrivialEncrypt`/`FromExternal`: `[]` (input is plaintext / an
+///   external-input handle plus proof bytes)
 /// - `Widen`: `[source]` (must equal the op's `from` width)
 pub trait TargetProfile {
     /// Profile family identifier (e.g. `"cofhe"`).
     fn id(&self) -> &str;
 
-    /// Pinned library version this profile describes (e.g. `"0.1.x"`).
+    /// Pinned library version this profile describes (e.g. `"0.2.x"`).
     fn version(&self) -> &str;
 
     /// The Solidity pragma range supported source files must satisfy
@@ -130,11 +131,32 @@ pub trait TargetProfile {
     /// the ACL pass for dedupe matching (spec §8.6). `None` for non-ACL ops.
     fn acl_fn_name(&self, op: FheOp) -> Option<String>;
 
-    /// The encrypted-input struct parameter type for an encrypted type
-    /// (e.g. `"InEuint32"`, spec §2.3).
-    fn in_struct_type(&self, ty: EType) -> String;
+    /// The external-input handle parameter type for an encrypted type
+    /// (e.g. `"externalEuint32"`, spec §2.3).
+    fn external_input_type(&self, ty: EType) -> String;
 
-    /// The fully qualified conversion function used both for input-struct
+    /// The declaration text of the shared input-proof parameter appended to
+    /// a function with `in` sugar (spec §2.3), e.g. `"bytes memory inputProof"`.
+    fn input_proof_param(&self) -> String;
+
+    /// The fully qualified conversion function used both for external-input
     /// conversion and trivial encryption (e.g. `"FHE.asEuint32"`).
     fn conversion_fn(&self, ty: EType) -> String;
+
+    /// The statements that verify a whole batch of external-input handles
+    /// with one shared proof and bind each value name (spec §2.3, used when
+    /// a function has more than one `in` parameter — a single signature
+    /// covers the batch, so per-parameter conversion calls would not verify).
+    ///
+    /// `params` lists `(type, input parameter name, value name)` in parameter
+    /// order; `proof` is the proof parameter name; `inputs_tmp`/`hashes_tmp`
+    /// are collision-free local names. Each returned string is one complete
+    /// statement without indentation.
+    fn batch_input_statements(
+        &self,
+        params: &[(EType, &str, &str)],
+        proof: &str,
+        inputs_tmp: &str,
+        hashes_tmp: &str,
+    ) -> Vec<String>;
 }

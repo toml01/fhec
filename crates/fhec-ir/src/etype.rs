@@ -86,16 +86,32 @@ impl EType {
         }
     }
 
-    /// The matching encrypted-input struct name (`"InEuint32"`, spec §1.5).
-    pub fn in_struct_name(self) -> &'static str {
+    /// The capitalized type name used in library identifiers (`"Euint32"`):
+    /// the suffix of `asEuint32`, `externalEuint32`, `EUINT32_TFHE`.
+    pub fn suffix(self) -> &'static str {
         match self {
-            EType::Ebool => "InEbool",
-            EType::Euint(EWidth::W8) => "InEuint8",
-            EType::Euint(EWidth::W16) => "InEuint16",
-            EType::Euint(EWidth::W32) => "InEuint32",
-            EType::Euint(EWidth::W64) => "InEuint64",
-            EType::Euint(EWidth::W128) => "InEuint128",
-            EType::Eaddress => "InEaddress",
+            EType::Ebool => "Ebool",
+            EType::Euint(EWidth::W8) => "Euint8",
+            EType::Euint(EWidth::W16) => "Euint16",
+            EType::Euint(EWidth::W32) => "Euint32",
+            EType::Euint(EWidth::W64) => "Euint64",
+            EType::Euint(EWidth::W128) => "Euint128",
+            EType::Eaddress => "Eaddress",
+        }
+    }
+
+    /// The matching external-input handle type name (`"externalEuint32"`,
+    /// spec §1.5). Since cofhe-contracts 0.2.0 encrypted inputs arrive as
+    /// these `bytes32` value types plus a proof, not as `InEuintX` structs.
+    pub fn external_name(self) -> &'static str {
+        match self {
+            EType::Ebool => "externalEbool",
+            EType::Euint(EWidth::W8) => "externalEuint8",
+            EType::Euint(EWidth::W16) => "externalEuint16",
+            EType::Euint(EWidth::W32) => "externalEuint32",
+            EType::Euint(EWidth::W64) => "externalEuint64",
+            EType::Euint(EWidth::W128) => "externalEuint128",
+            EType::Eaddress => "externalEaddress",
         }
     }
 
@@ -164,11 +180,14 @@ mod tests {
     #[test]
     fn names() {
         assert_eq!(EType::Euint(EWidth::W32).solidity_name(), "euint32");
-        assert_eq!(EType::Euint(EWidth::W32).in_struct_name(), "InEuint32");
+        assert_eq!(EType::Euint(EWidth::W32).suffix(), "Euint32");
+        assert_eq!(EType::Euint(EWidth::W32).external_name(), "externalEuint32");
         assert_eq!(EType::Euint(EWidth::W32).plaintext_type(), "uint32");
-        assert_eq!(EType::Ebool.in_struct_name(), "InEbool");
+        assert_eq!(EType::Ebool.suffix(), "Ebool");
+        assert_eq!(EType::Ebool.external_name(), "externalEbool");
         assert_eq!(EType::Ebool.plaintext_type(), "bool");
-        assert_eq!(EType::Eaddress.in_struct_name(), "InEaddress");
+        assert_eq!(EType::Eaddress.suffix(), "Eaddress");
+        assert_eq!(EType::Eaddress.external_name(), "externalEaddress");
         assert_eq!(EType::Eaddress.plaintext_type(), "address");
         assert_eq!(EType::Eaddress.to_string(), "eaddress");
     }

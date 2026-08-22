@@ -231,12 +231,8 @@ impl<'ast> FnChecker<'_, 'ast> {
                 }
                 Ty::Unknown
             }
-            Ty::Plain(PlainTy::InStruct(_)) => match n {
-                "ctHash" => Ty::Plain(PlainTy::Uint(256)),
-                "securityZone" | "utype" => Ty::Plain(PlainTy::Uint(8)),
-                "signature" => Ty::Plain(PlainTy::Bytes),
-                _ => Ty::Unknown,
-            },
+            // External-input handles are UDVTs: no member access we model.
+            Ty::Plain(PlainTy::ExternalInput(_)) => Ty::Unknown,
             Ty::Plain(PlainTy::Array(_)) if n == "length" => Ty::Plain(PlainTy::Uint(256)),
             Ty::Plain(PlainTy::BuiltinRef(b)) => match (*b, n) {
                 ("msg", "sender") => Ty::Plain(PlainTy::Address),

@@ -437,7 +437,7 @@ out = "generated"
 [target]
 # Target library profile and pinned profile version.
 profile = "cofhe"
-version = "0.1.x"
+version = "0.2.x"
 # solc requirement used by the verify stage.
 # solc = ">=0.8.25 <0.9.0"
 # evm_version = "cancun"

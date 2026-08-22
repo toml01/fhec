@@ -17,8 +17,6 @@ use solar_parse::{
     Parser,
 };
 
-const DEFAULT_COFHE_ROOT: &str = "/Users/toml/dev/cofhe-contracts";
-
 const DIALECT_INPUT: &str = "\
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.25 <0.9.0;
@@ -84,7 +82,7 @@ fn transpile(name: &str, src: &str) -> (String, bool) {
             ast: unit,
         }]);
         assert!(bound.diagnostics().is_empty(), "{:?}", bound.diagnostics());
-        let profile = CofheProfile::v0_1();
+        let profile = CofheProfile::v0_2();
         let checked = fhec_check::check(&files, &bound, &profile, sess.source_map());
         assert!(
             !checked.has_errors(),
@@ -114,31 +112,48 @@ fn transpile(name: &str, src: &str) -> (String, bool) {
 
 // --- minimal import-closure reader (mirrors fhec-verify/tests/cofhe.rs) -----
 
+/// The pinned `@fhenixprotocol/cofhe-contracts` library: the workspace's
+/// pnpm install by default (published npm layout, FHE.sol at the package
+/// root); `FHEC_COFHE_CONTRACTS` overrides and also accepts a repository
+/// checkout layout (`contracts/FHE.sol`).
 fn cofhe_root() -> Option<PathBuf> {
-    let root = std::env::var_os("FHEC_COFHE_CONTRACTS")
-        .map_or_else(|| PathBuf::from(DEFAULT_COFHE_ROOT), PathBuf::from);
-    if root.join("contracts/FHE.sol").is_file() {
+    let root = std::env::var_os("FHEC_COFHE_CONTRACTS").map_or_else(
+        || {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/difftest/node_modules/@fhenixprotocol/cofhe-contracts")
+        },
+        PathBuf::from,
+    );
+    if root.join("FHE.sol").is_file() || root.join("contracts/FHE.sol").is_file() {
         return Some(root);
     }
-    eprintln!("SKIP: no cofhe-contracts checkout at {}", root.display());
+    eprintln!("SKIP: no cofhe-contracts library at {}", root.display());
     None
 }
 
 fn resolve_on_disk(root: &Path, virtual_path: &str) -> Option<PathBuf> {
     if virtual_path.starts_with("contracts/") {
         let direct = root.join(virtual_path);
-        return direct.is_file().then_some(direct);
-    }
-    // The profile package specifier maps onto the checkout itself.
-    if let Some(rest) = virtual_path.strip_prefix("@fhenixprotocol/cofhe-contracts/") {
-        let direct = root.join("contracts").join(rest);
         if direct.is_file() {
             return Some(direct);
         }
     }
+    // The profile package specifier maps onto the library itself, in either
+    // layout (package: FHE.sol at the root; checkout: under contracts/).
+    if let Some(rest) = virtual_path.strip_prefix("@fhenixprotocol/cofhe-contracts/") {
+        for direct in [root.join(rest), root.join("contracts").join(rest)] {
+            if direct.is_file() {
+                return Some(direct);
+            }
+        }
+    }
+    // Other bare specifiers (e.g. @openzeppelin/contracts, imported by
+    // FHE.sol) resolve through node_modules next to the library, falling
+    // back to the workspace's own install.
     for modules in [
-        root.join("contracts").join("node_modules"),
         root.join("node_modules"),
+        root.join("contracts").join("node_modules"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/difftest/node_modules"),
     ] {
         let candidate = modules.join(virtual_path);
         if candidate.is_file() {
@@ -221,8 +236,9 @@ fn dialect_counter_lowers_and_compiles_with_real_solc() {
 
     // Shape checks on the lowered output.
     for needle in [
-        "InEuint32 memory newCount_input",
-        "euint32 newCount = FHE.asEuint32(newCount_input);",
+        "externalEuint32 newCount_input",
+        "bytes memory inputProof",
+        "euint32 newCount = FHE.asEuint32(newCount_input, inputProof);",
         "count = FHE.add(count, FHE.asEuint32(step));",
         "FHE.allowThis(count);",
         "FHE.allowSender(count);",

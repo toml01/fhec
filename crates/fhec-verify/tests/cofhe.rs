@@ -5,9 +5,10 @@
 //! source into solc through the standard-JSON `sources` map, and compiles a
 //! wrapper contract of the kind `fhec-emit` produces.
 //!
-//! It needs a sibling checkout with its node modules installed. Point
-//! `FHEC_COFHE_CONTRACTS` at one, or leave it unset to use the default path.
-//! When the checkout is missing the test prints a skip message and passes.
+//! It uses the pinned npm package from the workspace's pnpm install by
+//! default; point `FHEC_COFHE_CONTRACTS` at a package or checkout to
+//! override. When the library is missing the test prints a skip message and
+//! passes.
 
 mod common;
 
@@ -16,39 +17,48 @@ use std::path::{Path, PathBuf};
 
 use fhec_verify::{CompileInput, Severity};
 
-/// Where the CoFHE contracts live when `FHEC_COFHE_CONTRACTS` is not set.
-const DEFAULT_COFHE_ROOT: &str = "/Users/toml/dev/cofhe-contracts";
-
 /// The virtual path of the profile library entry point.
 const FHE_SOL: &str = "contracts/FHE.sol";
 
-/// The root of the CoFHE checkout, if one is usable.
+/// The pinned CoFHE library, if one is usable: the workspace's pnpm install
+/// by default (published npm layout, FHE.sol at the package root), or a
+/// `FHEC_COFHE_CONTRACTS` override (package or checkout layout).
 fn cofhe_root() -> Option<PathBuf> {
-    let root = std::env::var_os("FHEC_COFHE_CONTRACTS")
-        .map_or_else(|| PathBuf::from(DEFAULT_COFHE_ROOT), PathBuf::from);
-    if root.join("contracts/FHE.sol").is_file() {
+    let root = std::env::var_os("FHEC_COFHE_CONTRACTS").map_or_else(
+        || {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../packages/difftest/node_modules/@fhenixprotocol/cofhe-contracts")
+        },
+        PathBuf::from,
+    );
+    if root.join("FHE.sol").is_file() || root.join("contracts/FHE.sol").is_file() {
         return Some(root);
     }
     eprintln!(
-        "SKIP: no cofhe-contracts checkout at {} (set FHEC_COFHE_CONTRACTS)",
+        "SKIP: no cofhe-contracts library at {} (set FHEC_COFHE_CONTRACTS)",
         root.display()
     );
     None
 }
 
-/// Maps a virtual import path onto a file in the checkout.
+/// Maps a virtual import path onto a file of the library install.
 ///
-/// Paths under `contracts/` come straight from the repository; anything else is
-/// a bare package specifier and is looked up in the checkout's node modules,
-/// mirroring what a Hardhat or Foundry remapping would do.
+/// Paths under `contracts/` come from the library itself (checkout layout
+/// directly, package layout with the prefix stripped); anything else is a
+/// bare package specifier and is looked up node-style, mirroring what a
+/// Hardhat or Foundry remapping would do.
 fn resolve_on_disk(root: &Path, virtual_path: &str) -> Option<PathBuf> {
-    if virtual_path.starts_with("contracts/") {
-        let direct = root.join(virtual_path);
-        return direct.is_file().then_some(direct);
+    if let Some(rest) = virtual_path.strip_prefix("contracts/") {
+        for direct in [root.join(virtual_path), root.join(rest)] {
+            if direct.is_file() {
+                return Some(direct);
+            }
+        }
     }
     for modules in [
-        root.join("contracts").join("node_modules"),
         root.join("node_modules"),
+        root.join("contracts").join("node_modules"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/difftest/node_modules"),
     ] {
         let candidate = modules.join(virtual_path);
         if candidate.is_file() {

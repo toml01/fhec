@@ -72,9 +72,10 @@ pub enum FheOp {
         /// The (strictly wider) result width.
         to: EWidth,
     },
-    /// Conversion of an encrypted-input struct (`InEuintX`) into its value
-    /// type (spec §2.3).
-    FromInStruct {
+    /// Verified conversion of an external-input handle (`externalEuintX`)
+    /// plus its input proof into the value type (spec §2.3). Two rendered
+    /// arguments: the handle and the proof bytes.
+    FromExternal {
         /// The encrypted value type produced.
         ty: EType,
     },
@@ -102,7 +103,6 @@ impl FheOp {
             | FheOp::Square
             | FheOp::TrivialEncrypt { .. }
             | FheOp::Widen { .. }
-            | FheOp::FromInStruct { .. }
             | FheOp::AllowThis
             | FheOp::AllowSender
             | FheOp::AllowGlobal => 1,
@@ -126,6 +126,7 @@ impl FheOp {
             | FheOp::Max
             | FheOp::Rol
             | FheOp::Ror
+            | FheOp::FromExternal { .. }
             | FheOp::AllowTransient => 2,
             FheOp::Select => 3,
         }
@@ -170,7 +171,7 @@ impl FheOp {
             FheOp::Select => "select",
             FheOp::TrivialEncrypt { .. } => "trivial-encrypt",
             FheOp::Widen { .. } => "widen",
-            FheOp::FromInStruct { .. } => "from-in-struct",
+            FheOp::FromExternal { .. } => "from-external",
             FheOp::AllowThis => "allow-this",
             FheOp::AllowSender => "allow-sender",
             FheOp::AllowTransient => "allow-transient",
@@ -184,7 +185,7 @@ impl fmt::Display for FheOp {
         match *self {
             FheOp::TrivialEncrypt { to } => write!(f, "trivial-encrypt→{to}"),
             FheOp::Widen { from, to } => write!(f, "widen(euint{from}→euint{to})"),
-            FheOp::FromInStruct { ty } => write!(f, "from-in-struct({})", ty.in_struct_name()),
+            FheOp::FromExternal { ty } => write!(f, "from-external({})", ty.external_name()),
             other => f.write_str(other.mnemonic()),
         }
     }
@@ -224,11 +225,11 @@ mod tests {
             "widen(euint8→euint128)"
         );
         assert_eq!(
-            FheOp::FromInStruct {
+            FheOp::FromExternal {
                 ty: EType::Euint(EWidth::W32)
             }
             .to_string(),
-            "from-in-struct(InEuint32)"
+            "from-external(externalEuint32)"
         );
     }
 }
