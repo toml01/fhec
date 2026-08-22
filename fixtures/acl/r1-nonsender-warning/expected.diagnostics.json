@@ -13,20 +13,5 @@
     },
     "message": "encrypted write to `balances[who]` is keyed by an address that is not `msg.sender`; the transaction sender gains read access to a ciphertext filed under another address",
     "rule": "§8.1"
-  },
-  {
-    "code": "FHE4001",
-    "severity": "warning",
-    "span": {
-      "file": "input.fsol",
-      "start_byte": 236,
-      "end_byte": 249,
-      "start_line": 11,
-      "start_col": 9,
-      "end_line": 11,
-      "end_col": 22
-    },
-    "message": "encrypted write to `balances[who]` is keyed by an address that is not `msg.sender`; the transaction sender gains read access to a ciphertext filed under another address",
-    "rule": "§8.1"
   }
 ]

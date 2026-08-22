@@ -112,10 +112,11 @@ pub fn cmd_check(g: &GlobalArgs) -> i32 {
         return check_with_fix(g, &loaded, unit, pre_diags);
     }
 
-    // `check` runs the lowerer only to surface suggest-mode notes.
+    // `check` runs the lowerer too (discarding outputs): every §7 reject
+    // rule and §8 warning must fire on `check` exactly as on `build`.
     let opts = StageOptions {
         acl_mode,
-        lower: acl_mode == AclMode::Suggest,
+        lower: true,
         discard_outputs: true,
     };
     let result = stages::run(&unit, &loaded.config, &opts);
@@ -207,7 +208,7 @@ fn check_with_fix(
     };
     let opts = StageOptions {
         acl_mode: g.acl_mode(loaded),
-        lower: g.acl_mode(loaded) == AclMode::Suggest,
+        lower: true,
         discard_outputs: true,
     };
     let result = stages::run(&unit, &loaded.config, &opts);

@@ -33,9 +33,9 @@ use std::path::PathBuf;
 pub struct StageOptions {
     /// ACL pass mode (config `[acl] mode`, overridable by `--acl`).
     pub acl_mode: AclMode,
-    /// Whether to run stage 6 (lower) and produce outputs. `check` sets this
-    /// only when the ACL mode is `suggest` (to surface FHE4010–FHE4012
-    /// notes); `build` always sets it.
+    /// Whether to run stage 6 (lower) and produce outputs. Both `check` and
+    /// `build` set this: every lower-stage reject rule (§7) and ACL
+    /// diagnostic (§8) fires on `check` exactly as on `build`.
     pub lower: bool,
     /// Discard the plan even when lowering ran (`check --acl=suggest`).
     pub discard_outputs: bool,
@@ -287,7 +287,14 @@ pub fn self_check(outputs: &[FileOutput], config: &Config, acl_mode: AclMode) ->
         discard_outputs: false,
     };
     let second = run(&unit, config, &opts);
-    let mut diags = second.diagnostics;
+    // The second run re-reports every warning/note of the first run (about
+    // code the user did not write, at generated-output coordinates); only
+    // its ERRORS are real self-check findings. Drop the rest.
+    let mut diags: Vec<Diagnostic> = second
+        .diagnostics
+        .into_iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
     if has_errors(&diags) {
         return diags;
     }
@@ -319,30 +326,16 @@ fn unrewrite_imports(
 ) -> String {
     let mut out = String::with_capacity(text.len());
     for line in text.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        let is_import = trimmed
-            .strip_prefix("import")
-            .is_some_and(|rest| rest.starts_with(|c: char| c.is_whitespace() || c == '"'));
-        if !is_import {
-            out.push_str(line);
-            continue;
-        }
-        let Some((head, rest)) = line.split_once('"') else {
-            out.push_str(line);
-            continue;
-        };
-        let Some((spec, tail)) = rest.split_once('"') else {
+        let Some(spec) = crate::gate::import_spec_of_line(line) else {
             out.push_str(line);
             continue;
         };
         let resolved = resolve_relative(importer, spec);
         if spec.ends_with(".sol") && unit_outputs.contains(&resolved) {
             let unrewritten = format!("{}.fsol", &spec[..spec.len() - ".sol".len()]);
-            out.push_str(head);
-            out.push('"');
-            out.push_str(&unrewritten);
-            out.push('"');
-            out.push_str(tail);
+            // Replace only the specifier text; the quote style around it
+            // (either `"` or `'`) stays untouched.
+            out.push_str(&line.replacen(spec, &unrewritten, 1));
         } else {
             out.push_str(line);
         }

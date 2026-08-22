@@ -245,24 +245,29 @@ fn resolve_bare(from_dir: &Path, spec: &str) -> Option<PathBuf> {
 /// Extracts the string literal of every import directive, line-based.
 ///
 /// The generated output re-parsed cleanly (stage 7 guard), so imports are
-/// well-formed; a line-based scan is sufficient and cheap.
+/// well-formed; a line-based scan is sufficient and cheap. Solidity string
+/// literals accept both quote styles, so `import '...'` counts too.
 fn import_specs(source: &str) -> Vec<String> {
     let mut specs = Vec::new();
     for line in source.lines() {
-        let trimmed = line.trim();
-        let is_import = trimmed
-            .strip_prefix("import")
-            .is_some_and(|rest| rest.starts_with(|c: char| c.is_whitespace() || c == '"'));
-        if !is_import {
-            continue;
-        }
-        if let Some((_, rest)) = trimmed.split_once('"') {
-            if let Some((inner, _)) = rest.split_once('"') {
-                specs.push(inner.to_owned());
-            }
+        if let Some(spec) = import_spec_of_line(line) {
+            specs.push(spec.to_owned());
         }
     }
     specs
+}
+
+/// Returns the first string literal of a line iff the line is an import
+/// directive, handling both `"` and `'` quote styles.
+pub(crate) fn import_spec_of_line(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    trimmed
+        .strip_prefix("import")
+        .filter(|rest| rest.starts_with(|c: char| c.is_whitespace() || c == '"' || c == '\''))?;
+    let pos = trimmed.find(['"', '\''])?;
+    let quote = trimmed.as_bytes()[pos] as char;
+    let rest = &trimmed[pos + 1..];
+    rest.split_once(quote).map(|(inner, _)| inner)
 }
 
 #[cfg(test)]
@@ -345,6 +350,19 @@ mod tests {
         assert_eq!(
             import_specs(src),
             vec!["./A.sol".to_string(), "@p/q/B.sol".to_string()]
+        );
+    }
+
+    #[test]
+    fn import_specs_single_quoted() {
+        // The real EncryptedCounter snippet imports with single quotes.
+        let src = "import '@fhenixprotocol/cofhe-contracts/FHE.sol';\nimport {Y} from './C.sol';\nimportant();\n";
+        assert_eq!(
+            import_specs(src),
+            vec![
+                "@fhenixprotocol/cofhe-contracts/FHE.sol".to_string(),
+                "./C.sol".to_string()
+            ]
         );
     }
 }

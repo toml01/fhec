@@ -13,20 +13,5 @@
     },
     "message": "a `view` function cannot grant ACL access to its encrypted return value; the caller must have been granted access elsewhere",
     "rule": "§8.4"
-  },
-  {
-    "code": "FHE4002",
-    "severity": "warning",
-    "span": {
-      "file": "input.fsol",
-      "start_byte": 709,
-      "end_byte": 722,
-      "start_line": 29,
-      "start_col": 9,
-      "end_line": 29,
-      "end_col": 22
-    },
-    "message": "a `view` function cannot grant ACL access to its encrypted return value; the caller must have been granted access elsewhere",
-    "rule": "§8.4"
   }
 ]

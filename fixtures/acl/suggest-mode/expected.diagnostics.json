@@ -28,35 +28,5 @@
       }
     ],
     "rule": "§8.1"
-  },
-  {
-    "code": "FHE4010",
-    "severity": "note",
-    "span": {
-      "file": "input.fsol",
-      "start_byte": 197,
-      "end_byte": 215,
-      "start_line": 11,
-      "start_col": 9,
-      "end_line": 11,
-      "end_col": 27
-    },
-    "message": "ACL suggestion: after this write, add `FHE.allowThis(a); FHE.allowSender(a);`",
-    "fixits": [
-      {
-        "span": {
-          "file": "input.fsol",
-          "start_byte": 215,
-          "end_byte": 215,
-          "start_line": 11,
-          "start_col": 27,
-          "end_line": 11,
-          "end_col": 27
-        },
-        "replacement": "\n        FHE.allowThis(a);\n        FHE.allowSender(a);",
-        "safe": true
-      }
-    ],
-    "rule": "§8.1"
   }
 ]
