@@ -30,6 +30,15 @@ updates:
       # Differential harness targets Hardhat 2 (@cofhe/hardhat-plugin peer line).
       - dependency-name: hardhat
         versions: [">=3"]
+      # Hardhat 3 plugin; deferred with the Hardhat 3 migration.
+      - dependency-name: "@nomicfoundation/hardhat-network-helpers"
+        versions: [">=3"]
+      # Hardhat 3 / deprecation-stub major; deferred with the Hardhat 3 migration.
+      - dependency-name: "@nomicfoundation/hardhat-chai-matchers"
+        versions: [">=3"]
+      # Pinned hardhat-chai-matchers 2.x requires chai ^4.
+      - dependency-name: chai
+        versions: [">=5"]
       # Harness pins its TypeScript toolchain; majors are adopted deliberately.
       - dependency-name: typescript
         versions: [">=6"]
