@@ -8,7 +8,7 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 # Keep this pin in sync with rust-toolchain.toml (the action ignores that file).
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -26,7 +26,7 @@ jobs:
   ts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
