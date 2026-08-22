@@ -31,6 +31,9 @@ updates:
       - dependency-name: hardhat
         versions: [">=3"]
       # Hardhat 3 plugin; deferred with the Hardhat 3 migration.
+      - dependency-name: "@nomicfoundation/hardhat-ethers"
+        versions: [">=4"]
+      # Hardhat 3 plugin; deferred with the Hardhat 3 migration.
       - dependency-name: "@nomicfoundation/hardhat-network-helpers"
         versions: [">=3"]
       # Hardhat 3 / deprecation-stub major; deferred with the Hardhat 3 migration.
@@ -42,6 +45,9 @@ updates:
       # Harness pins its TypeScript toolchain; majors are adopted deliberately.
       - dependency-name: typescript
         versions: [">=6"]
+      # Harness runs Node 22 (package.json engines / CI setup-node 22).
+      - dependency-name: "@types/node"
+        versions: [">=23"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
