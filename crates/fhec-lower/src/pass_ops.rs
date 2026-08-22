@@ -213,6 +213,7 @@ fn internal(span: Span, err: fhec_targets::ProfileError) -> LowerFailure {
     LowerFailure {
         span,
         message: format!("profile refused a checked operation: {err} (internal)"),
+        code: None,
     }
 }
 

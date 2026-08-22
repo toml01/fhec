@@ -18,6 +18,10 @@ struct Out {
     any_patches: bool,
     check_error_codes: Vec<String>,
     lower_diag_codes: Vec<String>,
+    /// The exact source text each lowering diagnostic's span covers, in the
+    /// same order as `lower_diag_codes`, so tests can assert a diagnostic
+    /// landed on the right construct (not just the right code).
+    lower_diag_spans: Vec<String>,
     failed_files: usize,
 }
 
@@ -102,6 +106,15 @@ fn transpile_with(sources: &[(&str, &str)], acl: AclMode) -> Out {
                 .diagnostics
                 .iter()
                 .map(|d| format!("{}: {}", d.code, d.message))
+                .collect(),
+            lower_diag_spans: result
+                .diagnostics
+                .iter()
+                .map(|d| {
+                    sess.source_map()
+                        .span_to_snippet(d.span)
+                        .unwrap_or_default()
+                })
                 .collect(),
             failed_files: result.failed_files.len(),
         }
@@ -804,5 +817,69 @@ fn r2_dedupe_accepts_address_wrapped_grant() {
             "        FHE.allowTransient(a, address(vault));\n\
              \x20       vault.deposit(a);",
         ),
+    );
+}
+
+#[test]
+fn r2_callee_type_underivable_rejects_with_fhe4003() {
+    // The callee object is a ternary of two same-typed contract instances
+    // under a plaintext condition: a definite `IVault` type, so an R2 site
+    // exists, but not a shape `callee_type_text` can derive text for (only
+    // casts and identifier-rooted index paths are, spec §8.2 draft decision).
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function deposit(euint32 x) external;\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   IVault vaultA;\n\
+               \x20   IVault vaultB;\n\
+               \x20   function f(bool cond) public {\n\
+               \x20       (cond ? vaultA : vaultB).deposit(a);\n\
+               \x20   }\n\
+               }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4003")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(out.failed_files, 1);
+    assert_eq!(out.files[0].1, src, "a refused file must stay untouched");
+    assert_eq!(
+        out.lower_diag_spans,
+        vec!["(cond ? vaultA : vaultB)"],
+        "FHE4003 must point at the callee expression, not the whole call"
+    );
+}
+
+#[test]
+fn if_unsupported_statement_rejects_with_fhe3013() {
+    // A tuple declaration (`DeclMulti`) is a statement form the spec does not
+    // enumerate for encrypted branches (spec §5.2).
+    let src = contract(
+        "        if (eb) {\n\
+         \x20           (uint256 x, uint256 y) = (p, p);\n\
+         \x20       }",
+    );
+    let out = transpile(&[("t.fsol", &src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE3013")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(out.failed_files, 1);
+    assert_eq!(out.files[0].1, src, "a refused file must stay untouched");
+    assert_eq!(
+        out.lower_diag_spans,
+        vec!["(uint256 x, uint256 y) = (p, p);"],
+        "FHE3013 must point at the offending statement"
     );
 }

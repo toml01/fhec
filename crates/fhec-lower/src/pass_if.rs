@@ -35,7 +35,7 @@ use solar_ast as ast;
 use solar_interface::Span;
 
 use crate::ctx::{strip_parens, Ctx};
-use crate::expr::{fail, LowerFailure, Renderer, Result};
+use crate::expr::{fail, fail_coded, LowerFailure, Renderer, Result};
 
 /// The identity of an index key inside a location path.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -281,6 +281,7 @@ fn render_frame<'ast>(
             .map_err(|e| LowerFailure {
                 span: stmt.span,
                 message: format!("profile refused a checked select: {e} (internal)"),
+                code: None,
             })?;
         let target = match outer {
             Some(o) => {
@@ -326,6 +327,7 @@ fn render_frame<'ast>(
                         .map_err(|e| LowerFailure {
                             span: stmt.span,
                             message: format!("profile refused an ACL call: {e} (internal)"),
+                            code: None,
                         })?;
                     acl_lines.push(format!("{call};"));
                 }
@@ -506,6 +508,7 @@ fn classify_key<'ast>(
             message:
                 "cannot determine the index key type for hoisting; the write set is undecidable"
                     .to_string(),
+            code: None,
         })?;
         let temp = ictx.namer.borrow_mut().fresh(TempHint::Key);
         keys.rows.push((canon, temp.clone(), ty_text));
@@ -621,9 +624,16 @@ fn scan_branch<'ast>(
             }
             Ok(())
         }
-        _ => fail(
+        // A statement form the spec does not enumerate for encrypted branches
+        // (e.g. a tuple declaration): rejected rather than lowered by
+        // guesswork (spec §5.2).
+        _ => fail_coded(
             stmt.span,
-            "statement kind inside an encrypted branch survived checking (internal)",
+            "this statement form is not one of the forms this specification enumerates for an \
+             encrypted branch (e.g. a tuple declaration); rejecting rather than lowering by \
+             guesswork",
+            "FHE3013",
+            Some("§5.2"),
         ),
     }
 }
@@ -693,7 +703,11 @@ fn record_write<'ast>(
 ) -> Result<()> {
     match classify(ictx, lhs, keys, true)? {
         Canon::BranchLocal => Ok(()),
-        Canon::Undecidable(span, msg) => Err(LowerFailure { span, message: msg }),
+        Canon::Undecidable(span, msg) => Err(LowerFailure {
+            span,
+            message: msg,
+            code: None,
+        }),
         Canon::Path(key, display, is_storage, addr_key_not_sender) => {
             if writes.iter().any(|l| l.key == key) {
                 return Ok(());
@@ -756,6 +770,7 @@ fn make_subst<'r, 'f, 'a, 'ast>(
                     span: e.span,
                     message: "assignment in expression position inside an encrypted branch"
                         .to_string(),
+                    code: None,
                 });
                 return None;
             }
@@ -773,6 +788,7 @@ fn make_subst<'r, 'f, 'a, 'ast>(
                     message: "increment/decrement in expression position inside an encrypted \
                               branch"
                         .to_string(),
+                    code: None,
                 });
                 return None;
             }
@@ -806,6 +822,7 @@ fn make_subst<'r, 'f, 'a, 'ast>(
                                  written location `{}` (spec §5.2 step 3)",
                                 w.display
                             ),
+                            code: None,
                         });
                         return None;
                     }
@@ -920,6 +937,7 @@ fn render_stmt<'ast>(
                     .map_err(|err| LowerFailure {
                         span: e.span,
                         message: format!("profile refused a checked operation: {err} (internal)"),
+                        code: None,
                     })?;
                 write_versioned(ictx, env, lhs, call, out)?;
             }
@@ -951,6 +969,7 @@ fn render_stmt<'ast>(
                     .map_err(|err| LowerFailure {
                         span: e.span,
                         message: format!("profile refused a trivial encrypt: {err} (internal)"),
+                        code: None,
                     })?;
                 let op = if site.is_increment {
                     FheOp::Add
@@ -963,6 +982,7 @@ fn render_stmt<'ast>(
                     .map_err(|err| LowerFailure {
                         span: e.span,
                         message: format!("profile refused a checked operation: {err} (internal)"),
+                        code: None,
                     })?;
                 write_versioned(ictx, env, x, call, out)?;
             }
@@ -994,7 +1014,11 @@ fn read_lvalue<'ast>(
     match classify(ictx, lhs, &mut scratch, false)? {
         Canon::Path(key, display, _, _) => Ok(env.borrow().read(&key, &display)),
         Canon::BranchLocal => Ok(ictx.ctx.snippet(lhs.span)),
-        Canon::Undecidable(span, msg) => Err(LowerFailure { span, message: msg }),
+        Canon::Undecidable(span, msg) => Err(LowerFailure {
+            span,
+            message: msg,
+            code: None,
+        }),
     }
 }
 
@@ -1015,7 +1039,11 @@ fn write_versioned<'ast>(
             out.push(format!("{} = {};", ictx.ctx.snippet(lhs.span), value));
             Ok(())
         }
-        Canon::Undecidable(span, msg) => Err(LowerFailure { span, message: msg }),
+        Canon::Undecidable(span, msg) => Err(LowerFailure {
+            span,
+            message: msg,
+            code: None,
+        }),
         Canon::Path(key, display, _, _) => {
             let mut env = env.borrow_mut();
             if !env.has(&key) {

@@ -8,9 +8,11 @@
 //! checked the unit, and only when [`CheckedUnit::has_errors`] is false — the
 //! prime directive (spec §1.3) forbids producing output for a unit the
 //! checker refused. When lowering itself finds a fault (undecidable aliasing
-//! FHE3011, or an internal invariant violation FHE9001), every patch of the
-//! affected *file* is dropped: a partially lowered file would be a
-//! miscompile, and refusal is always safer.
+//! FHE3011, an unsupported statement form in an encrypted branch FHE3013, an
+//! ACL callee whose declared type cannot be derived FHE4003, or an internal
+//! invariant violation FHE9001), every patch of the affected *file* is
+//! dropped: a partially lowered file would be a miscompile, and refusal is
+//! always safer.
 //!
 //! Only `.fsol` files receive rewrite patches (spec §2.1). The §2.6 import
 //! rewrite (`.fsol` → `.sol` in import specifiers) applies to every file of
@@ -73,8 +75,9 @@ pub struct LowerResult {
     /// One [`FilePlan`] per input file, in unit order. Files the lowerer had
     /// to refuse (see [`LowerResult::failed_files`]) have empty plans.
     pub plan: RewritePlan,
-    /// Diagnostics produced while lowering: FHE3011 errors, FHE4001/FHE4002
-    /// warnings, FHE4010–FHE4012 suggest-mode notes, FHE9001 internal errors.
+    /// Diagnostics produced while lowering: FHE3011/FHE3013/FHE4003 errors,
+    /// FHE4001/FHE4002 warnings, FHE4010–FHE4012 suggest-mode notes, FHE9001
+    /// internal errors.
     pub diagnostics: Vec<Diagnostic>,
     /// Files whose patches were dropped because lowering found a fault.
     pub failed_files: Vec<FileId>,
@@ -229,10 +232,10 @@ pub fn lower<'ast>(
 }
 
 fn push_failure(diags: &RefCell<Vec<Diagnostic>>, f: &expr::LowerFailure) {
-    let (code, rule) = if f.message.contains("(internal)") {
-        ("FHE9001", None)
-    } else {
-        ("FHE3011", Some("§5.2"))
+    let (code, rule) = match f.code {
+        Some((code, rule)) => (code, rule),
+        None if f.message.contains("(internal)") => ("FHE9001", None),
+        None => ("FHE3011", Some("§5.2")),
     };
     diags.borrow_mut().push(Diagnostic {
         code,

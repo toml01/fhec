@@ -19,7 +19,7 @@ use solar_ast as ast;
 use solar_interface::Span;
 
 use crate::ctx::{strip_parens, Ctx};
-use crate::expr::{LowerFailure, Renderer, Result};
+use crate::expr::{fail_coded, LowerFailure, Renderer, Result};
 
 pub(crate) struct AclOutcome {
     /// Statement spans whose inner rendering pass 3 took over (pass 1 skips).
@@ -272,22 +272,24 @@ fn rule_r2<'ast>(
     // Callee handling (spec §8.2 draft decision — single evaluation):
     // a simple name is read in place; anything else is hoisted to a temp of
     // its *declared* type so the call still dispatches through it. When the
-    // lowerer cannot establish that type, it refuses (spec §1.3) with a
-    // workaround in the message.
+    // lowerer cannot establish that type, it refuses (spec §1.3) with
+    // FHE4003 and a workaround suggestion in the message.
     let callee_node = find_expr(ctx, c.function, c.callee_span)
         .ok_or_else(|| lost(c.callee_span, "R2 callee expression"))?;
     let account = if c.callee_is_ident || is_simple_path(&callee_text) {
         format!("address({callee_text})")
     } else {
         let Some(ty_text) = callee_type_text(ctx, callee_node) else {
-            return Err(LowerFailure {
-                span: c.callee_span,
-                message: format!(
+            return fail_coded(
+                c.callee_span,
+                format!(
                     "cannot determine the callee's declared type for single-evaluation \
                      hoisting (spec §8.2); assign `{callee_text}` to a local variable and \
                      call through it"
                 ),
-            });
+                "FHE4003",
+                Some("§8.2"),
+            );
         };
         let temp = namer.borrow_mut().fresh(TempHint::Callee);
         lines.push(format!("{ty_text} {temp} = {callee_text};"));
@@ -768,6 +770,7 @@ fn internal(span: Span, err: fhec_targets::ProfileError) -> LowerFailure {
     LowerFailure {
         span,
         message: format!("profile refused a checked operation: {err} (internal)"),
+        code: None,
     }
 }
 
@@ -775,5 +778,6 @@ fn lost(span: Span, what: &str) -> LowerFailure {
     LowerFailure {
         span,
         message: format!("{what} not found in the function body (internal)"),
+        code: None,
     }
 }

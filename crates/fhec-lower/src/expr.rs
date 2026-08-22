@@ -14,11 +14,18 @@ use solar_interface::Span;
 use crate::ctx::Ctx;
 
 /// A lowering failure: refuse rather than miscompile (spec §1.3). Mapped to
-/// FHE9001 diagnostics by the driver.
+/// a diagnostic by the driver: an explicit `code` (set via [`fail_coded`] at
+/// failure sites the spec assigns a stable code, e.g. FHE3013 §5.2 or FHE4003
+/// §8.2) takes precedence; otherwise the driver falls back to its legacy
+/// message-text heuristic (FHE3011 undecidable-aliasing, or FHE9001 internal-
+/// invariant-violation for messages tagged `(internal)`).
 #[derive(Debug, Clone)]
 pub(crate) struct LowerFailure {
     pub span: Span,
     pub message: String,
+    /// The stable catalog code and spec rule for this failure, when the
+    /// failure site already knows its classification.
+    pub code: Option<(&'static str, Option<&'static str>)>,
 }
 
 pub(crate) type Result<T> = std::result::Result<T, LowerFailure>;
@@ -27,6 +34,22 @@ pub(crate) fn fail<T>(span: Span, message: impl Into<String>) -> Result<T> {
     Err(LowerFailure {
         span,
         message: message.into(),
+        code: None,
+    })
+}
+
+/// Like [`fail`], but tags the failure with its stable catalog code and spec
+/// rule directly, bypassing the driver's message-text heuristic.
+pub(crate) fn fail_coded<T>(
+    span: Span,
+    message: impl Into<String>,
+    code: &'static str,
+    rule: Option<&'static str>,
+) -> Result<T> {
+    Err(LowerFailure {
+        span,
+        message: message.into(),
+        code: Some((code, rule)),
     })
 }
 
@@ -134,6 +157,7 @@ impl<'r, 'a, 'ast> Renderer<'r, 'a, 'ast> {
             .map_err(|err| LowerFailure {
                 span: e.span,
                 message: format!("profile refused a checked operation: {err} (internal)"),
+                code: None,
             })
     }
 
@@ -164,6 +188,7 @@ impl<'r, 'a, 'ast> Renderer<'r, 'a, 'ast> {
             .map_err(|err| LowerFailure {
                 span: e.span,
                 message: format!("profile refused a checked select: {err} (internal)"),
+                code: None,
             })
     }
 
@@ -178,6 +203,7 @@ impl<'r, 'a, 'ast> Renderer<'r, 'a, 'ast> {
         let wrap_err = |err: fhec_targets::ProfileError| LowerFailure {
             span: site_span,
             message: format!("profile refused a checked coercion: {err} (internal)"),
+            code: None,
         };
         match plan.kind {
             OperandKind::AlreadyEncrypted(ty) => Ok((ty, text)),
