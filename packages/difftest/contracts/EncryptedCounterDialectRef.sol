@@ -38,8 +38,8 @@ contract EncryptedCounterDialectRef {
         return count;
     }
 
-    function increment(InEuint32 memory amountInput) external onlyOwner {
-        euint32 amount = FHE.asEuint32(amountInput);
+    function increment(externalEuint32 amountInput, bytes memory inputProof) external onlyOwner {
+        euint32 amount = FHE.asEuint32(amountInput, inputProof);
         euint32 next = FHE.add(count, amount);
         ebool withinCap = FHE.lte(next, cap);
         count = FHE.select(withinCap, next, count);

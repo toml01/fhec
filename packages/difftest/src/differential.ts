@@ -50,9 +50,10 @@ export interface StepContext {
 }
 
 /**
- * Arguments computed per run. Required for encrypted inputs: an `InEuintXX` is
- * bound to a sender and consumes a mock-verifier salt, so each side must mint
- * its own.
+ * Arguments computed per run. Required for encrypted inputs: the verifier
+ * signature binds an input to its sender AND to the consuming contract, and
+ * minting consumes a mock-verifier salt — so each side must mint its own,
+ * passing `ctx.address` as the consuming contract.
  */
 export type ArgsFactory = (ctx: StepContext) => unknown[] | Promise<unknown[]>;
 

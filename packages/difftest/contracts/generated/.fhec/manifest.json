@@ -58,7 +58,7 @@
         {
           "output_range": [
             1330,
-            1359
+            1358
           ],
           "source_range": [
             1210,
@@ -68,8 +68,19 @@
         },
         {
           "output_range": [
-            1381,
-            1435
+            1358,
+            1383
+          ],
+          "source_range": [
+            1227,
+            1227
+          ],
+          "rule": "§2.3 in-sugar-proof-param"
+        },
+        {
+          "output_range": [
+            1405,
+            1471
           ],
           "source_range": [
             1249,
@@ -79,8 +90,8 @@
         },
         {
           "output_range": [
-            1459,
-            1481
+            1495,
+            1517
           ],
           "source_range": [
             1273,
@@ -90,8 +101,8 @@
         },
         {
           "output_range": [
-            1491,
-            1838
+            1527,
+            1874
           ],
           "source_range": [
             1297,
@@ -101,8 +112,8 @@
         },
         {
           "output_range": [
-            1981,
-            2021
+            2017,
+            2057
           ],
           "source_range": [
             1494,
@@ -112,8 +123,8 @@
         },
         {
           "output_range": [
-            2022,
-            2052
+            2058,
+            2088
           ],
           "source_range": [
             1512,
@@ -124,8 +135,8 @@
         },
         {
           "output_range": [
-            2052,
-            2084
+            2088,
+            2120
           ],
           "source_range": [
             1512,
@@ -144,7 +155,7 @@
         {
           "output_range": [
             582,
-            611
+            610
           ],
           "source_range": [
             582,
@@ -154,8 +165,19 @@
         },
         {
           "output_range": [
-            623,
-            677
+            610,
+            635
+          ],
+          "source_range": [
+            599,
+            599
+          ],
+          "rule": "§2.3 in-sugar-proof-param"
+        },
+        {
+          "output_range": [
+            647,
+            713
           ],
           "source_range": [
             611,
@@ -165,8 +187,8 @@
         },
         {
           "output_range": [
-            686,
-            746
+            722,
+            782
           ],
           "source_range": [
             620,
@@ -176,8 +198,8 @@
         },
         {
           "output_range": [
-            747,
-            792
+            783,
+            828
           ],
           "source_range": [
             673,
@@ -188,8 +210,8 @@
         },
         {
           "output_range": [
-            792,
-            839
+            828,
+            875
           ],
           "source_range": [
             673,
@@ -200,8 +222,8 @@
         },
         {
           "output_range": [
-            1459,
-            1488
+            1495,
+            1523
           ],
           "source_range": [
             1293,
@@ -211,8 +233,19 @@
         },
         {
           "output_range": [
-            1500,
-            1554
+            1523,
+            1548
+          ],
+          "source_range": [
+            1310,
+            1310
+          ],
+          "rule": "§2.3 in-sugar-proof-param"
+        },
+        {
+          "output_range": [
+            1560,
+            1626
           ],
           "source_range": [
             1322,
@@ -222,8 +255,8 @@
         },
         {
           "output_range": [
-            1721,
-            1749
+            1793,
+            1821
           ],
           "source_range": [
             1489,
@@ -233,8 +266,8 @@
         },
         {
           "output_range": [
-            1759,
-            2224
+            1831,
+            2296
           ],
           "source_range": [
             1520,
@@ -244,8 +277,8 @@
         },
         {
           "output_range": [
-            2233,
-            2688
+            2305,
+            2760
           ],
           "source_range": [
             1605,
@@ -255,8 +288,8 @@
         },
         {
           "output_range": [
-            2841,
-            2965
+            2913,
+            3037
           ],
           "source_range": [
             1824,
@@ -267,8 +300,8 @@
         },
         {
           "output_range": [
-            3139,
-            3318
+            3211,
+            3390
           ],
           "source_range": [
             2026,
@@ -279,8 +312,8 @@
         },
         {
           "output_range": [
-            3318,
-            3332
+            3390,
+            3404
           ],
           "source_range": [
             2026,
@@ -290,8 +323,8 @@
         },
         {
           "output_range": [
-            3340,
-            3351
+            3412,
+            3423
           ],
           "source_range": [
             2055,
