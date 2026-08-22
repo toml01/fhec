@@ -1,7 +1,15 @@
+import type { HardhatEthersSigner } from '@nomicfoundation/hardhat-ethers/signers';
 import type { Contract, Signer } from 'ethers';
 
 import type { MockEnvironment } from './mocks';
 import { toHandle } from './mocks';
+
+/**
+ * HardhatEthersSigner is not a structural subtype of ethers 6.17 `Signer`
+ * (`populateAuthorization` / `authorize` were added later). The harness only
+ * calls `getAddress` and `Contract.connect`.
+ */
+export type AnySigner = Signer | HardhatEthersSigner;
 
 /*
  * Differential execution.
@@ -34,7 +42,7 @@ export interface StepContext {
   contract: Contract;
   /** The address of that contract. */
   address: string;
-  signers: Signer[];
+  signers: AnySigner[];
   /** Address of the signer sending this step. */
   sender: string;
   side: RunSide;
@@ -231,7 +239,7 @@ function describeRevert(error: unknown): { key: string; detail: string } {
 async function readProbes(
   env: MockEnvironment,
   contract: Contract,
-  signers: Signer[],
+  signers: AnySigner[],
   scenario: Scenario,
   after: string
 ): Promise<ProbeSnapshot> {
@@ -280,10 +288,10 @@ export async function runScenario(
   env: MockEnvironment,
   contract: Contract,
   scenario: Scenario,
-  options: { side?: RunSide; label?: string; signers?: Signer[] } = {}
+  options: { side?: RunSide; label?: string; signers?: AnySigner[] } = {}
 ): Promise<RunResult> {
   const side = options.side ?? 'A';
-  const signers: Signer[] = options.signers ?? (await env.hre.ethers.getSigners());
+  const signers: AnySigner[] = options.signers ?? (await env.hre.ethers.getSigners());
   const address = await contract.getAddress();
   const probeEachStep = scenario.probeAfterEachStep !== false;
 
@@ -517,7 +525,7 @@ export class DifferentialMismatchError extends Error {
 export interface DifferentialOptions {
   labelA?: string;
   labelB?: string;
-  signers?: Signer[];
+  signers?: AnySigner[];
 }
 
 /**
@@ -540,7 +548,7 @@ export async function runDifferential(
   const { takeSnapshot } = await import('@nomicfoundation/hardhat-network-helpers');
   const snapshot = await takeSnapshot();
 
-  const signers: Signer[] = options.signers ?? (await env.hre.ethers.getSigners());
+  const signers: AnySigner[] = options.signers ?? (await env.hre.ethers.getSigners());
 
   const a = await runScenario(env, contractA, scenario, {
     side: 'A',
