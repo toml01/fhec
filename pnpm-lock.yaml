@@ -14,8 +14,8 @@ importers:
         specifier: 0.6.1
         version: 0.6.1
       '@fhenixprotocol/cofhe-contracts':
-        specifier: 0.1.4
-        version: 0.1.4
+        specifier: 0.1.5
+        version: 0.1.5
       '@nomicfoundation/hardhat-chai-matchers':
         specifier: 2.0.8
         version: 2.0.8(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
@@ -151,6 +151,9 @@ packages:
 
   '@fhenixprotocol/cofhe-contracts@0.1.4':
     resolution: {integrity: sha512-WNtMxEwZvtjFEHAlOJD1ydKF2qf4zl2/eneYQibe6pnnoeFGWyT9+TRcdgt9iReoB/urZCNzsYAAQCDL1MTPIQ==}
+
+  '@fhenixprotocol/cofhe-contracts@0.1.5':
+    resolution: {integrity: sha512-K0E0iB5hFybDmJz3ZvEHOq5qrVOUJwuOxB1s8kN16WG01MTYPvWiLtdQlP8SrszA2ZY4EFIQUYDOGcDOXt6bmA==}
 
   '@jridgewell/resolve-uri@3.1.2':
     resolution: {integrity: sha512-bRISgCIjP20/tbWSPWMEi54QVPRZExkuD9lJL+UIxUKtwVJA8wW1Trb1jMs1RFXo1CBTNZ/5hpC9QvmKWdopKw==}
@@ -1462,6 +1465,10 @@ snapshots:
   '@fastify/busboy@2.1.1': {}
 
   '@fhenixprotocol/cofhe-contracts@0.1.4':
+    dependencies:
+      '@openzeppelin/contracts': 5.6.1
+
+  '@fhenixprotocol/cofhe-contracts@0.1.5':
     dependencies:
       '@openzeppelin/contracts': 5.6.1
 
