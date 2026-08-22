@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "fhec-bind"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "solar-ast",
  "solar-data-structures",
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "fhec-check"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fhec-bind",
  "fhec-ir",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "fhec-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "clap",
  "fhec-bind",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "fhec-emit"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fhec-ir",
  "fhec-syntax",
@@ -1161,11 +1161,11 @@ dependencies = [
 
 [[package]]
 name = "fhec-ir"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "fhec-lower"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fhec-bind",
  "fhec-check",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "fhec-syntax"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "solar-ast",
  "solar-parse",
@@ -1189,14 +1189,14 @@ dependencies = [
 
 [[package]]
 name = "fhec-targets"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "fhec-ir",
 ]
 
 [[package]]
 name = "fhec-verify"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "log",
  "semver 1.0.28",

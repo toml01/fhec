@@ -41,6 +41,7 @@ unused-crate-dependencies = "warn"
 all = "warn"
 
 [workspace.package]
+version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/toml01/fhec"
