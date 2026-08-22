@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.1.3 |
+| **Version** | 0.1.4 |
 | **Status** | Draft |
 | **Date** | 2026-08-17 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -40,7 +40,7 @@ Let `T` be the transpile function on file contents.
 1. **No-op:** For any input file that is valid plain Solidity making direct FHE library calls (i.e. contains no dialect constructs requiring lowering and triggers no ACL insertion), the output MUST be byte-identical to the input, except for import-specifier rewriting per §2.6.
 2. **Idempotence:** For every accepted input `x`, `T(T(x))` MUST equal `T(x)` byte-exactly.
 
-These are conformance-testable properties (§10.4).
+These are conformance-testable properties (§10.4). When a tool verifies idempotence by re-running the pipeline on its own output (a self-check), diagnostics from the re-run below `error` severity MUST be suppressed: warnings and notes were already reported for the first run, and the re-run exists only to prove byte identity.
 
 ### §1.5 Target profiles
 
@@ -524,3 +524,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.1.1 (2026-08-17)** — error-catalog additions from implementation: FHE1004 config-not-found, FHE1005 config-invalid, FHE1020 duplicate-definition.
 - **0.1.2 (2026-08-17)** — findings from the lowering implementation: §8.2 requires the explicit `address(...)` wrapper, typed callee hoisting, FHE4003 for underivable callee types, and documents the Unknown-callee under-grant; §8.6 splits the dedupe window (forward for R1, backward for R2/R3); §5.2 defines branch-local declarations and FHE3013 for unsupported statement forms in encrypted branches.
 - **0.1.3 (2026-08-17)** — findings from the CLI wiring: FHE1006 frozen-drift; §2.1 names the load stage as the pragma-gate owner; §8.4 states that suggest-mode notes appear on `check` and defines the safe-fix-it boundary for `--fix`.
+- **0.1.4 (2026-08-22)** — §1.4 defines the self-check diagnostic-suppression rule (re-run diagnostics below error severity are suppressed).
