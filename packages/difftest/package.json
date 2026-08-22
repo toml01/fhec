@@ -19,7 +19,7 @@
   "devDependencies": {
     "@cofhe/mock-contracts": "0.6.1",
     "@fhenixprotocol/cofhe-contracts": "0.1.4",
-    "@nomicfoundation/hardhat-chai-matchers": "2.0.8",
+    "@nomicfoundation/hardhat-chai-matchers": "2.1.2",
     "@nomicfoundation/hardhat-ethers": "3.0.8",
     "@nomicfoundation/hardhat-network-helpers": "1.0.12",
     "@openzeppelin/contracts": "5.6.1",

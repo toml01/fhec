@@ -17,8 +17,8 @@ importers:
         specifier: 0.1.4
         version: 0.1.4
       '@nomicfoundation/hardhat-chai-matchers':
-        specifier: 2.0.8
-        version: 2.0.8(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
+        specifier: 2.1.2
+        version: 2.1.2(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
       '@nomicfoundation/hardhat-ethers':
         specifier: 3.0.8
         version: 3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
@@ -222,13 +222,13 @@ packages:
     resolution: {integrity: sha512-kqILRkAd455Sd6v8mfP3C1/0tCOynJWY+Ir+k/9Boocu2kObCrsFgG+ZWB7fSBVdd9cPVSNrnhWS+V+PEo637g==}
     engines: {node: '>= 18'}
 
-  '@nomicfoundation/hardhat-chai-matchers@2.0.8':
-    resolution: {integrity: sha512-Z5PiCXH4xhNLASROlSUOADfhfpfhYO6D7Hn9xp8PddmHey0jq704cr6kfU8TRrQ4PUZbpfsZadPj+pCfZdjPIg==}
+  '@nomicfoundation/hardhat-chai-matchers@2.1.2':
+    resolution: {integrity: sha512-NlUlde/ycXw2bLzA2gWjjbxQaD9xIRbAF30nsoEprAWzH8dXEI1ILZUKZMyux9n9iygEXTzN0SDVjE6zWDZi9g==}
     peerDependencies:
-      '@nomicfoundation/hardhat-ethers': ^3.0.0
+      '@nomicfoundation/hardhat-ethers': ^3.1.0
       chai: ^4.2.0
-      ethers: ^6.1.0
-      hardhat: ^2.9.4
+      ethers: ^6.14.0
+      hardhat: ^2.26.0
 
   '@nomicfoundation/hardhat-ethers@3.0.8':
     resolution: {integrity: sha512-zhOZ4hdRORls31DTOqg+GmEZM0ujly8GGIuRY7t7szEk2zW/arY1qDug/py8AEktT00v5K+b6RvbVog+va51IA==}
@@ -1520,7 +1520,7 @@ snapshots:
       '@nomicfoundation/edr-linux-x64-musl': 0.11.3
       '@nomicfoundation/edr-win32-x64-msvc': 0.11.3
 
-  '@nomicfoundation/hardhat-chai-matchers@2.0.8(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))':
+  '@nomicfoundation/hardhat-chai-matchers@2.1.2(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))':
     dependencies:
       '@nomicfoundation/hardhat-ethers': 3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
       '@types/chai-as-promised': 7.1.8
