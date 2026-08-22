@@ -282,8 +282,8 @@ mod tests {
             cuts.sort_unstable();
             cuts.dedup();
             let mut patches = Vec::new();
-            let mut it = cuts.chunks_exact(2);
-            for pair in &mut it {
+            let (pairs, _rest) = cuts.as_chunks::<2>();
+            for pair in pairs {
                 let (s, e) = (pair[0], pair[1]);
                 let text = match rng.below(3) {
                     0 => String::new(), // deletion

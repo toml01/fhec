@@ -534,10 +534,9 @@ fn base_key_type<'ast>(ictx: &IfCtx<'_, '_, 'ast>, base: &'ast ast::Expr<'ast>) 
                 path.push(cur);
                 cur = b;
             }
-            ast::ExprKind::Tuple(items) if items.len() == 1 => match items[0].as_deref().unspan() {
-                Some(inner) => cur = inner,
-                None => return None,
-            },
+            ast::ExprKind::Tuple(items) if items.len() == 1 => {
+                cur = items[0].as_deref().unspan()?;
+            }
             _ => return None,
         }
     }

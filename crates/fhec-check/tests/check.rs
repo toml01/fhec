@@ -13,7 +13,7 @@ use solar_parse::{
 /// function to `f`.
 fn with_checked<R: Send>(
     sources: &[(&str, &str)],
-    f: impl for<'ast> FnOnce(&CheckedUnit, &dyn Fn(solar_parse::interface::Span) -> String) -> R + Send,
+    f: impl FnOnce(&CheckedUnit, &dyn Fn(solar_parse::interface::Span) -> String) -> R + Send,
 ) -> R {
     let sess = Session::builder()
         .with_buffer_emitter(ColorChoice::Never)

@@ -9,8 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+# Keep this pin in sync with rust-toolchain.toml (the action ignores that file).
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.98"
           components: rustfmt, clippy
       # fmt and clippy are scoped to fhec crates: vendored solar code (crates/vendor/)
       # is kept byte-identical to upstream and is not reformatted or linted by us.
