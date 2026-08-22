@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.28;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+interface IAuditorSink {
+    function report(euint64 value) external;
+}
+
+/// Mapping- and if-heavy dialect contract: encrypted balances keyed by
+/// address, an encrypted-guarded transfer, an encrypted return (rule R3), an
+/// encrypted argument to an external call (rule R2), and a view getter that
+/// legitimately cannot grant (FHE4002).
+contract EncryptedVaultDialect {
+    mapping(address => euint64) private balances;
+
+    error SelfTransfer();
+
+    function deposit(in euint64 amount) external {
+        balances[msg.sender] = balances[msg.sender] + amount;
+    }
+
+    /// Transfer under an encrypted sufficiency check. Each mapping slot must
+    /// merge through select against its pre-value when the check fails.
+    ///
+    /// The two slot updates sit in two sequential encrypted `if`s on the same
+    /// condition, not one: two syntactically different non-literal keys
+    /// (`msg.sender`, `to`) inside a single encrypted `if` are exactly what
+    /// spec §5.2's aliasing rule rejects (FHE3011) — the transpiler cannot
+    /// prove the slots are distinct. The plaintext self-transfer guard is what
+    /// makes the split sound.
+    function transfer(address to, in euint64 amount) external {
+        if (to == msg.sender) revert SelfTransfer();
+        euint64 fromBalance = balances[msg.sender];
+        euint64 toBalance = balances[to];
+        ebool ok = amount <= fromBalance;
+        if (ok) {
+            balances[msg.sender] = fromBalance - amount;
+        }
+        if (ok) {
+            balances[to] = toBalance + amount;
+        }
+    }
+
+    /// Rule R3: non-view encrypted return needs a transient grant to the caller.
+    function getBalance() external returns (euint64) {
+        return balances[msg.sender];
+    }
+
+    /// Rule R2: encrypted argument to an external call needs a transient grant
+    /// to the callee.
+    function reportBalance(address auditor) external {
+        IAuditorSink(auditor).report(balances[msg.sender]);
+    }
+
+    /// FHE4002 territory: a view getter cannot grant; the caller must already
+    /// have access. Used by the harness probes, which read via the mocks.
+    function balanceOf(address account) external view returns (euint64) {
+        return balances[account];
+    }
+}

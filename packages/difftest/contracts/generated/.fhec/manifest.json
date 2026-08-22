@@ -1,0 +1,305 @@
+{
+  "tool": "fhec",
+  "version": "0.0.0",
+  "files": [
+    {
+      "output": "EncryptedCounterDialect.sol",
+      "source": "EncryptedCounterDialect.fsol",
+      "no_op": false,
+      "mappings": [
+        {
+          "output_range": [
+            899,
+            929
+          ],
+          "source_range": [
+            899,
+            899
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            929,
+            961
+          ],
+          "source_range": [
+            899,
+            899
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            1000,
+            1028
+          ],
+          "source_range": [
+            938,
+            938
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            1028,
+            1058
+          ],
+          "source_range": [
+            938,
+            938
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            1330,
+            1359
+          ],
+          "source_range": [
+            1210,
+            1227
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            1381,
+            1435
+          ],
+          "source_range": [
+            1249,
+            1249
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            1459,
+            1481
+          ],
+          "source_range": [
+            1273,
+            1287
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            1491,
+            1838
+          ],
+          "source_range": [
+            1297,
+            1351
+          ],
+          "rule": "§5.2 if-select"
+        },
+        {
+          "output_range": [
+            1981,
+            2021
+          ],
+          "source_range": [
+            1494,
+            1511
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            2022,
+            2052
+          ],
+          "source_range": [
+            1512,
+            1512
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            2052,
+            2084
+          ],
+          "source_range": [
+            1512,
+            1512
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        }
+      ]
+    },
+    {
+      "output": "EncryptedVaultDialect.sol",
+      "source": "EncryptedVaultDialect.fsol",
+      "no_op": false,
+      "mappings": [
+        {
+          "output_range": [
+            582,
+            611
+          ],
+          "source_range": [
+            582,
+            599
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            623,
+            677
+          ],
+          "source_range": [
+            611,
+            611
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            686,
+            746
+          ],
+          "source_range": [
+            620,
+            672
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            747,
+            792
+          ],
+          "source_range": [
+            673,
+            673
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            792,
+            839
+          ],
+          "source_range": [
+            673,
+            673
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            1459,
+            1488
+          ],
+          "source_range": [
+            1293,
+            1310
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            1500,
+            1554
+          ],
+          "source_range": [
+            1322,
+            1322
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            1721,
+            1749
+          ],
+          "source_range": [
+            1489,
+            1510
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            1759,
+            2224
+          ],
+          "source_range": [
+            1520,
+            1596
+          ],
+          "rule": "§5.2 if-select"
+        },
+        {
+          "output_range": [
+            2233,
+            2688
+          ],
+          "source_range": [
+            1605,
+            1671
+          ],
+          "rule": "§5.2 if-select"
+        },
+        {
+          "output_range": [
+            2841,
+            2965
+          ],
+          "source_range": [
+            1824,
+            1852
+          ],
+          "rule": "§8.3 R3",
+          "code": "FHE4012"
+        },
+        {
+          "output_range": [
+            3139,
+            3318
+          ],
+          "source_range": [
+            2026,
+            2026
+          ],
+          "rule": "§8.2 R2",
+          "code": "FHE4011"
+        },
+        {
+          "output_range": [
+            3318,
+            3332
+          ],
+          "source_range": [
+            2026,
+            2047
+          ],
+          "rule": "§8.2 R2 callee-hoist"
+        },
+        {
+          "output_range": [
+            3340,
+            3351
+          ],
+          "source_range": [
+            2055,
+            2075
+          ],
+          "rule": "§8.2 R2 arg-hoist"
+        }
+      ]
+    }
+  ]
+}

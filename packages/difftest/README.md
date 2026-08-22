@@ -184,28 +184,48 @@ The suite proves both directions. `A == A` must pass; both divergent twins must
 at the expected step, with the expected values. A harness that cannot detect
 divergence is worse than no harness.
 
-## Plugging the transpiler in later
+## The transpiler is plugged in
 
-Nothing about the runner is transpiler-specific — it takes two deployed
-contracts. When `fhec` exists:
+This package is itself a `fhec` project: [`fhec.toml`](fhec.toml) points
+`src` at [`contracts-dialect/`](contracts-dialect/) and `out` at
+`contracts/generated/`, which sits inside hardhat's `paths.sources` — so the
+same `hardhat compile` run builds fhec's output next to the hand-written
+references. `pnpm test` transpiles first (`scripts/build-dialect.mjs`: cargo
+when available, an existing `target/release/fhec` otherwise), then runs the
+suite. The generated mirror is **committed**, per `PLAN.md`; `fhec build
+--frozen` in this directory proves it matches regeneration.
 
-1. Point the transpiler's mirror tree at `contracts/generated/`. It is compiled
-   by the same `hardhat compile` run, no config change needed (`paths.sources`
-   is `contracts`, and Hardhat globs recursively).
-2. Keep the hand-written oracle at `contracts/<Name>Ref.sol`.
-3. Add `scenarios/<name>.ts` — one scenario per fixture pair.
-4. Add `test/<name>.diff.test.ts`: deploy both, call
-   `assertDifferentiallyEquivalent`.
+| Path | Meaning |
+|---|---|
+| `contracts-dialect/<Name>.fsol` | dialect input, the transpile target |
+| `contracts/<Name>Ref.sol` | hand-written reference, the differential oracle |
+| `contracts/generated/<Name>.sol` | `fhec` output for `<Name>.fsol` |
+| `scenarios/<name>.ts` | the transaction sequence and probes for that pair |
+| `test/<name>.diff.test.ts` | deploys both and asserts equivalence |
 
-```ts
-const reference = await hre.ethers.deployContract('VaultRef', args);
-const generated = await hre.ethers.deployContract('Vault', args); // contracts/generated/Vault.sol
-await assertDifferentiallyEquivalent(env, reference, generated, vaultScenario);
-```
+Current pairs:
 
-The two contracts only need to agree on the surface the scenario touches. The
-generated contract is free to use different temporaries, different handles, and
-a different internal structure — that is the point.
+- **EncryptedCounterDialect** — `in euint32` sugar, `+`/`<=` operators, a
+  literal operand, and a capped encrypted `if` crossed from both sides of the
+  boundary. Zero manual ACL in the dialect source; every grant is rule R1's.
+- **EncryptedVaultDialect** — `mapping(address => euint64)` slots updated
+  through encrypted `if`s (accepted and rejected transfers), R1 on both the
+  sender-keyed and recipient-keyed slot (the FHE4001 warning case), R3 (an
+  encrypted return called as a transaction), and R2 (a transient grant to an
+  `AuditorSink` that immediately *uses* the handle, so a dropped grant would
+  break revert parity).
+
+One shape is deliberately absent: writing `balances[msg.sender]` **and**
+`balances[to]` inside a *single* encrypted `if` is rejected by spec §5.2's
+aliasing rule (FHE3011 — two syntactically different non-literal keys). The
+vault therefore splits the transfer into two sequential encrypted `if`s on the
+same `ebool`, made sound by the plaintext self-transfer guard. The rejection
+was verified against the real CLI before restructuring.
+
+The reference contracts are written independently from the spec's semantics —
+never copied from fhec output. The two sides only need to agree on the surface
+the scenario touches; temporaries, handles, and internal structure are free to
+differ. That is the point.
 
 Planned follow-ons, in `PLAN.md` order: the conformance corpus (de-lowered
 `TestBed.sol` / `EncryptedCounter.sol` as dialect inputs, differentially

@@ -1,0 +1,21 @@
+# fhec project config for the differential harness.
+#
+# Dialect sources live in contracts-dialect/; the transpiled mirror lands in
+# contracts/generated/, which is inside hardhat's `paths.sources`, so the same
+# `hardhat compile` run picks the generated contracts up next to the
+# hand-written references. See README.md § "The dialect pairs".
+
+[project]
+src = "contracts-dialect"
+out = "contracts/generated"
+
+[target]
+profile = "cofhe"
+version = "0.1.x"
+# The harness compiles with solc 0.8.28 / cancun (hardhat.config.ts); the
+# verify gate mirrors that so both toolchains agree on what "compiles" means.
+solc = ">=0.8.25 <0.9.0"
+evm_version = "cancun"
+
+[acl]
+mode = "insert"

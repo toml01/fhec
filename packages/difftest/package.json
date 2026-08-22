@@ -10,7 +10,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "hardhat test",
+    "build:dialect": "node scripts/build-dialect.mjs",
+    "test": "node scripts/build-dialect.mjs && hardhat test",
     "compile": "hardhat compile",
     "clean": "hardhat clean",
     "check:types": "tsc --noEmit"
