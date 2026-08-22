@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+import { FHERC20 } from "./FHERC20.sol";
+
+/// @dev Test harness: exposes mint/burn over trivially-encrypted plaintext
+/// amounts, mirroring the reference repo's FHERC20_Harness.
+contract FHERC20Harness is FHERC20 {
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_,
+        string memory contractURI_
+    ) FHERC20(name_, symbol_, decimals_, contractURI_) {}
+
+    function mint(address account, uint64 value) public {
+        _mint(account, FHE.asEuint64(value));
+    }
+
+    function burn(address account, uint64 value) public {
+        _burn(account, FHE.asEuint64(value));
+    }
+}

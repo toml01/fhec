@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /**
- * Transpile `contracts-dialect/*.fsol` into `contracts/generated/` with the
- * real fhec CLI (see ../fhec.toml for the src/out wiring).
+ * Transpile both dialect projects with the real fhec CLI:
+ *   - `contracts-dialect/*.fsol` -> `contracts/generated/` (../fhec.toml,
+ *     ACL mode insert);
+ *   - `contracts-dialect-fherc20/*.fsol` -> `contracts/generated-fherc20/`
+ *     (../fhec.fherc20.toml, ACL mode suggest — FHERC20's account-directed
+ *     grants are explicit in the source).
  *
  * Prefers `cargo run --release` so a stale binary can never be tested by
  * accident — cargo rebuilds only what changed, so the fresh-build case costs
@@ -21,25 +25,34 @@ const run = (cmd, args) => spawnSync(cmd, args, { cwd: pkgDir, stdio: 'inherit' 
 
 const haveCargo = spawnSync('cargo', ['--version'], { stdio: 'ignore' }).status === 0;
 
-let result;
-if (haveCargo) {
-  result = run('cargo', [
-    'run',
-    '--release',
-    '--quiet',
-    '-p',
-    'fhec-cli',
-    '--manifest-path',
-    join(repoRoot, 'Cargo.toml'),
-    '--',
-    'build',
-  ]);
-} else if (existsSync(releaseBinary)) {
-  result = run(releaseBinary, ['build']);
-} else {
+/** One `fhec build` for the given config file (undefined = default fhec.toml). */
+function build(configFile) {
+  const configArgs = configFile ? ['--config', configFile] : [];
+  if (haveCargo) {
+    return run('cargo', [
+      'run',
+      '--release',
+      '--quiet',
+      '-p',
+      'fhec-cli',
+      '--manifest-path',
+      join(repoRoot, 'Cargo.toml'),
+      '--',
+      ...configArgs,
+      'build',
+    ]);
+  }
+  if (existsSync(releaseBinary)) {
+    return run(releaseBinary, [...configArgs, 'build']);
+  }
   console.error('build-dialect: neither cargo nor a prebuilt target/release/fhec is available.');
   console.error('Install rust (rustup) or build the CLI once on a machine that has it.');
   process.exit(1);
 }
 
-process.exit(result.status ?? 1);
+for (const configFile of [undefined, 'fhec.fherc20.toml']) {
+  const result = build(configFile);
+  if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1);
+}
+
+process.exit(0);

@@ -1,0 +1,218 @@
+{
+  "tool": "fhec",
+  "version": "0.1.0",
+  "files": [
+    {
+      "output": "FHERC20.sol",
+      "source": "FHERC20.fsol",
+      "no_op": false,
+      "mappings": [
+        {
+          "output_range": [
+            7530,
+            7567
+          ],
+          "source_range": [
+            7530,
+            7556
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            7567,
+            7592
+          ],
+          "source_range": [
+            7556,
+            7556
+          ],
+          "rule": "§2.3 in-sugar-proof-param"
+        },
+        {
+          "output_range": [
+            7639,
+            7723
+          ],
+          "source_range": [
+            7603,
+            7603
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            8335,
+            8372
+          ],
+          "source_range": [
+            8215,
+            8241
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            8377,
+            8402
+          ],
+          "source_range": [
+            8246,
+            8246
+          ],
+          "rule": "§2.3 in-sugar-proof-param"
+        },
+        {
+          "output_range": [
+            8449,
+            8533
+          ],
+          "source_range": [
+            8293,
+            8293
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            13801,
+            13863
+          ],
+          "source_range": [
+            13561,
+            13598
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            13873,
+            13908
+          ],
+          "source_range": [
+            13608,
+            13635
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            15100,
+            15129
+          ],
+          "source_range": [
+            14827,
+            14848
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            15147,
+            15189
+          ],
+          "source_range": [
+            14866,
+            14901
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            15207,
+            15266
+          ],
+          "source_range": [
+            14919,
+            14968
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            15415,
+            15474
+          ],
+          "source_range": [
+            15117,
+            15151
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            15722,
+            15750
+          ],
+          "source_range": [
+            15399,
+            15420
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            15764,
+            15823
+          ],
+          "source_range": [
+            15434,
+            15468
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            15837,
+            15888
+          ],
+          "source_range": [
+            15482,
+            15525
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            16250,
+            16299
+          ],
+          "source_range": [
+            15887,
+            15928
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            16451,
+            16502
+          ],
+          "source_range": [
+            16080,
+            16123
+          ],
+          "rule": "§4.1 operator-lowering"
+        }
+      ]
+    },
+    {
+      "output": "FHERC20Harness.sol",
+      "source": "FHERC20Harness.fsol",
+      "no_op": false,
+      "mappings": [
+        {
+          "output_range": [
+            132,
+            147
+          ],
+          "source_range": [
+            132,
+            148
+          ],
+          "rule": "§2.6 import-rewrite"
+        }
+      ]
+    }
+  ]
+}
