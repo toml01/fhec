@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+interface IVault {
+    function push(euint32 v, uint256 tag) external;
+}
+
+contract R2External {
+    euint32 a;
+    IVault vault;
+
+    function f() public {
+        FHE.allowTransient(a, address(vault));
+        vault.push(a, 1);
+    }
+}

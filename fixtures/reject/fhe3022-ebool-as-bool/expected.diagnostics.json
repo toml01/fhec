@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3022",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 415,
+      "end_byte": 417,
+      "start_line": 21,
+      "start_col": 17,
+      "end_line": 21,
+      "end_col": 19
+    },
+    "message": "`require` requires a plaintext `bool`; an `ebool` cannot be inspected synchronously"
+  }
+]

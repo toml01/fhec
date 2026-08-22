@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE3012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 418,
+      "end_byte": 432,
+      "start_line": 21,
+      "start_col": 20,
+      "end_line": 21,
+      "end_col": 34
+    },
+    "message": "side-effecting operand of an encrypted `&&`/`||`: there is no short-circuit, both sides always execute",
+    "rule": "§5.5"
+  },
+  {
+    "code": "FHE2001",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 412,
+      "end_byte": 432,
+      "start_line": 21,
+      "start_col": 14,
+      "end_line": 21,
+      "end_col": 34
+    },
+    "message": "an encrypted operand meets an expression the checker cannot type; refusing to guess (annotate the other operand or restructure)",
+    "rule": "§3.2"
+  }
+]

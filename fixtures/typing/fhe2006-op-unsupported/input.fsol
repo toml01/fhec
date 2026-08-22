@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract T {
+    eaddress ea1;
+    eaddress ea2;
+    ebool eb;
+
+    function f() public {
+        eb = ea1 < ea2;
+    }
+}

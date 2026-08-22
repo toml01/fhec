@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3008",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 417,
+      "end_byte": 430,
+      "start_line": 21,
+      "start_col": 19,
+      "end_line": 21,
+      "end_col": 32
+    },
+    "message": "only profile FHE calls and same-contract functions the checker has verified branch-safe may be called inside an encrypted branch"
+  }
+]

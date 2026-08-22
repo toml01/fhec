@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 277,
+      "end_byte": 290,
+      "start_line": 13,
+      "start_col": 13,
+      "end_line": 13,
+      "end_col": 26
+    },
+    "message": "encrypted write to `balances[__fhe_key_1]` is keyed by an address that is not `msg.sender`; the transaction sender gains read access to a ciphertext filed under another address",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 498,
+      "end_byte": 519,
+      "start_line": 20,
+      "start_col": 13,
+      "end_line": 20,
+      "end_col": 34
+    },
+    "message": "encrypted write to `balances[__fhe_key_1]` is keyed by an address that is not `msg.sender`; the transaction sender gains read access to a ciphertext filed under another address",
+    "rule": "§8.1"
+  }
+]

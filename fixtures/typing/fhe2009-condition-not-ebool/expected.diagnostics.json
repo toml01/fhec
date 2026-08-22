@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE2009",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 191,
+      "end_byte": 192,
+      "start_line": 11,
+      "start_col": 13,
+      "end_line": 11,
+      "end_col": 14
+    },
+    "message": "`if` condition has type `euint32`; encrypted conditions must be `ebool`",
+    "fixits": [
+      {
+        "span": {
+          "file": "input.fsol",
+          "start_byte": 191,
+          "end_byte": 192,
+          "start_line": 11,
+          "start_col": 13,
+          "end_line": 11,
+          "end_col": 14
+        },
+        "replacement": "FHE.ne(a, FHE.asEuint32(0))",
+        "safe": false
+      }
+    ],
+    "rule": "§3.3"
+  }
+]

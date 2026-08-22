@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract EncryptedCounter {
+    address public owner;
+    euint32 count;
+    ebool frozen;
+
+    error OnlyOwnerAllowed(address caller);
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwnerAllowed(msg.sender);
+        _;
+    }
+
+    constructor(uint32 initialValue) {
+        owner = msg.sender;
+        count = FHE.asEuint32(initialValue);
+        FHE.allowThis(count);
+        FHE.allowSender(count);
+        frozen = FHE.asEbool(false);
+        FHE.allowThis(frozen);
+    }
+
+    function getCount() external view returns (euint32) {
+        return count;
+    }
+
+    function setCount(in euint32 next) external onlyOwner {
+        count = next;
+    }
+
+    function incrementBy(in euint32 amount) external onlyOwner {
+        euint32 next = count + amount;
+        if (frozen) {
+            next = count;
+        }
+        count = next;
+    }
+
+    function take() external onlyOwner returns (euint32) {
+        return count;
+    }
+}

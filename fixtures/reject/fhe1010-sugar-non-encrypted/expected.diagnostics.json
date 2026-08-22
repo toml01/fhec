@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE1010",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 140,
+      "end_byte": 146,
+      "start_line": 7,
+      "start_col": 19,
+      "end_line": 7,
+      "end_col": 25
+    },
+    "message": "`in` must be followed by an encrypted type (ebool, euint8..euint128, eaddress)",
+    "rule": "§2.3"
+  }
+]

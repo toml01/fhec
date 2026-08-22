@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3005",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 417,
+      "end_byte": 430,
+      "start_line": 21,
+      "start_col": 19,
+      "end_line": 21,
+      "end_col": 32
+    },
+    "message": "`emit` cannot appear inside an encrypted branch: events are public and emitting per-branch leaks the condition"
+  }
+]

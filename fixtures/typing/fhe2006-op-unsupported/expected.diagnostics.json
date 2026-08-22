@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2006",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 212,
+      "end_byte": 221,
+      "start_line": 12,
+      "start_col": 14,
+      "end_line": 12,
+      "end_col": 23
+    },
+    "message": "operator `<` is not defined for `eaddress`",
+    "rule": "§4.1"
+  }
+]

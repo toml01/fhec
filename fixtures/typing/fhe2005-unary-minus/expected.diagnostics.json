@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE2005",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 176,
+      "end_byte": 178,
+      "start_line": 10,
+      "start_col": 13,
+      "end_line": 10,
+      "end_col": 15
+    },
+    "message": "unary minus is not defined on encrypted values",
+    "fixits": [
+      {
+        "span": {
+          "file": "input.fsol",
+          "start_byte": 176,
+          "end_byte": 178,
+          "start_line": 10,
+          "start_col": 13,
+          "end_line": 10,
+          "end_col": 15
+        },
+        "replacement": "FHE.sub(FHE.asEuint32(0), a)",
+        "safe": false
+      }
+    ],
+    "rule": "§3.3"
+  }
+]

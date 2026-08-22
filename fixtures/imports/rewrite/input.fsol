@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+import {CounterBase} from "./Base.fsol";
+
+contract ImportRewrite is CounterBase {
+    function bump() public {
+        total = total + 1;
+    }
+}

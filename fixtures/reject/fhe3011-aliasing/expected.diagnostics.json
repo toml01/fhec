@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE3011",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 439,
+      "end_byte": 446,
+      "start_line": 21,
+      "start_col": 41,
+      "end_line": 21,
+      "end_col": 48
+    },
+    "message": "cannot decide whether `byId[__fhe_key_2]` and `byId[__fhe_key_1]` are the same location (spec §5.2 step 3)",
+    "rule": "§5.2"
+  }
+]

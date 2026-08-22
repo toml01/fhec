@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3002",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 433,
+      "end_byte": 439,
+      "start_line": 21,
+      "start_col": 35,
+      "end_line": 21,
+      "end_col": 41
+    },
+    "message": "`break`/`continue` cannot appear inside an encrypted branch: both branches always execute (restructure the loop body)"
+  }
+]

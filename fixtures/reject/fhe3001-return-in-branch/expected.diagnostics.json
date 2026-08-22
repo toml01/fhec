@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3001",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 417,
+      "end_byte": 424,
+      "start_line": 21,
+      "start_col": 19,
+      "end_line": 21,
+      "end_col": 26
+    },
+    "message": "`return` cannot appear inside an encrypted branch: both branches always execute (assign to a local and return after the `if`)"
+  }
+]

@@ -1,0 +1,13 @@
+The files under oz-context/, oz-ierc20/, and oz-panic/ are unmodified copies
+from OpenZeppelin Contracts v5.x (https://github.com/OpenZeppelin/openzeppelin-contracts),
+MIT licensed, taken from the @openzeppelin/contracts npm package:
+
+- oz-context/input.sol  <- utils/Context.sol
+- oz-ierc20/input.sol   <- token/ERC20/IERC20.sol
+- oz-panic/input.sol    <- utils/Panic.sol
+
+encrypted-counter/input.sol is the canonical CoFHE EncryptedCounter example
+(already-lowered plain CoFHE Solidity) from the cofhesdk documentation snippets.
+
+These files form the must-not-touch corpus: fhec MUST reproduce them
+byte-identically (spec §10.4 no-op property).

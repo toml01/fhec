@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2011",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 191,
+      "end_byte": 194,
+      "start_line": 11,
+      "start_col": 13,
+      "end_line": 11,
+      "end_col": 16
+    },
+    "message": "the value of `++`/`--` on an encrypted variable cannot be used inside a larger expression (the pre/post distinction has no encrypted analogue); use a statement form",
+    "rule": "§4.2"
+  }
+]

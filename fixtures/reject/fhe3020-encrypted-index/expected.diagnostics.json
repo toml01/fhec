@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3020",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 416,
+      "end_byte": 418,
+      "start_line": 21,
+      "start_col": 18,
+      "end_line": 21,
+      "end_col": 20
+    },
+    "message": "an encrypted value cannot index an array or mapping: the access pattern would leak the ciphertext"
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2004",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 193,
+      "end_byte": 201,
+      "start_line": 11,
+      "start_col": 13,
+      "end_line": 11,
+      "end_col": 21
+    },
+    "message": "the shift amount (`euint64`) is wider than the shifted operand (`euint32`); narrowing is never implicit",
+    "rule": "§4.3"
+  }
+]

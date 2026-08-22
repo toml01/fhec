@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract ElseLessState {
+    euint32 a;
+    euint32 b;
+    ebool eb;
+
+    function f() public {
+        if (eb) {
+            a = b;
+        }
+    }
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE1012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 137,
+      "end_byte": 149,
+      "start_line": 7,
+      "start_col": 16,
+      "end_line": 7,
+      "end_col": 28
+    },
+    "message": "the `in` encrypted-input sugar is only permitted in function and constructor parameter lists, not in a modifier",
+    "rule": "§2.3"
+  }
+]

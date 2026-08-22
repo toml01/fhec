@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2010",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 218,
+      "end_byte": 224,
+      "start_line": 11,
+      "start_col": 9,
+      "end_line": 11,
+      "end_col": 15
+    },
+    "message": "this expression lowers to an FHE library operation, which cannot execute in a `view`/`pure` function",
+    "rule": "§3.4"
+  }
+]

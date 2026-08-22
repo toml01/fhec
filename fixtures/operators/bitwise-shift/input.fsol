@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract BitwiseShift {
+    euint32 a;
+    euint32 b;
+
+    function f() public {
+        a = a & b;
+        a = a | b;
+        a = a ^ b;
+        a = ~a;
+        a = a << 2;
+        a = a >> 1;
+    }
+}

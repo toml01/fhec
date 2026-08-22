@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3006",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 417,
+      "end_byte": 427,
+      "start_line": 21,
+      "start_col": 19,
+      "end_line": 21,
+      "end_col": 29
+    },
+    "message": "write to a plaintext location inside an encrypted branch leaks the condition: both branches always execute (write an encrypted value, or hoist the write out of the `if`)"
+  }
+]

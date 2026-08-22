@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3004",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 417,
+      "end_byte": 442,
+      "start_line": 21,
+      "start_col": 19,
+      "end_line": 21,
+      "end_col": 44
+    },
+    "message": "external calls cannot appear inside an encrypted branch: both branches always execute (hoist the call out of the `if`)"
+  }
+]

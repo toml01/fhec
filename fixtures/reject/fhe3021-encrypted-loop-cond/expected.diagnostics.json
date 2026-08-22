@@ -1,0 +1,16 @@
+[
+  {
+    "code": "FHE3021",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 414,
+      "end_byte": 416,
+      "start_line": 21,
+      "start_col": 16,
+      "end_line": 21,
+      "end_col": 18
+    },
+    "message": "loops with encrypted conditions or loop-control expressions are not expressible: the trip count would leak the ciphertext (spec §5.6)"
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2002",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 190,
+      "end_byte": 196,
+      "start_line": 11,
+      "start_col": 13,
+      "end_line": 11,
+      "end_col": 19
+    },
+    "message": "incompatible encrypted operand types `euint32` and `ebool`",
+    "rule": "§3.3"
+  }
+]

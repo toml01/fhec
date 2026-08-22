@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2003",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 182,
+      "end_byte": 185,
+      "start_line": 10,
+      "start_col": 19,
+      "end_line": 10,
+      "end_col": 22
+    },
+    "message": "this literal does not fit `euint8` (negative literals and non-numeric literals never coerce to encrypted types)",
+    "rule": "§3.3"
+  }
+]

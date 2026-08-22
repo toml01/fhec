@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2008",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 192,
+      "end_byte": 196,
+      "start_line": 10,
+      "start_col": 17,
+      "end_line": 10,
+      "end_col": 21
+    },
+    "message": "this plaintext operand does not implicitly convert to `euint32`'s plaintext analogue `uint32`",
+    "rule": "§3.3"
+  }
+]
