@@ -26,6 +26,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # Differential harness targets Hardhat 2 (@cofhe/hardhat-plugin peer line).
+      - dependency-name: hardhat
+        versions: [">=3"]
+      # Harness pins its TypeScript toolchain; majors are adopted deliberately.
+      - dependency-name: typescript
+        versions: [">=6"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

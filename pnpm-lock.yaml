@@ -18,25 +18,25 @@ importers:
         version: 0.1.4
       '@nomicfoundation/hardhat-chai-matchers':
         specifier: 2.0.8
-        version: 2.0.8(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.13.5)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.13.5)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
+        version: 2.0.8(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
       '@nomicfoundation/hardhat-ethers':
         specifier: 3.0.8
-        version: 3.0.8(ethers@6.13.5)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
+        version: 3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
       '@nomicfoundation/hardhat-network-helpers':
         specifier: 1.0.12
         version: 1.0.12(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
       '@openzeppelin/contracts':
-        specifier: 5.4.0
-        version: 5.4.0
+        specifier: 5.6.1
+        version: 5.6.1
       '@openzeppelin/contracts-upgradeable':
-        specifier: 5.4.0
-        version: 5.4.0(@openzeppelin/contracts@5.4.0)
+        specifier: 5.6.1
+        version: 5.6.1(@openzeppelin/contracts@5.6.1)
       '@types/chai':
         specifier: 4.3.20
         version: 4.3.20
       '@types/chai-as-promised':
-        specifier: 7.1.8
-        version: 7.1.8
+        specifier: 8.0.2
+        version: 8.0.2
       '@types/mocha':
         specifier: 10.0.10
         version: 10.0.10
@@ -47,11 +47,11 @@ importers:
         specifier: 4.5.0
         version: 4.5.0
       chai-as-promised:
-        specifier: 7.1.2
-        version: 7.1.2(chai@4.5.0)
+        specifier: 8.0.2
+        version: 8.0.2(chai@4.5.0)
       ethers:
-        specifier: 6.13.5
-        version: 6.13.5
+        specifier: 6.17.0
+        version: 6.17.0
       hardhat:
         specifier: 2.26.3
         version: 2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)
@@ -72,8 +72,8 @@ importers:
 
 packages:
 
-  '@adraffy/ens-normalize@1.10.1':
-    resolution: {integrity: sha512-96Z2IP3mYmF1Xg2cDm8f1gWGf/HUVedQ3FMifV4kG/PQ4yEP51xDtRAEfhVNt5f/uzpNkZHwWQuUcu6D6K+Ekw==}
+  '@adraffy/ens-normalize@1.11.1':
+    resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
   '@cofhe/mock-contracts@0.6.1':
     resolution: {integrity: sha512-COBenHcZZ4hRox5KWYJnD5RrZB0Dd3wXkFTNTsBUOeBre6IEMWA7odAxUQcrx0oEhtoX81vbj+LSb9hqO68KMQ==}
@@ -278,8 +278,16 @@ packages:
     peerDependencies:
       '@openzeppelin/contracts': 5.4.0
 
+  '@openzeppelin/contracts-upgradeable@5.6.1':
+    resolution: {integrity: sha512-n4a/vfRs114lXyUdYg7pyY8LvFKWvCDF5lEcRRAVxap8g6ZEdLqm+9tmt2zTtRHcNMxTYp9y5t6KBof4tHp7Og==}
+    peerDependencies:
+      '@openzeppelin/contracts': 5.6.1
+
   '@openzeppelin/contracts@5.4.0':
     resolution: {integrity: sha512-eCYgWnLg6WO+X52I16TZt8uEjbtdkgLC0SUX/xnAksjjrQI4Xfn4iBRoI5j55dmlOhDv1Y7BoR3cU7e3WWhC6A==}
+
+  '@openzeppelin/contracts@5.6.1':
+    resolution: {integrity: sha512-Ly6SlsVJ3mj+b18W3R8gNufB7dTICT105fJhodGAGgyC2oqnBAhqSiNDJ8V8DLY05cCz81GLI0CU5vNYA1EC/w==}
 
   '@scure/base@1.1.9':
     resolution: {integrity: sha512-8YKhl8GHiNI/pU2VMaofa2Tor7PJRAjwQLBBuilkJ9L5+13yVbC7JO/wS7piioAvPSwR3JKM1IJ/u4xQzbcXKg==}
@@ -344,6 +352,9 @@ packages:
 
   '@types/chai-as-promised@7.1.8':
     resolution: {integrity: sha512-ThlRVIJhr69FLlh6IctTXFkmhtP3NpMZ2QGq69StYLyKZFp/HOp1VdKZj7RvfNWYYcJ1xlbLGLLWj1UvP5u/Gw==}
+
+  '@types/chai-as-promised@8.0.2':
+    resolution: {integrity: sha512-meQ1wDr1K5KRCSvG2lX7n7/5wf70BeptTKst0axGvnN6zqaVpRqegoIbugiAPSqOW9K9aL8gDVrm7a2LXOtn2Q==}
 
   '@types/chai@4.3.20':
     resolution: {integrity: sha512-/pC9HAB5I/xMlc5FP77qjCnI16ChlJfW0tGa0IUcFn38VJrTV6DeZ60NU5KZBtaOZqjdpwTWohz5HU1RrhiYxQ==}
@@ -499,6 +510,11 @@ packages:
     peerDependencies:
       chai: '>= 2.1.2 < 6'
 
+  chai-as-promised@8.0.2:
+    resolution: {integrity: sha512-1GadL+sEJVLzDjcawPM4kjfnL+p/9vrxiEUonowKOAzvVg0PixJUdtuDzdkDeQhK3zfOE76GqGkZIQ7/Adcrqw==}
+    peerDependencies:
+      chai: '>= 2.1.2 < 7'
+
   chai@4.5.0:
     resolution: {integrity: sha512-RITGBfijLkBddZvnn8jdqoTypxvqbOLYQkGGxXzeFjVHvudaPw0HNFD9x928/eUwYWd2dPCugVqspGALTZZQKw==}
     engines: {node: '>=4'}
@@ -509,6 +525,10 @@ packages:
 
   check-error@1.0.3:
     resolution: {integrity: sha512-iKEoDYaRmd1mxM90a2OEfWhjsjPpYPuQ+lMYsoxB126+t8fw7ySEO48nmDg5COTjxDI65/Y2OWpeEHk3ZOe8zg==}
+
+  check-error@2.1.3:
+    resolution: {integrity: sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==}
+    engines: {node: '>= 16'}
 
   chokidar@3.6.0:
     resolution: {integrity: sha512-7VT13fmjotKpGipCW9JEQAusEPE+Ei8nl6/g4FBAmIm0GOOLMua9NDDo/DWp0ZAxCr3cPq5ZpBqmPAQgDda2Pw==}
@@ -650,8 +670,8 @@ packages:
     resolution: {integrity: sha512-SDl5kKrQAudFBUe5OJM9Ac6WmMyYmXX/6sTmLZ3ffG2eY6ZIGBes3pEDxNN6V72WyOw4CPD5RomKdsa8DAAwLg==}
     engines: {node: '>=10.0.0'}
 
-  ethers@6.13.5:
-    resolution: {integrity: sha512-+knKNieu5EKRThQJWwqaJ10a6HE9sSehGeqWN65//wE7j47ZpFhKAnHB/JJFibwwg61I/koxaPsXbXpD/skNOQ==}
+  ethers@6.17.0:
+    resolution: {integrity: sha512-BpyrpIPJ3ydEVow8zGaz1DuPS7YU8DcWxuBnY9a0UA/lvAPwrMr+EPXsfrul628SRaekPNeIM4UFh/91GWZang==}
     engines: {node: '>=14.0.0'}
 
   evp_bytestokey@1.0.3:
@@ -1259,8 +1279,8 @@ packages:
       utf-8-validate:
         optional: true
 
-  ws@8.17.1:
-    resolution: {integrity: sha512-6XQFvXTkbfUOZOKKILFG1PDK2NDQs4azKQl26T0YS5CxqWLgXajbPZ+h4gZekJyRqFU8pvnbAbbs/3TgRPy+GQ==}
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -1297,7 +1317,7 @@ packages:
 
 snapshots:
 
-  '@adraffy/ens-normalize@1.10.1': {}
+  '@adraffy/ens-normalize@1.11.1': {}
 
   '@cofhe/mock-contracts@0.6.1':
     dependencies:
@@ -1443,7 +1463,7 @@ snapshots:
 
   '@fhenixprotocol/cofhe-contracts@0.1.4':
     dependencies:
-      '@openzeppelin/contracts': 5.4.0
+      '@openzeppelin/contracts': 5.6.1
 
   '@jridgewell/resolve-uri@3.1.2': {}
 
@@ -1500,21 +1520,21 @@ snapshots:
       '@nomicfoundation/edr-linux-x64-musl': 0.11.3
       '@nomicfoundation/edr-win32-x64-msvc': 0.11.3
 
-  '@nomicfoundation/hardhat-chai-matchers@2.0.8(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.13.5)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.13.5)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))':
+  '@nomicfoundation/hardhat-chai-matchers@2.0.8(@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)))(chai@4.5.0)(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))':
     dependencies:
-      '@nomicfoundation/hardhat-ethers': 3.0.8(ethers@6.13.5)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
+      '@nomicfoundation/hardhat-ethers': 3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))
       '@types/chai-as-promised': 7.1.8
       chai: 4.5.0
       chai-as-promised: 7.1.2(chai@4.5.0)
       deep-eql: 4.1.4
-      ethers: 6.13.5
+      ethers: 6.17.0
       hardhat: 2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)
       ordinal: 1.0.3
 
-  '@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.13.5)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))':
+  '@nomicfoundation/hardhat-ethers@3.0.8(ethers@6.17.0)(hardhat@2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4))':
     dependencies:
       debug: 4.4.3(supports-color@8.1.1)
-      ethers: 6.13.5
+      ethers: 6.17.0
       hardhat: 2.26.3(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.5.4))(typescript@5.5.4)
       lodash.isequal: 4.5.0
     transitivePeerDependencies:
@@ -1560,7 +1580,13 @@ snapshots:
     dependencies:
       '@openzeppelin/contracts': 5.4.0
 
+  '@openzeppelin/contracts-upgradeable@5.6.1(@openzeppelin/contracts@5.6.1)':
+    dependencies:
+      '@openzeppelin/contracts': 5.6.1
+
   '@openzeppelin/contracts@5.4.0': {}
+
+  '@openzeppelin/contracts@5.6.1': {}
 
   '@scure/base@1.1.9': {}
 
@@ -1650,6 +1676,10 @@ snapshots:
       '@types/node': 22.10.5
 
   '@types/chai-as-promised@7.1.8':
+    dependencies:
+      '@types/chai': 4.3.20
+
+  '@types/chai-as-promised@8.0.2':
     dependencies:
       '@types/chai': 4.3.20
 
@@ -1811,6 +1841,11 @@ snapshots:
       chai: 4.5.0
       check-error: 1.0.3
 
+  chai-as-promised@8.0.2(chai@4.5.0):
+    dependencies:
+      chai: 4.5.0
+      check-error: 2.1.3
+
   chai@4.5.0:
     dependencies:
       assertion-error: 1.1.0
@@ -1829,6 +1864,8 @@ snapshots:
   check-error@1.0.3:
     dependencies:
       get-func-name: 2.0.2
+
+  check-error@2.1.3: {}
 
   chokidar@3.6.0:
     dependencies:
@@ -1998,15 +2035,15 @@ snapshots:
       ethereum-cryptography: 0.1.3
       rlp: 2.2.7
 
-  ethers@6.13.5:
+  ethers@6.17.0:
     dependencies:
-      '@adraffy/ens-normalize': 1.10.1
+      '@adraffy/ens-normalize': 1.11.1
       '@noble/curves': 1.2.0
       '@noble/hashes': 1.3.2
       '@types/node': 22.7.5
       aes-js: 4.0.0-beta.5
       tslib: 2.7.0
-      ws: 8.17.1
+      ws: 8.21.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -2637,7 +2674,7 @@ snapshots:
 
   ws@7.5.13: {}
 
-  ws@8.17.1: {}
+  ws@8.21.0: {}
 
   y18n@5.0.8: {}
 
