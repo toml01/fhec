@@ -1,0 +1,37 @@
+{
+  "name": "@fhec/hardhat-plugin",
+  "version": "0.1.0",
+  "description": "Hardhat 2 plugin: transpile .fsol with fhec before compile and remap solc diagnostics to original sources",
+  "license": "MIT",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test test/*.test.js",
+    "check:types": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "hardhat": "^2.0.0"
+  },
+  "dependencies": {
+    "fhec": "workspace:*",
+    "smol-toml": "1.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.5",
+    "hardhat": "2.29.1",
+    "typescript": "5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/toml01/fhec.git",
+    "directory": "packages/hardhat-plugin"
+  }
+}
