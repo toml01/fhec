@@ -7,10 +7,13 @@ import "@fhenixprotocol/cofhe-contracts/FHE.sol";
  * Hand-written reference contract for the differential harness.
  *
  * Verbatim copy of the canonical CoFHE example
- * (`cofhesdk/packages/site/snippets/EncryptedCounter.sol`) with two mechanical
+ * (`cofhesdk/packages/site/snippets/EncryptedCounter.sol`) with three mechanical
  * edits only:
  *   - the `// [!region ...]` docs-site markers are dropped;
- *   - the import is quoted the same way the rest of this package quotes imports.
+ *   - the import is quoted the same way the rest of this package quotes imports;
+ *   - `setCount` takes the cofhe-contracts 0.2.0 encrypted-input pair
+ *     (`externalEuint32` handle + trailing `bytes inputProof`) instead of the
+ *     removed `InEuint32` struct.
  *
  * Nothing else changed: the manual `FHE.allowThis` / `FHE.allowSender` pairs
  * after every encrypted storage write stay exactly where the human wrote them,
@@ -42,8 +45,8 @@ contract EncryptedCounterRef {
     return count;
   }
 
-  function setCount(InEuint32 memory _inCount) external onlyOwner {
-    count = FHE.asEuint32(_inCount);
+  function setCount(externalEuint32 _inCount, bytes memory inputProof) external onlyOwner {
+    count = FHE.asEuint32(_inCount, inputProof);
     FHE.allowThis(count);
     FHE.allowSender(count);
     decrypted = false;

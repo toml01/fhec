@@ -16,8 +16,8 @@ contract EncryptedVaultDialect {
 
     error SelfTransfer();
 
-    function deposit(InEuint64 memory amount_input) external {
-        euint64 amount = FHE.asEuint64(amount_input);
+    function deposit(externalEuint64 amount_input, bytes memory inputProof) external {
+        euint64 amount = FHE.asEuint64(amount_input, inputProof);
         balances[msg.sender] = FHE.add(balances[msg.sender], amount);
         FHE.allowThis(balances[msg.sender]);
         FHE.allowSender(balances[msg.sender]);
@@ -32,8 +32,8 @@ contract EncryptedVaultDialect {
     /// spec §5.2's aliasing rule rejects (FHE3011) — the transpiler cannot
     /// prove the slots are distinct. The plaintext self-transfer guard is what
     /// makes the split sound.
-    function transfer(address to, InEuint64 memory amount_input) external {
-        euint64 amount = FHE.asEuint64(amount_input);
+    function transfer(address to, externalEuint64 amount_input, bytes memory inputProof) external {
+        euint64 amount = FHE.asEuint64(amount_input, inputProof);
         if (to == msg.sender) revert SelfTransfer();
         euint64 fromBalance = balances[msg.sender];
         euint64 toBalance = balances[to];

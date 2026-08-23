@@ -3,7 +3,7 @@ import type { Scenario } from '../src/differential';
 /** Value both counters are constructed with. */
 export const INITIAL_COUNT = 5;
 
-/** Value pushed through `setCount` as a signed `InEuint32`. */
+/** Value pushed through `setCount` as a verified `externalEuint32` + proof. */
 export const SET_COUNT_VALUE = 1000;
 
 /**
@@ -44,13 +44,17 @@ export const encryptedCounterScenario: Scenario = {
       expectRevert: 'OnlyOwnerAllowed',
     },
 
-    // Encrypted input. Args are built per run: an InEuint32 is bound to its
-    // sender and consumes a salt inside MockZkVerifier, so each side mints its
-    // own even though both encode the same plaintext.
+    // Encrypted input. Args are built per run: the verifier signature is bound
+    // to the sender AND to the consuming contract (`ctx.address`, which differs
+    // per side), and minting consumes a salt inside MockZkVerifier — so each
+    // side mints its own even though both encode the same plaintext.
     {
       fn: 'setCount',
       label: 'setCount(encrypted 1000)',
-      args: async (ctx) => [await ctx.env.encryptInput(SET_COUNT_VALUE, 'euint32', ctx.sender)],
+      args: async (ctx) => {
+        const input = await ctx.env.encryptInput(SET_COUNT_VALUE, 'euint32', ctx.sender, ctx.address);
+        return [input.handle, input.signature];
+      },
     },
 
     { fn: 'incrementCount', label: 'increment #3' },

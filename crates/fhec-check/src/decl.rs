@@ -41,8 +41,8 @@ pub(crate) fn custom_ty(unit: &BoundUnit<'_>, trust: &Trust, name: &str, res: &R
     if let Some(ety) = trust.encrypted_type(unit, name, res) {
         return Ty::Encrypted(ety);
     }
-    if let Some(ety) = trust.in_struct_type(unit, name, res) {
-        return Ty::Plain(PlainTy::InStruct(ety));
+    if let Some(ety) = trust.external_input_type(unit, name, res) {
+        return Ty::Plain(PlainTy::ExternalInput(ety));
     }
     match res {
         Resolution::TypeName(id) => match &unit.type_decl(*id).kind {

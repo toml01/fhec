@@ -56,7 +56,7 @@ comparisons against the same deployment set.
 ## The mock bootstrap ritual
 
 This is the part that is easy to get subtly wrong, so it is written down.
-Transcribed from `@cofhe/hardhat-plugin@0.6.1` (`src/deploy.ts`, `src/utils.ts`)
+Transcribed from `@cofhe/hardhat-plugin@0.7.0` (`src/deploy.ts`, `src/utils.ts`)
 and implemented in [`src/mocks.ts`](src/mocks.ts) as `deployMockEnvironment()`.
 
 **Step 0 — compile the mocks into this project.**
@@ -87,10 +87,19 @@ called explicitly. Skipping it leaves `owner == address(0)` and every
 *specifically so its constructor runs* — `MockPermissioned` is `EIP712("ACL","1")`
 and needs its domain separator built. Assert `exists()`.
 
-**Step 4 — link them: `taskManager.setACLContract(aclAddress)`.**
+**Step 4 — the ACP contracts (new in mock-contracts 0.7.0).**
+0.7.0 replaced permits with scoped, revocable ACPs, and ships two plain
+(non-fixed-address) contracts the ACL points at: `ACPTimestampRevoker`, linked
+with `acl.setDefaultRevokerContract(...)`, answers `disabled(issuer, id)` during
+ACP validation; `ACPShareRegistry`, linked with `acl.setShareRegistry(...)`, is
+the on-chain hand-off for shared ACPs. Neither sits on the FHE-op path, so the
+harness's own probes work without them — but the plugin deploys both, so this
+does too, and an ACP-authenticated read would revert if either were unset.
+
+**Step 5 — link the ACL: `taskManager.setACLContract(aclAddress)`.**
 Missing this link makes every single FHE op revert inside the TaskManager.
 
-**Step 5 — set the two signer authorities.**
+**Step 6 — set the two signer authorities.**
 `setVerifierSigner(0x6E12D8C8…)` and `setDecryptResultSigner(0x70997970…)`.
 Both keys are file-level constants in `MockCoFHE.sol`. This is not optional
 housekeeping: leaving either at `address(0)` makes the mock **skip signature
@@ -98,38 +107,82 @@ verification entirely**, which would silently weaken the harness.
 `assertMockConstants()` re-derives both addresses from their private keys at
 startup, so a version bump that rotates them fails loudly.
 
-**Step 6 — fund the ZK verifier signer** with `hardhat_setBalance`.
+**Step 7 — fund the ZK verifier signer** with `hardhat_setBalance`.
 
-**Step 7 — MockZkVerifier (`0x…5001`) and MockThresholdNetwork (`0x…5002`)**
+**Step 8 — MockZkVerifier (`0x…5001`) and MockThresholdNetwork (`0x…5002`)**
 via `hardhat_setCode`, then `thresholdNetwork.initialize(taskManager, acl)`.
 
-**Step 8 — `taskManager.setLogOps(false)`.**
+**Step 9 — `taskManager.setLogOps(false)`.**
 The mock coprocessor `console.log`s every FHE operation. A differential run
 executes the scenario twice; pass `{ logOps: true }` when debugging.
 
 ### Encrypted inputs without the SDK
 
-`in euint32` sugar is a v1 transpiler feature, so the harness has to build
-signed `InEuintXX` values. `env.encryptInput(value, 'euint32', sender)` does it
-with no `@cofhe/sdk` dependency:
+`in euint32` sugar is a v1 transpiler feature, so the harness has to mint
+verified inputs itself. cofhe-contracts 0.2.0 **removed the `InEuintXX`
+structs**: an encrypted argument is now a *pair* — an `externalEuintXX` handle
+(a plain `bytes32`) in the parameter's own position, plus **one** `bytes` proof
+as the call's trailing argument, shared by every encrypted input of that call.
+
+```solidity
+function setCount(externalEuint32 _inCount, bytes memory inputProof) external {
+    count = FHE.asEuint32(_inCount, inputProof);
+    …
+}
+```
+
+`env.encryptInput(value, type, sender, consumingContract, securityZone = 0)`
+mints one, with no `@cofhe/sdk` dependency, and returns
+`{ handle, ctHash, utype, securityZone, signature }`:
 
 1. `zkVerifier.zkVerifyCalcCtHash.staticCall(...)` — read the handle **first**;
    `insertCtHash` bumps the verifier's internal salt, which would change it.
 2. `zkVerifier.insertCtHash(ctHash, value)` — store the plaintext.
-3. Sign `keccak256(abi.encodePacked(ctHash, utype, securityZone, sender, chainid))`
-   with the verifier key. `MockTaskManager.extractSigner` uses a **raw**
-   `ECDSA.recover`, so sign the digest directly — an EIP-191 `personal_sign`
-   prefix produces `InvalidSigner`.
+3. Sign the **batch** digest with the verifier key. mock-contracts 0.7.0
+   authenticates a whole batch with one signature, and binds each input to the
+   contract that will consume it (`MockTaskManager.extractBatchSigner`):
 
-Handles are bound to their sender and to the salt, so each side of a comparison
-mints its own input. That is what the `args` factory form is for:
+   ```
+   h_i    = keccak256(abi.encodePacked(
+              uint256 ctHash, uint8 utype, uint8 securityZone,
+              address sender, uint256 chainid, address consumingContract))
+   digest = keccak256(h_0 ‖ h_1 ‖ … ‖ h_n)
+   ```
+
+   `ECDSA.recover` runs **raw** on `digest`, so sign it directly — an EIP-191
+   `personal_sign` prefix produces `InvalidSigner`.
+
+Two bindings matter, and both are enforced: `sender` is `msg.sender` as the
+consuming contract sees it, and `consumingContract` is `msg.sender` as
+`batchVerifyInputs` sees it — the contract whose code runs `FHE.asEuintXX`.
+An input signed for one contract is rejected by any other (this closed a replay
+path). Since the two sides of a comparison live at different addresses, **each
+side must mint its own input**, with `ctx.address` as the consuming contract.
+That is what the `args` factory form is for:
 
 ```ts
 {
   fn: 'setCount',
-  args: async (ctx) => [await ctx.env.encryptInput(1000, 'euint32', ctx.sender)],
+  args: async (ctx) => {
+    const input = await ctx.env.encryptInput(1000, 'euint32', ctx.sender, ctx.address);
+    return [input.handle, input.signature];
+  },
 }
 ```
+
+`env.encryptInputs(specs, sender, consumingContract)` is the batch form,
+returning `{ handles, ctHashes, signature }`. It is needed whenever one call
+carries more than one encrypted argument: the signature covers the whole batch,
+so per-argument `FHE.asEuintXX(h, proof)` calls would each rebuild a one-element
+digest and fail — such a contract must verify them together
+(`FHE.asEuintXXs` / `Impl.verifyBatchInputs`), in the same order.
+
+One 0.7.0 mock semantic worth recording: `MockACL` transient allowances now use
+real EIP-1153 transient storage, so a transient grant expires at the end of its
+own **transaction**, not at the end of the block. Nothing here relied on the old
+behaviour — the R2/R3 grants are used inside the granting transaction, and the
+`isAllowed` probes read permanent grants — but a scenario that granted
+transiently in one step and asserted in a later one would now read `false`.
 
 ## Writing a scenario
 
@@ -139,7 +192,13 @@ export const scenario: Scenario = {
   steps: [
     { fn: 'incrementCount', label: 'increment #1' },
     { fn: 'incrementCount', from: 1, expectRevert: 'OnlyOwnerAllowed' },
-    { fn: 'setCount', args: async (ctx) => [await ctx.env.encryptInput(1000, 'euint32', ctx.sender)] },
+    {
+      fn: 'setCount',
+      args: async (ctx) => {
+        const input = await ctx.env.encryptInput(1000, 'euint32', ctx.sender, ctx.address);
+        return [input.handle, input.signature];
+      },
+    },
   ],
   plaintextProbes: [{ name: 'count', getter: 'getCount' }],
   aclProbes: [
@@ -235,14 +294,13 @@ merge-order bug classes, which fit as generated `Scenario` objects.
 ## Dependencies
 
 `@cofhe/mock-contracts` **is published** on the public npm registry under
-exactly the name `PLAN.md` uses. This package therefore depends on the
-**published `0.6.1`**, not on a `file:` link to
-`/Users/toml/dev/cofhesdk/packages/mock-contracts` (which is `0.4.0` locally).
+exactly the name `PLAN.md` uses, so this package depends on the published
+release, not on a `file:` link to `/Users/toml/dev/cofhesdk/packages/mock-contracts`.
 No `file:` fallback was needed.
 
-Two consequences of taking 0.6.1 over the local 0.4.0 are worth recording:
+Two long-standing consequences of the published line are worth recording:
 
-- **`TestBed.sol` is gone** from 0.6.x. It is not needed here — this harness
+- **`TestBed.sol` is gone** since 0.6.0. It is not needed here — this harness
   uses its own fixture contracts — but `PLAN.md` names TestBed as conformance-
   corpus material, so that seed will have to come from the 0.4.x sources or
   from the cofhesdk repo.
@@ -254,10 +312,10 @@ All versions are pinned exactly — no `^`, no `~`. The pins that matter:
 
 | Package | Pin | Why |
 |---|---|---|
-| `@cofhe/mock-contracts` | `0.6.1` | the mock coprocessor |
-| `@fhenixprotocol/cofhe-contracts` | `0.1.4` | matches the mock package's own dependency; encrypted handles are `bytes32` here (they were `uint256` before 0.1.0) |
-| `hardhat` | `2.26.3` | Hardhat 2 is what `@cofhe/hardhat-plugin` peer-depends on (`^2.0.0`) and what its own test project runs |
-| `ethers` | `6.13.5` | v6, as in the cofhesdk test project |
+| `@cofhe/mock-contracts` | `0.7.0` | the mock coprocessor; batch input verification, inputs bound to the consuming contract, EIP-1153 transient allowances, the two ACP contracts |
+| `@fhenixprotocol/cofhe-contracts` | `0.2.0` | matches the mock package's own dependency; `InEuintXX` removed in favour of `externalEuintXX` + trailing `bytes` proof |
+| `hardhat` | `2.29.1` | Hardhat 2 is what `@cofhe/hardhat-plugin` peer-depends on (`^2.0.0`) and what its own test project runs |
+| `ethers` | `6.17.0` | v6, as in the cofhesdk test project |
 | solc | `0.8.28`, `evmVersion: cancun` | CoFHE requires cancun; `cofhe-contracts` has a 0.8.25 pragma floor |
 
 `allowUnlimitedContractSize` is on for the in-process Hardhat network: the mock

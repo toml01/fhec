@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 0.1.4 |
+| **Version** | 0.2.0 |
 | **Status** | Draft |
-| **Date** | 2026-08-17 |
+| **Date** | 2026-08-22 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** in this document are to be interpreted as described in RFC 2119 and RFC 8174 when, and only when, they appear in all capitals, as shown here.
@@ -52,7 +52,7 @@ The CoFHE encrypted value types are:
 ebool  euint8  euint16  euint32  euint64  euint128  eaddress
 ```
 
-There is no `euint256`. The *encrypted input* struct types are `InEbool`, `InEuint8`, `InEuint16`, `InEuint32`, `InEuint64`, `InEuint128`, `InEaddress` (fields: `uint256 ctHash; uint8 securityZone; uint8 utype; bytes signature;`).
+There is no `euint256`. The *external input* handle types are `externalEbool`, `externalEuint8`, `externalEuint16`, `externalEuint32`, `externalEuint64`, `externalEuint128`, `externalEaddress` — `bytes32` user-defined value types carrying an unverified input ciphertext hash. Since cofhe-contracts 0.2.0 an encrypted input arrives as such a handle plus a `bytes` proof; one signature authenticates a whole batch of inputs (`UnsignedEncryptedInput { uint256 ctHash; uint8 securityZone; uint8 utype; }` is the per-entry verification record). The former `InEuintX` input structs no longer exist.
 
 ### §1.6 Running example (informative)
 
@@ -80,8 +80,8 @@ Conforming output (fragment):
 contract EncryptedCounter {
     euint32 public count;
 
-    function setCount(InEuint32 memory newCount_input) external onlyOwner {
-        euint32 newCount = FHE.asEuint32(newCount_input);
+    function setCount(externalEuint32 newCount_input, bytes memory inputProof) external onlyOwner {
+        euint32 newCount = FHE.asEuint32(newCount_input, inputProof);
         count = newCount;
         FHE.allowThis(count);
         FHE.allowSender(count);
@@ -119,20 +119,32 @@ parameter := 'in' encrypted-type identifier
 
 is added, where `encrypted-type` is one of the profile's encrypted value types (§1.5). `in` is a reserved Solidity keyword, so this production conflicts with no valid Solidity program.
 
-**Expansion.** A parameter `in eT name` (where `eT` maps to input struct `InT` and conversion function `asT` per the profile — e.g. `euint32` → `InEuint32` / `FHE.asEuint32`) MUST expand to:
+**Expansion.** For a function or constructor with k ≥ 1 sugared parameters (`eT` maps to external handle type `externalT` and conversion function `asT` per the profile — e.g. `euint32` → `externalEuint32` / `FHE.asEuint32`):
 
-1. The parameter declaration `InT memory name_input` in the same position, and
-2. The statement `eT name = FHE.asT(name_input);` inserted at the start of the function body, before any existing statement. Multiple sugared parameters expand in parameter-list order.
+1. Each parameter `in eT name` becomes the declaration `externalT name_input` in the same position (external handle types are value types; no data location).
+2. One shared parameter `bytes memory inputProof` is appended at the end of the parameter list — once per function, regardless of k. This matches the SDK convention (cofhe SDK 0.7.0): a function with encrypted inputs ends with one plain `bytes` parameter receiving the shared batch signature.
+3. Conversion statements are inserted at the start of the function body, before any existing statement, in parameter-list order:
+   - k = 1: `eT name = FHE.asT(name_input, inputProof);`
+   - k > 1: a single batch verification. One signature covers the whole batch (cofhe-contracts#78), so per-parameter `FHE.asT(hash, proof)` calls — which each rebuild a one-element batch digest — would fail verification. The expansion builds one `UnsignedEncryptedInput[]` in parameter order (security zone 0, matching FHE.sol's own batch helpers), verifies it once through `Impl.verifyBatchInputs(inputs, inputProof)`, and wraps each returned `bytes32` handle into its value type:
 
-**⚠ Draft decision (data location):** the expanded parameter uses `memory`, matching the `FHE.asT(InT memory)` overload. `calldata` is not used in v1.
+     ```solidity
+     UnsignedEncryptedInput[] memory __fhe_inputs_0 = new UnsignedEncryptedInput[](k);
+     __fhe_inputs_0[i] = UnsignedEncryptedInput(uint256(externalT.unwrap(name_input)), 0, Utils.T_TFHE); // per parameter
+     bytes32[] memory __fhe_hashes_1 = Impl.verifyBatchInputs(__fhe_inputs_0, inputProof);
+     eT name = eT.wrap(__fhe_hashes_1[i]); // per parameter
+     ```
 
-**⚠ Draft decision (generated name):** the raw-input parameter is named `<name>_input`. If the identifier `<name>_input` is already declared anywhere in the function's scope (parameters, locals, contract members referenced unqualified), the transpiler MUST reject with FHE1011 rather than rename silently.
+     The array temporaries are named per §2.4 (hints `inputs`, `hashes`).
+
+**⚠ Draft decision (data location):** the appended proof parameter uses `memory`. `calldata` is not used in v1.
+
+**⚠ Draft decision (generated names):** the raw-input parameter is named `<name>_input`, and the shared proof parameter is named `inputProof`. If `<name>_input` or `inputProof` is already declared anywhere in the function's scope (parameters, locals, contract members referenced unqualified), the transpiler MUST reject with FHE1011 rather than rename silently.
 
 **Restrictions.**
 
 1. The sugar is permitted only in `function` and `constructor` parameter lists. Occurrence in return-parameter lists, modifier parameter lists, variable declarations, or event/error parameter lists is FHE1012.
 2. `in` followed by a non-encrypted type is FHE1010.
-3. On a declaration without a body (interface member, abstract function signature, or an overridden virtual signature), only rewrite (1) applies; no conversion statement is generated. An implementing body in a `.fsol` file MUST spell its own parameters (the sugar does not propagate through inheritance).
+3. On a declaration without a body (interface member, abstract function signature, or an overridden virtual signature), only the signature rewrites (1) and (2) apply; no conversion statement is generated. An implementing body in a `.fsol` file MUST spell its own parameters (the sugar does not propagate through inheritance).
 
 ### §2.4 Generated temporaries
 
@@ -525,3 +537,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.1.2 (2026-08-17)** — findings from the lowering implementation: §8.2 requires the explicit `address(...)` wrapper, typed callee hoisting, FHE4003 for underivable callee types, and documents the Unknown-callee under-grant; §8.6 splits the dedupe window (forward for R1, backward for R2/R3); §5.2 defines branch-local declarations and FHE3013 for unsupported statement forms in encrypted branches.
 - **0.1.3 (2026-08-17)** — findings from the CLI wiring: FHE1006 frozen-drift; §2.1 names the load stage as the pragma-gate owner; §8.4 states that suggest-mode notes appear on `check` and defines the safe-fix-it boundary for `--fix`.
 - **0.1.4 (2026-08-22)** — §1.4 defines the self-check diagnostic-suppression rule (re-run diagnostics below error severity are suppressed).
+- **0.2.0 (2026-08-22)** — cofhe-contracts 0.2.0 input model: §1.5 replaces the removed `InEuintX` input structs with the `externalE*` handle types; §2.3 lowers the sugar to an in-place `externalT name_input` parameter plus one shared trailing `bytes memory inputProof` parameter per function, converts one input via the two-argument `FHE.asT(hash, proof)` and several inputs via a single `Impl.verifyBatchInputs` batch (one signature covers the whole batch); FHE1011 additionally guards the `inputProof` name.

@@ -42,8 +42,8 @@ contract EncryptedCounterWrongConstant {
     return count;
   }
 
-  function setCount(InEuint32 memory _inCount) external onlyOwner {
-    count = FHE.asEuint32(_inCount);
+  function setCount(externalEuint32 _inCount, bytes memory inputProof) external onlyOwner {
+    count = FHE.asEuint32(_inCount, inputProof);
     FHE.allowThis(count);
     FHE.allowSender(count);
     decrypted = false;
@@ -98,8 +98,8 @@ contract EncryptedCounterMissingAcl {
     return count;
   }
 
-  function setCount(InEuint32 memory _inCount) external onlyOwner {
-    count = FHE.asEuint32(_inCount);
+  function setCount(externalEuint32 _inCount, bytes memory inputProof) external onlyOwner {
+    count = FHE.asEuint32(_inCount, inputProof);
     FHE.allowThis(count);
     FHE.allowSender(count);
     decrypted = false;

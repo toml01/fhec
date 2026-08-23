@@ -11,7 +11,7 @@ out = "contracts/generated"
 
 [target]
 profile = "cofhe"
-version = "0.1.x"
+version = "0.2.x"
 # The harness compiles with solc 0.8.28 / cancun (hardhat.config.ts); the
 # verify gate mirrors that so both toolchains agree on what "compiles" means.
 solc = ">=0.8.25 <0.9.0"

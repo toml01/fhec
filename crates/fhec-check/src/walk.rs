@@ -612,10 +612,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 {
                     d = d.with_fixit(crate::diag::FixIt {
                         span: cond.span,
-                        replacement: format!(
-                            "FHE.ne({snippet}, FHE.as{}(0))",
-                            &other.in_struct_name()[2..]
-                        ),
+                        replacement: format!("FHE.ne({snippet}, FHE.as{}(0))", other.suffix()),
                         safe: false,
                     });
                 }

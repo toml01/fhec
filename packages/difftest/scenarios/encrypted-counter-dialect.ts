@@ -1,4 +1,15 @@
-import type { Scenario } from '../src/differential';
+import type { Scenario, StepContext } from '../src/differential';
+
+/**
+ * `increment(externalEuint32 amount, bytes inputProof)`: the handle in the
+ * parameter's own position, the batch signature as the trailing argument.
+ * Minted per run — the signature binds the input to the consuming contract
+ * (`ctx.address`), which differs between the two sides.
+ */
+const incrementArgs = async (ctx: StepContext, amount: number): Promise<unknown[]> => {
+  const input = await ctx.env.encryptInput(amount, 'euint32', ctx.sender, ctx.address);
+  return [input.handle, input.signature];
+};
 
 /** Constructor args shared by the dialect pair: initial count and the cap. */
 export const INITIAL_COUNT = 5;
@@ -30,18 +41,18 @@ export const encryptedCounterDialectScenario: Scenario = {
     {
       fn: 'increment',
       label: 'increment by 10 (below cap)',
-      args: async (ctx) => [await ctx.env.encryptInput(10, 'euint32', ctx.sender)],
+      args: async (ctx) => incrementArgs(ctx, 10),
     },
     { fn: 'incrementByOne', label: 'incrementByOne (literal lowering)' },
     {
       fn: 'increment',
       label: 'increment by 984 (lands exactly on the cap; lte accepts)',
-      args: async (ctx) => [await ctx.env.encryptInput(984, 'euint32', ctx.sender)],
+      args: async (ctx) => incrementArgs(ctx, 984),
     },
     {
       fn: 'increment',
       label: 'increment by 1 (would exceed cap; select keeps the old value)',
-      args: async (ctx) => [await ctx.env.encryptInput(1, 'euint32', ctx.sender)],
+      args: async (ctx) => incrementArgs(ctx, 1),
     },
     {
       fn: 'incrementByOne',

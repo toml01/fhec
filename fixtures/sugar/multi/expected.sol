@@ -7,9 +7,13 @@ contract SugarMulti {
     ebool eb;
     eaddress ea;
 
-    function setup(InEbool memory flag_input, InEaddress memory owner__input) public {
-        ebool flag = FHE.asEbool(flag_input);
-        eaddress owner_ = FHE.asEaddress(owner__input);
+    function setup(externalEbool flag_input, externalEaddress owner__input, bytes memory inputProof) public {
+        UnsignedEncryptedInput[] memory __fhe_inputs_0 = new UnsignedEncryptedInput[](2);
+        __fhe_inputs_0[0] = UnsignedEncryptedInput(uint256(externalEbool.unwrap(flag_input)), 0, Utils.EBOOL_TFHE);
+        __fhe_inputs_0[1] = UnsignedEncryptedInput(uint256(externalEaddress.unwrap(owner__input)), 0, Utils.EADDRESS_TFHE);
+        bytes32[] memory __fhe_hashes_1 = Impl.verifyBatchInputs(__fhe_inputs_0, inputProof);
+        ebool flag = ebool.wrap(__fhe_hashes_1[0]);
+        eaddress owner_ = eaddress.wrap(__fhe_hashes_1[1]);
         eb = flag;
         FHE.allowThis(eb);
         FHE.allowSender(eb);

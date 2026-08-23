@@ -179,6 +179,9 @@ pub struct IncDecSite {
 pub struct InSugarSite {
     /// Span of the whole parameter declaration (starts at `in`).
     pub param_span: Span,
+    /// Span of the function's full parameter list, parens included (the
+    /// shared `inputProof` parameter is appended before its closing `)`).
+    pub params_span: Span,
     /// Span of the `in` keyword.
     pub in_span: Span,
     /// The declared encrypted type.

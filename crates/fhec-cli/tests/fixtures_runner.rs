@@ -21,7 +21,6 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-const DEFAULT_COFHE_ROOT: &str = "/Users/toml/dev/cofhe-contracts";
 const GOLDEN_AREAS: &[&str] = &[
     "operators",
     "select",
@@ -44,11 +43,31 @@ fn fhec(dir: &Path, args: &[&str]) -> Output {
         .expect("fhec binary runs")
 }
 
-fn cofhe_contracts_dir() -> Option<PathBuf> {
-    let root = std::env::var_os("FHEC_COFHE_CONTRACTS")
-        .map_or_else(|| PathBuf::from(DEFAULT_COFHE_ROOT), PathBuf::from);
-    let contracts = root.join("contracts");
-    contracts.join("FHE.sol").is_file().then_some(contracts)
+/// The pinned `@fhenixprotocol/cofhe-contracts` npm package (FHE.sol at its
+/// root) and the `@openzeppelin/contracts` package it imports, from the
+/// workspace's pnpm install; `FHEC_COFHE_CONTRACTS` overrides the library
+/// location and accepts a repository checkout layout (`contracts/FHE.sol`).
+fn cofhe_packages() -> Option<(PathBuf, PathBuf)> {
+    let modules =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/difftest/node_modules");
+    let root = std::env::var_os("FHEC_COFHE_CONTRACTS").map_or_else(
+        || modules.join("@fhenixprotocol/cofhe-contracts"),
+        PathBuf::from,
+    );
+    let pkg = if root.join("FHE.sol").is_file() {
+        root
+    } else if root.join("contracts/FHE.sol").is_file() {
+        root.join("contracts")
+    } else {
+        return None;
+    };
+    [
+        pkg.join("node_modules/@openzeppelin/contracts"),
+        modules.join("@openzeppelin/contracts"),
+    ]
+    .into_iter()
+    .find(|oz| oz.join("package.json").is_file())
+    .map(|oz| (pkg, oz))
 }
 
 fn have_solc() -> bool {
@@ -74,7 +93,7 @@ fn fixture_dirs(area: &str) -> Option<Vec<PathBuf>> {
 }
 
 /// Materializes the fixture as a temp project; returns the project root.
-fn setup_project(fixture: &Path, tmp: &Path, cofhe: Option<&Path>) {
+fn setup_project(fixture: &Path, tmp: &Path, cofhe: Option<&(PathBuf, PathBuf)>) {
     let contracts = tmp.join("contracts");
     std::fs::create_dir_all(&contracts).unwrap();
     for entry in std::fs::read_dir(fixture).unwrap().filter_map(Result::ok) {
@@ -94,10 +113,13 @@ fn setup_project(fixture: &Path, tmp: &Path, cofhe: Option<&Path>) {
     } else {
         std::fs::write(tmp.join("fhec.toml"), "").unwrap();
     }
-    if let Some(contracts_dir) = cofhe {
+    if let Some((contracts_dir, openzeppelin_dir)) = cofhe {
         let scope = tmp.join("node_modules/@fhenixprotocol");
         std::fs::create_dir_all(&scope).unwrap();
         std::os::unix::fs::symlink(contracts_dir, scope.join("cofhe-contracts")).unwrap();
+        let oz_scope = tmp.join("node_modules/@openzeppelin");
+        std::fs::create_dir_all(&oz_scope).unwrap();
+        std::os::unix::fs::symlink(openzeppelin_dir, oz_scope.join("contracts")).unwrap();
     }
 }
 
@@ -257,7 +279,7 @@ fn finish(area_kind: &str, count: usize, failures: Vec<String>) {
 
 #[test]
 fn golden_fixtures() {
-    let cofhe = cofhe_contracts_dir();
+    let cofhe = cofhe_packages();
     let gate = cofhe.is_some() && have_solc();
     if !gate {
         eprintln!("NOTE: solc gate unavailable; golden fixtures run with --no-verify");
@@ -270,7 +292,7 @@ fn golden_fixtures() {
         for fixture in dirs {
             count += 1;
             let tmp = tempfile::tempdir().unwrap();
-            setup_project(&fixture, tmp.path(), cofhe.as_deref());
+            setup_project(&fixture, tmp.path(), cofhe.as_ref());
             let mut args = vec!["build", "--json", "--self-check"];
             if !gate || fixture.join("no-verify").is_file() {
                 args.push("--no-verify");
@@ -295,7 +317,7 @@ fn golden_fixtures() {
 
 #[test]
 fn rejection_fixtures() {
-    let cofhe = cofhe_contracts_dir();
+    let cofhe = cofhe_packages();
     let mut failures = Vec::new();
     let mut count = 0;
     for area in CHECK_AREAS {
@@ -304,7 +326,7 @@ fn rejection_fixtures() {
         for fixture in dirs {
             count += 1;
             let tmp = tempfile::tempdir().unwrap();
-            setup_project(&fixture, tmp.path(), cofhe.as_deref());
+            setup_project(&fixture, tmp.path(), cofhe.as_ref());
             let out = if fixture.join("build-only").is_file() {
                 fhec(tmp.path(), &["build", "--json", "--no-verify"])
             } else {
@@ -327,7 +349,7 @@ fn rejection_fixtures() {
 
 #[test]
 fn noop_fixtures() {
-    let cofhe = cofhe_contracts_dir();
+    let cofhe = cofhe_packages();
     let gate = cofhe.is_some() && have_solc();
     let mut failures = Vec::new();
     let mut count = 0;
@@ -336,7 +358,7 @@ fn noop_fixtures() {
     for fixture in dirs {
         count += 1;
         let tmp = tempfile::tempdir().unwrap();
-        setup_project(&fixture, tmp.path(), cofhe.as_deref());
+        setup_project(&fixture, tmp.path(), cofhe.as_ref());
         let mut args = vec!["build", "--json", "--self-check"];
         if !gate || fixture.join("no-verify").is_file() {
             args.push("--no-verify");
@@ -386,8 +408,8 @@ fn noop_fixtures() {
 
 #[test]
 fn sourcemap_fixtures() {
-    let Some(cofhe) = cofhe_contracts_dir() else {
-        eprintln!("SKIP: no cofhe-contracts checkout for sourcemap fixtures");
+    let Some(cofhe) = cofhe_packages() else {
+        eprintln!("SKIP: no cofhe-contracts library for sourcemap fixtures");
         return;
     };
     if !have_solc() {

@@ -29,15 +29,15 @@ contract EncryptedCounter {
         return count;
     }
 
-    function setCount(InEuint32 memory next_input) external onlyOwner {
-        euint32 next = FHE.asEuint32(next_input);
+    function setCount(externalEuint32 next_input, bytes memory inputProof) external onlyOwner {
+        euint32 next = FHE.asEuint32(next_input, inputProof);
         count = next;
         FHE.allowThis(count);
         FHE.allowSender(count);
     }
 
-    function incrementBy(InEuint32 memory amount_input) external onlyOwner {
-        euint32 amount = FHE.asEuint32(amount_input);
+    function incrementBy(externalEuint32 amount_input, bytes memory inputProof) external onlyOwner {
+        euint32 amount = FHE.asEuint32(amount_input, inputProof);
         euint32 next = FHE.add(count, amount);
         {
             ebool __fhe_cond_0 = frozen;

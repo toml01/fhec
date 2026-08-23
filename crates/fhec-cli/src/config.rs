@@ -77,7 +77,7 @@ impl Default for Target {
     fn default() -> Self {
         Target {
             profile: "cofhe".to_string(),
-            version: "0.1.x".to_string(),
+            version: "0.2.x".to_string(),
             solc: ">=0.8.25 <0.9.0".to_string(),
             evm_version: "cancun".to_string(),
         }

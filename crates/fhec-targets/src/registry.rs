@@ -42,15 +42,15 @@ pub struct ProfileRegistry {
 impl ProfileRegistry {
     /// The registry of built-in profiles.
     ///
-    /// Currently: `cofhe@0.1.x` (also reachable as plain `cofhe`). Future
+    /// Currently: `cofhe@0.2.x` (also reachable as plain `cofhe`). Future
     /// versions (e.g. a `cofhe@HEAD` data delta) register here.
     pub fn builtin() -> Self {
         let mut registry = ProfileRegistry {
             entries: BTreeMap::new(),
         };
-        let cofhe_0_1: ProfileHandle = Arc::new(CofheProfile::v0_1());
-        registry.register("cofhe@0.1.x", Arc::clone(&cofhe_0_1));
-        registry.register("cofhe", cofhe_0_1);
+        let cofhe_0_2: ProfileHandle = Arc::new(CofheProfile::v0_2());
+        registry.register("cofhe@0.2.x", Arc::clone(&cofhe_0_2));
+        registry.register("cofhe", cofhe_0_2);
         registry
     }
 
@@ -83,10 +83,10 @@ mod tests {
     fn resolves_builtin_specs() {
         let registry = ProfileRegistry::builtin();
         let by_alias = registry.resolve("cofhe").unwrap();
-        let by_full = registry.resolve("cofhe@0.1.x").unwrap();
+        let by_full = registry.resolve("cofhe@0.2.x").unwrap();
         assert_eq!(by_alias.id(), "cofhe");
-        assert_eq!(by_alias.version(), "0.1.x");
-        assert_eq!(by_full.version(), "0.1.x");
+        assert_eq!(by_alias.version(), "0.2.x");
+        assert_eq!(by_full.version(), "0.2.x");
     }
 
     #[test]
@@ -96,7 +96,7 @@ mod tests {
             panic!("zama@1 must not resolve");
         };
         assert_eq!(err.requested, "zama@1");
-        assert_eq!(err.available, vec!["cofhe", "cofhe@0.1.x"]);
+        assert_eq!(err.available, vec!["cofhe", "cofhe@0.2.x"]);
         assert!(err.to_string().contains("unknown target profile `zama@1`"));
     }
 }

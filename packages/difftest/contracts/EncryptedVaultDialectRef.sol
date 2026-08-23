@@ -26,15 +26,15 @@ contract EncryptedVaultDialectRef {
 
     error SelfTransfer();
 
-    function deposit(InEuint64 memory amountInput) external {
-        euint64 amount = FHE.asEuint64(amountInput);
+    function deposit(externalEuint64 amountInput, bytes memory inputProof) external {
+        euint64 amount = FHE.asEuint64(amountInput, inputProof);
         balances[msg.sender] = FHE.add(balances[msg.sender], amount);
         FHE.allowThis(balances[msg.sender]);
         FHE.allowSender(balances[msg.sender]);
     }
 
-    function transfer(address to, InEuint64 memory amountInput) external {
-        euint64 amount = FHE.asEuint64(amountInput);
+    function transfer(address to, externalEuint64 amountInput, bytes memory inputProof) external {
+        euint64 amount = FHE.asEuint64(amountInput, inputProof);
         if (to == msg.sender) revert SelfTransfer();
         euint64 fromBalance = balances[msg.sender];
         euint64 toBalance = balances[to];

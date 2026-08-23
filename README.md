@@ -46,8 +46,8 @@ function increment(in euint32 amount) external {
 **Output — `generated/Counter.sol`:**
 
 ```solidity
-function increment(InEuint32 memory amount_input) external {
-    euint32 amount = FHE.asEuint32(amount_input);
+function increment(externalEuint32 amount_input, bytes memory inputProof) external {
+    euint32 amount = FHE.asEuint32(amount_input, inputProof);
     euint32 next = FHE.add(count, amount);
     {
         ebool __fhe_cond_0 = FHE.lte(next, max);

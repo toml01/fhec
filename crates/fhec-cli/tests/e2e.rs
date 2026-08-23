@@ -1,12 +1,11 @@
 //! End-to-end tests for the wired pipeline: init → build → verify, the
 //! §1.4 no-op/idempotence properties, --frozen, --fix, and FHE6000 span
-//! remapping. Tests that need the real CoFHE checkout or a solc binary skip
-//! with a message when either is unavailable (both exist on the dev machine).
+//! remapping. Tests that need the pinned CoFHE library package or a solc
+//! binary skip with a message when either is unavailable (both exist on the
+//! dev machine: the package comes from the workspace's pnpm install).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-
-const DEFAULT_COFHE_ROOT: &str = "/Users/toml/dev/cofhe-contracts";
 
 fn fhec(dir: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_fhec"))
@@ -24,16 +23,39 @@ fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
 }
 
-fn cofhe_contracts_dir() -> Option<PathBuf> {
-    let root = std::env::var_os("FHEC_COFHE_CONTRACTS")
-        .map_or_else(|| PathBuf::from(DEFAULT_COFHE_ROOT), PathBuf::from);
-    let contracts = root.join("contracts");
-    if contracts.join("FHE.sol").is_file() {
-        Some(contracts)
+/// The pinned `@fhenixprotocol/cofhe-contracts` package (FHE.sol at its
+/// root — the published npm layout) plus the `@openzeppelin/contracts`
+/// package FHE.sol imports from. Defaults to the workspace's own pnpm
+/// install; `FHEC_COFHE_CONTRACTS` overrides the library location and
+/// accepts a repository checkout layout (`contracts/FHE.sol`) too.
+fn cofhe_packages() -> Option<(PathBuf, PathBuf)> {
+    let modules =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/difftest/node_modules");
+    let root = std::env::var_os("FHEC_COFHE_CONTRACTS").map_or_else(
+        || modules.join("@fhenixprotocol/cofhe-contracts"),
+        PathBuf::from,
+    );
+    let pkg = if root.join("FHE.sol").is_file() {
+        root
+    } else if root.join("contracts/FHE.sol").is_file() {
+        root.join("contracts")
     } else {
-        eprintln!("SKIP: no cofhe-contracts checkout at {}", root.display());
-        None
+        eprintln!("SKIP: no cofhe-contracts library at {}", root.display());
+        return None;
+    };
+    for oz in [
+        pkg.join("node_modules/@openzeppelin/contracts"),
+        modules.join("@openzeppelin/contracts"),
+    ] {
+        if oz.join("package.json").is_file() {
+            return Some((pkg, oz));
+        }
     }
+    eprintln!(
+        "SKIP: no @openzeppelin/contracts install next to {}",
+        pkg.display()
+    );
+    None
 }
 
 fn have_solc() -> bool {
@@ -45,12 +67,16 @@ fn have_solc() -> bool {
     }
 }
 
-/// Symlinks the real cofhe-contracts checkout into the project's
-/// node_modules under the published package name.
-fn link_node_modules(project: &Path, contracts: &Path) {
+/// Symlinks the pinned cofhe-contracts package (and the OpenZeppelin
+/// package its FHE.sol imports) into the project's node_modules under the
+/// published package names.
+fn link_node_modules(project: &Path, contracts: &Path, openzeppelin: &Path) {
     let scope = project.join("node_modules/@fhenixprotocol");
     std::fs::create_dir_all(&scope).unwrap();
     std::os::unix::fs::symlink(contracts, scope.join("cofhe-contracts")).unwrap();
+    let oz_scope = project.join("node_modules/@openzeppelin");
+    std::fs::create_dir_all(&oz_scope).unwrap();
+    std::os::unix::fs::symlink(openzeppelin, oz_scope.join("contracts")).unwrap();
 }
 
 fn read(p: &Path) -> String {
@@ -59,7 +85,7 @@ fn read(p: &Path) -> String {
 
 #[test]
 fn dogfood_build_end_to_end() {
-    let Some(contracts) = cofhe_contracts_dir() else {
+    let Some((contracts, openzeppelin)) = cofhe_packages() else {
         return;
     };
     if !have_solc() {
@@ -68,7 +94,7 @@ fn dogfood_build_end_to_end() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
     assert_eq!(fhec(root, &["init"]).status.code(), Some(0));
-    link_node_modules(root, &contracts);
+    link_node_modules(root, &contracts, &openzeppelin);
 
     // Build with the hidden §1.4 self-check on.
     let out = fhec(root, &["build", "--verbose", "--self-check"]);
@@ -77,8 +103,9 @@ fn dogfood_build_end_to_end() {
     let generated = root.join("generated/Counter.sol");
     let text = read(&generated);
     for needle in [
-        "InEuint32 memory amount_input",
-        "euint32 amount = FHE.asEuint32(amount_input);",
+        "externalEuint32 amount_input",
+        "bytes memory inputProof",
+        "euint32 amount = FHE.asEuint32(amount_input, inputProof);",
         "FHE.select(",
         "FHE.allowThis(count);",
         "FHE.allowSender(count);",
@@ -159,7 +186,7 @@ fn plain_sol_passes_through_byte_identical() {
 
 #[test]
 fn fhe6000_remaps_to_original_fsol_position() {
-    let Some(contracts) = cofhe_contracts_dir() else {
+    let Some((contracts, openzeppelin)) = cofhe_packages() else {
         return;
     };
     if !have_solc() {
@@ -169,7 +196,7 @@ fn fhe6000_remaps_to_original_fsol_position() {
     let root = tmp.path();
     std::fs::write(root.join("fhec.toml"), "").unwrap();
     std::fs::create_dir_all(root.join("contracts")).unwrap();
-    link_node_modules(root, &contracts);
+    link_node_modules(root, &contracts, &openzeppelin);
 
     // The sugar patch near the top shifts every later offset, so the solc
     // error about `missingFn` exercises the delta-remap path. Our pipeline

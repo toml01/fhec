@@ -52,11 +52,11 @@ const fn entry(
     }
 }
 
-/// Signature table for cofhe-contracts 0.1.x, transcribed from `FHE.sol`:
+/// Signature table for cofhe-contracts 0.2.x, transcribed from `FHE.sol`:
 /// every payload-free [`FheOp`] with its spelling and shape. Cast and
 /// input-conversion operations are name-formula-driven (`asEuintN`…) and are
 /// handled structurally in [`CofheProfile`].
-const COFHE_0_1_OPS: &[OpEntry] = &[
+const COFHE_0_2_OPS: &[OpEntry] = &[
     entry(FheOp::Add, "add", Applicability::Euint, ResultKind::Same),
     entry(FheOp::Sub, "sub", Applicability::Euint, ResultKind::Same),
     entry(FheOp::Mul, "mul", Applicability::Euint, ResultKind::Same),
@@ -160,14 +160,14 @@ pub struct CofheProfile {
 }
 
 impl CofheProfile {
-    /// The profile for cofhe-contracts 0.1.x (the pinned published release).
-    pub fn v0_1() -> Self {
+    /// The profile for cofhe-contracts 0.2.x (the pinned published release).
+    pub fn v0_2() -> Self {
         CofheProfile {
-            version: "0.1.x",
+            version: "0.2.x",
             lib: "FHE",
             pragma_range: ">=0.8.25 <0.9.0",
             import_lines: &["import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";"],
-            ops: COFHE_0_1_OPS,
+            ops: COFHE_0_2_OPS,
         }
     }
 
@@ -175,9 +175,14 @@ impl CofheProfile {
         self.ops.iter().find(|e| e.op == op)
     }
 
-    /// `InEuint32` → `asEuint32`, `InEbool` → `asEbool`, etc.
+    /// `euint32` → `asEuint32`, `ebool` → `asEbool`, etc.
     fn cast_fn_name(ty: EType) -> String {
-        format!("as{}", &ty.in_struct_name()[2..])
+        format!("as{}", ty.suffix())
+    }
+
+    /// `euint32` → `Utils.EUINT32_TFHE`, the utype constant of ICofhe.sol.
+    fn utype_const(ty: EType) -> String {
+        format!("Utils.{}_TFHE", ty.suffix().to_uppercase())
     }
 
     fn unsupported(op: FheOp, operands: &[EType]) -> ProfileError {
@@ -191,7 +196,7 @@ impl CofheProfile {
     /// [`FheOp::arity`] for ops with plaintext arguments).
     fn encrypted_operand_count(op: FheOp) -> usize {
         match op {
-            FheOp::TrivialEncrypt { .. } | FheOp::FromInStruct { .. } => 0,
+            FheOp::TrivialEncrypt { .. } | FheOp::FromExternal { .. } => 0,
             FheOp::AllowTransient => 1,
             _ => op.arity(),
         }
@@ -239,7 +244,7 @@ impl TargetProfile for CofheProfile {
 
         match op {
             FheOp::TrivialEncrypt { to } => Ok(Some(to)),
-            FheOp::FromInStruct { ty } => Ok(Some(ty)),
+            FheOp::FromExternal { ty } => Ok(Some(ty)),
             FheOp::Widen { from, to } => {
                 // Widening exists only strictly narrow-to-wide (spec §3.3);
                 // the operand must match the declared source width.
@@ -295,7 +300,7 @@ impl TargetProfile for CofheProfile {
 
         let callee = match op {
             FheOp::TrivialEncrypt { to } => self.conversion_fn(to),
-            FheOp::FromInStruct { ty } => self.conversion_fn(ty),
+            FheOp::FromExternal { ty } => self.conversion_fn(ty),
             FheOp::Widen { to, .. } => self.conversion_fn(EType::Euint(to)),
             _ => {
                 // result_type above guarantees the entry exists.
@@ -323,12 +328,54 @@ impl TargetProfile for CofheProfile {
         self.lookup(op).map(|e| e.name.to_string())
     }
 
-    fn in_struct_type(&self, ty: EType) -> String {
-        ty.in_struct_name().to_string()
+    fn external_input_type(&self, ty: EType) -> String {
+        ty.external_name().to_string()
+    }
+
+    fn input_proof_param(&self) -> String {
+        "bytes memory inputProof".to_string()
     }
 
     fn conversion_fn(&self, ty: EType) -> String {
         format!("{}.{}", self.lib, Self::cast_fn_name(ty))
+    }
+
+    fn batch_input_statements(
+        &self,
+        params: &[(EType, &str, &str)],
+        proof: &str,
+        inputs_tmp: &str,
+        hashes_tmp: &str,
+    ) -> Vec<String> {
+        // One signature covers the whole batch (cofhe-contracts#78): build
+        // the UnsignedEncryptedInput array in parameter order, verify once,
+        // wrap each returned handle. Security zone 0 matches FHE.sol's own
+        // batch helpers (asEuint32s…). The mixed-type verification entry
+        // point lives in FHE.sol's `library Impl` (the FHE library only has
+        // per-type array helpers, which cannot express a mixed batch).
+        let mut stmts = Vec::with_capacity(params.len() * 2 + 2);
+        stmts.push(format!(
+            "UnsignedEncryptedInput[] memory {inputs_tmp} = new UnsignedEncryptedInput[]({});",
+            params.len()
+        ));
+        for (i, (ty, input_name, _)) in params.iter().enumerate() {
+            stmts.push(format!(
+                "{inputs_tmp}[{i}] = UnsignedEncryptedInput(uint256({}.unwrap({input_name})), 0, {});",
+                ty.external_name(),
+                Self::utype_const(*ty)
+            ));
+        }
+        stmts.push(format!(
+            "bytes32[] memory {hashes_tmp} = Impl.verifyBatchInputs({inputs_tmp}, {proof});"
+        ));
+        for (i, (ty, _, value_name)) in params.iter().enumerate() {
+            stmts.push(format!(
+                "{} {value_name} = {}.wrap({hashes_tmp}[{i}]);",
+                ty.solidity_name(),
+                ty.solidity_name()
+            ));
+        }
+        stmts
     }
 }
 
@@ -349,9 +396,9 @@ mod tests {
 
     #[test]
     fn signature_table_covers_every_payload_free_op_once() {
-        for e in COFHE_0_1_OPS {
+        for e in COFHE_0_2_OPS {
             assert_eq!(
-                COFHE_0_1_OPS.iter().filter(|o| o.op == e.op).count(),
+                COFHE_0_2_OPS.iter().filter(|o| o.op == e.op).count(),
                 1,
                 "duplicate table row for {}",
                 e.op

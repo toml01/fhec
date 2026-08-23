@@ -25,9 +25,9 @@
 //!    `euintN is bytes32` (the CoFHE library file itself, when it is part of
 //!    the compilation unit — the conformance-corpus case).
 //!
-//! Encrypted *type* names (`euint32`, `ebool`, ...) and input-struct names
-//! (`InEuint32`, ...) trust the same paths; additionally an in-unit
-//! user-defined value type named like an encrypted type counts when its
+//! Encrypted *type* names (`euint32`, `ebool`, ...) and external-input
+//! handle names (`externalEuint32`, ...) trust the same paths; additionally
+//! an in-unit user-defined value type named like one of them counts when its
 //! underlying type is `bytes32` (matching CoFHE's declarations).
 //!
 //! Anything not covered types as `Unknown` — never a guess.
@@ -139,22 +139,21 @@ impl Trust {
         }
     }
 
-    /// The encrypted value type of an input-struct *type name* (`InEuint32`),
-    /// when trusted.
-    pub(crate) fn in_struct_type(
+    /// The encrypted value type of an external-input handle *type name*
+    /// (`externalEuint32`), when trusted.
+    pub(crate) fn external_input_type(
         &self,
         unit: &BoundUnit<'_>,
         name: &str,
         res: &Resolution,
     ) -> Option<EType> {
-        let ety = EType::ALL
-            .into_iter()
-            .find(|t| t.in_struct_name() == name)?;
+        let ety = EType::ALL.into_iter().find(|t| t.external_name() == name)?;
         match res {
-            // The corpus case: ICofhe.sol in unit declares the structs.
-            Resolution::TypeName(id) => {
-                matches!(unit.type_decl(*id).kind, TypeDeclKind::Struct(_)).then_some(ety)
-            }
+            // The corpus case: FHE.sol in unit declares the UDVTs.
+            Resolution::TypeName(id) => match &unit.type_decl(*id).kind {
+                TypeDeclKind::Udvt(u) => udvt_is_bytes32(u).then_some(ety),
+                _ => None,
+            },
             _ => self.resolution_trusted(res).then_some(ety),
         }
     }
@@ -204,9 +203,7 @@ pub(crate) fn op_by_name(name: &str) -> Option<FheOp> {
 /// The target type of a profile cast-function name (`asEuint32` → euint32).
 pub(crate) fn cast_target_by_name(name: &str) -> Option<EType> {
     let stripped = name.strip_prefix("as")?;
-    EType::ALL
-        .into_iter()
-        .find(|t| &t.in_struct_name()[2..] == stripped)
+    EType::ALL.into_iter().find(|t| t.suffix() == stripped)
 }
 
 /// Whether a UDVT's underlying type is `bytes32`.

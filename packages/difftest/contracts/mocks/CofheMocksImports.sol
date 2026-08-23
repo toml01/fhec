@@ -15,6 +15,8 @@ pragma solidity >=0.8.25 <0.9.0;
 // TASK_COMPILE_SOLIDITY_GET_SOURCE_PATHS subtask override. We keep it as a
 // checked-in source file instead: no plugin, no hidden step.
 
+import "@cofhe/mock-contracts/contracts/ACPShareRegistry.sol";
+import "@cofhe/mock-contracts/contracts/ACPTimestampRevoker.sol";
 import "@cofhe/mock-contracts/contracts/MockACL.sol";
 import "@cofhe/mock-contracts/contracts/MockCoFHE.sol";
 import "@cofhe/mock-contracts/contracts/MockTaskManager.sol";

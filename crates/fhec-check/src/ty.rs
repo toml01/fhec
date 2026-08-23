@@ -58,8 +58,9 @@ pub enum PlainTy {
         /// The literal value, when it fits in `u128`.
         value: Option<u128>,
     },
-    /// An encrypted-input struct (`InEuint32`, ...) of the given value type.
-    InStruct(EType),
+    /// An external-input handle (`externalEuint32`, ...) of the given value
+    /// type: a `bytes32` UDVT carrying an unverified input ciphertext hash.
+    ExternalInput(EType),
     /// A struct value of an in-unit struct declaration.
     Struct(TypeDeclId),
     /// An enum value of an in-unit enum declaration.
