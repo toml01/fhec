@@ -18,7 +18,7 @@ const pkgRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(pkgRoot, "..", "..");
 const cliJs = path.join(pkgRoot, "bin", "fhec.js");
 
-// Kept in sync with the mapping in bin/fhec.js / scripts/build-native.mjs.
+// Kept in sync with the mapping in lib/resolve.js / scripts/build-native.mjs.
 const PLATFORM_DIRS = {
   "darwin-arm64": "fhec-darwin-arm64",
 };

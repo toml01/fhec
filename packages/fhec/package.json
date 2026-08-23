@@ -5,6 +5,12 @@
   "bin": {
     "fhec": "bin/fhec.js"
   },
+  "exports": {
+    "./resolve": {
+      "types": "./lib/resolve.d.ts",
+      "default": "./lib/resolve.js"
+    }
+  },
   "scripts": {
     "build:native": "node scripts/build-native.mjs",
     "test": "node --test test/**/*.test.mjs"

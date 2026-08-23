@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`.fsol` → readable CoFHE Solidity. Dual workspace: Cargo `crates/*` (the compiler) + pnpm `packages/*` (npm wrapper + difftest). Normative behavior is `spec/spec.md` (RFC-2119, v0.2.0); section numbers are stable — do not renumber. `PLAN.md` is a historical design note (still mentions 0.1.x / vendored solar) — trust the spec and the code when they conflict.
+`.fsol` → readable CoFHE Solidity. Dual workspace: Cargo `crates/*` (the compiler) + pnpm `packages/*` (npm wrapper + Hardhat 2 plugin + difftest). Normative behavior is `spec/spec.md` (RFC-2119, v0.2.0); section numbers are stable — do not renumber. `PLAN.md` is a historical design note (still mentions 0.1.x / vendored solar) — trust the spec and the code when they conflict.
 
 ## Commands
 
@@ -14,7 +14,9 @@ cargo test --workspace
 
 Keep `rust-toolchain.toml` (`1.98`) in sync with the CI `dtolnay/rust-toolchain` pin — the action ignores the toml.
 
-CI ts job: Node 22, `pnpm install`, `pnpm -r run --if-present build`. No package has a `build` script today. CI does **not** run difftest or `check:types`.
+CI ts job: Node 22, `pnpm install`, `pnpm -r run --if-present build`. The Hardhat plugin has a `build` script (`tsc`). CI does **not** run difftest or `check:types`.
+
+CI plugin job: rust 1.98 + Node 22, `cargo build -p fhec-cli`, then `pnpm --filter @fhec/hardhat-plugin test`.
 
 Focused:
 
@@ -25,6 +27,7 @@ cargo test -p fhec-lower --test golden
 cargo test -p fhec-check --test check
 pnpm --filter difftest test          # transpiles then hardhat
 pnpm --filter difftest run check:types
+pnpm --filter @fhec/hardhat-plugin test
 ```
 
 `fixtures_runner` is four `#[test]`s (`golden_fixtures`, `rejection_fixtures`, `noop_fixtures`, `sourcemap_fixtures`); each walks every case in its areas. Cargo cannot isolate one fixture directory. Iterate a single construct in `crates/fhec-{check,lower}/tests/*.rs`.
@@ -59,7 +62,7 @@ Solar is `git = https://github.com/toml01/solar` at a workspace-pinned rev (all 
 - Encrypted `if` executes **both** branches and merges with `FHE.select`. No `return`/`revert`/`emit`/plaintext writes in those branches. Two indexed writes whose keys may alias → **FHE3011** (split into sequential `if`s; see EncryptedVault).
 - No `euint256`. Profile types: `ebool`, `euint8/16/32/64/128`, `eaddress`. Since cofhe-contracts 0.2.0, encrypted inputs are `externalEuintX` + one trailing `bytes` proof (`InEuintX` structs are gone).
 
-Out of scope unless asked: Hardhat/Foundry plugins, decrypt/reveal, other FHE targets, LSP, formatter.
+Out of scope unless asked: Hardhat 3 plugin, Foundry plugin, decrypt/reveal, other FHE targets, LSP, formatter.
 
 ## Diagnostics
 
@@ -81,7 +84,8 @@ Tests that need a real compiler or CoFHE **SKIP** (still green) when missing. Ga
 
 Root `packageManager` is `pnpm@10.33.0`.
 
-- `fhec` — esbuild/biome-style binary shim. Resolution: `FHEC_BINARY_PATH` → platform package → `target/{release,debug}/fhec`.
+- `fhec` — esbuild/biome-style binary shim. Resolution lives in `lib/resolve.js` and is exported as `fhec/resolve`: `FHEC_BINARY_PATH` → platform package → `target/{release,debug}/fhec`. `build:native` only stages **darwin-arm64**; other hosts skip the smoke tests.
+- `hardhat-plugin` (`@fhec/hardhat-plugin`) — Hardhat 2 only. Runs `fhec build` before compile, repoints `paths.sources` at `out`, remaps solc spans via `generated/.fhec/manifest.json`. Do not implement Hardhat 3. Do not deploy CoFHE mocks (that is `@cofhe/hardhat-plugin`). Plugin tests resolve the native binary via `FHEC_BINARY_PATH` or `target/{release,debug}/fhec` — never require `build:native`.
 - `difftest` — Hardhat 2 harness (`node >= 22`). Exact version pins (no `^`/`~`). Do not bump Hardhat to 3 (Dependabot ignores that major). Compare plaintext, ACL `isAllowed`, and revert **identity** — **never ciphertext handles**. Mint encrypted inputs per side via `args: async (ctx) => …` (`encryptInput`). Write `*Ref.sol` independently; never copy fhec output as the oracle. Mock bootstrap lives in `src/mocks.ts` — do not reinvent it.
 
 ## Env (solc)

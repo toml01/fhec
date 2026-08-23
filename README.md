@@ -77,6 +77,7 @@ preserved byte-for-byte — comments, formatting, everything.
 | `fhec build` | `check`, then patch, write the `generated/` mirror + manifest, and compile with solc |
 | `fhec explain FHEnnnn` | Explain a diagnostic code (full catalog from the spec) |
 | `fhec clean` | Remove generated output |
+| `fhec config` | Print the effective `fhec.toml` as JSON |
 
 | Flag | Meaning |
 |---|---|
@@ -85,10 +86,52 @@ preserved byte-for-byte — comments, formatting, everything.
 | `--fix` | Apply safe fix-its to the source |
 | `--acl=insert\|suggest` | Insert ACL grants (default) or downgrade them to fix-it notes |
 | `--no-verify` | Skip the solc gate |
+| `--watch` | Rebuild or recheck when dialect sources or `fhec.toml` change (`build` / `check` only) |
 
 Diagnostics carry stable codes (`FHE1xxx` load/parse … `FHE9xxx` internal),
 original-source spans, and fix-its; solc errors on generated code are remapped
 back to `.fsol` positions through the manifest.
+
+## Hardhat 2
+
+`@fhec/hardhat-plugin` runs `fhec build` before `hardhat compile`, points
+`paths.sources` at the generated tree, and remaps solc diagnostics back to
+`.fsol`. CoFHE mocks still come from `@cofhe/hardhat-plugin`. Hardhat 3 is
+out of scope.
+
+```js
+// hardhat.config.js
+require("@fhec/hardhat-plugin");
+
+module.exports = {
+  solidity: { version: "0.8.28", settings: { evmVersion: "cancun" } },
+};
+```
+
+See [`packages/hardhat-plugin/README.md`](packages/hardhat-plugin/README.md)
+for config keys (`enabled`, `verify`, `acl`, `config`) and FHE5003 version
+checking.
+
+## Foundry
+
+There is no Foundry plugin. Transpile first, then let `forge` compile the
+generated tree:
+
+```console
+$ fhec build && forge build
+```
+
+Point Foundry at `generated/` either as `src` or via a remapping:
+
+```toml
+# foundry.toml
+[profile.default]
+src = "generated"
+solc = "0.8.28"
+evm_version = "cancun"
+# alternatively, keep src = "contracts" and remap:
+# remappings = ["contracts/=generated/"]
+```
 
 ## Repository layout
 
@@ -107,23 +150,25 @@ back to `.fsol` positions through the manifest.
 | `spec/` | The normative `.fsol` language specification |
 | `fixtures/` | Conformance corpus: golden, rejection, no-op, and source-map suites |
 | `packages/fhec` | npm wrapper (esbuild/biome-style platform-binary distribution) |
+| `packages/hardhat-plugin` | Hardhat 2 plugin: transpile before compile, remap solc spans |
 | `packages/difftest` | Differential-execution harness on the CoFHE mocks |
 
 ## Status
 
-**Phase 1 (Core + CLI MVP) is complete.** Working today: all operators and
-comparisons over encrypted types, encrypted `if`/ternary via select lowering
-with branch versioning, plaintext/literal coercion and width widening,
-automatic ACL insertion (R1/R2/R3) with dedupe, the `in euintX` parameter
-sugar, stable diagnostics with fix-its, deterministic byte-range emission with
-source maps, the solc compile gate, and a conformance corpus plus a
-differential-execution suite that proves transpiled contracts equivalent to
-hand-written references on the CoFHE mocks (plaintexts, ACL state, and revert
-parity).
+**Phase 2 has started.** Phase 1 (Core + CLI MVP) is complete: all operators
+and comparisons over encrypted types, encrypted `if`/ternary via select
+lowering with branch versioning, plaintext/literal coercion and width
+widening, automatic ACL insertion (R1/R2/R3) with dedupe, the `in euintX`
+parameter sugar, stable diagnostics with fix-its, deterministic byte-range
+emission with source maps, the solc compile gate, and a conformance corpus
+plus a differential-execution suite that proves transpiled contracts
+equivalent to hand-written references on the CoFHE mocks (plaintexts, ACL
+state, and revert parity). The Hardhat 2 plugin (`@fhec/hardhat-plugin`)
+transpiles before compile and remaps solc diagnostics to `.fsol`.
 
-Explicitly not yet in scope (later phases): Hardhat/Foundry plugins,
-decrypt/reveal syntax, ACL annotations, flow-based ACL, the Zama fhevm / Inco
-/ COTI targets, LSP/editor tooling, and a formatter.
+Explicitly not yet in scope (later phases): Hardhat 3, a vocs docs site, a
+template repo, decrypt/reveal syntax, ACL annotations, flow-based ACL, the
+Zama fhevm / Inco / COTI targets, LSP/editor tooling, and a formatter.
 
 ## Related work
 

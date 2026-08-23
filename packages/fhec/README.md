@@ -4,11 +4,12 @@ npm wrapper for the `fhec` native binary (the Rust CLI in `crates/fhec-cli`),
 following the platform-package distribution model used by esbuild and
 biome: this package is a thin JS entry point (`bin/fhec.js`) that finds a
 prebuilt native binary for the current platform/arch and execs it,
-forwarding args and exit code.
+forwarding args and exit code. Resolution lives in `lib/resolve.js` and
+is exported as `fhec/resolve` for the Hardhat plugin and other tooling.
 
 ## Binary resolution order
 
-`bin/fhec.js` looks for the native binary in this order, stopping at the
+`fhec/resolve` looks for the native binary in this order, stopping at the
 first one it finds:
 
 1. **`FHEC_BINARY_PATH`** — if set, used as-is (existence-checked).

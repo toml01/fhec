@@ -7,6 +7,7 @@ use crate::load::{discover, LoadedUnit};
 use crate::stages::{self, FileOutput, StageOptions};
 use fhec_emit::{Manifest, ManifestFile};
 use fhec_lower::AclMode;
+use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -26,6 +27,8 @@ pub struct GlobalArgs {
     pub no_verify: bool,
     /// Hidden: re-transpile the generated output and assert byte identity.
     pub self_check: bool,
+    /// Rebuild or recheck when dialect sources or `fhec.toml` change.
+    pub watch: bool,
 }
 
 impl GlobalArgs {
@@ -52,7 +55,8 @@ fn report(diags: &[Diagnostic], json: bool, lookup: impl Fn(&str) -> Option<Stri
     }
 }
 
-fn load_project(g: &GlobalArgs) -> Result<LoadedConfig, Box<Diagnostic>> {
+/// Load `fhec.toml` the same way every command does (`--config` or upward search).
+pub(crate) fn load_project(g: &GlobalArgs) -> Result<LoadedConfig, Box<Diagnostic>> {
     let cwd = std::env::current_dir().expect("cwd is accessible");
     load_config(&cwd, g.config.as_deref())
 }
@@ -507,6 +511,52 @@ pub fn cmd_init() -> i32 {
     println!("created contracts/Counter.fsol");
     println!("next: run `fhec check`");
     0
+}
+
+/// Effective configuration printed by `fhec config`. `strictness` and the raw
+/// file text are intentionally omitted; `Config` already skips `strictness`.
+#[derive(Serialize)]
+struct EffectiveConfig<'a> {
+    root: String,
+    path: String,
+    hash: String,
+    #[serde(flatten)]
+    config: &'a crate::config::Config,
+}
+
+fn abs_display(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// Print the effective loaded configuration as JSON on stdout.
+pub fn cmd_config(g: &GlobalArgs) -> i32 {
+    let loaded = match load_project(g) {
+        Ok(l) => l,
+        Err(d) => {
+            let text = std::fs::read_to_string(&d.span.file).ok();
+            report(&[*d], g.json, |_| text.clone());
+            return 1;
+        }
+    };
+    let payload = EffectiveConfig {
+        root: abs_display(&loaded.root),
+        path: abs_display(&loaded.path),
+        hash: loaded.config.hash(),
+        config: &loaded.config,
+    };
+    match serde_json::to_string_pretty(&payload) {
+        Ok(json) => {
+            println!("{json}");
+            0
+        }
+        Err(e) => {
+            eprintln!("fhec: cannot serialize config: {e}");
+            2
+        }
+    }
 }
 
 pub fn cmd_explain(code: &str) -> i32 {
