@@ -34,3 +34,22 @@ jobs:
         run: pnpm install
       - name: Build
         run: pnpm -r run --if-present build
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build fhec binary
+        run: cargo build -p fhec-cli
+      - name: Test Hardhat plugin
+        run: pnpm --filter @fhec/hardhat-plugin test
