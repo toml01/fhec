@@ -42,6 +42,10 @@ struct Cli {
     #[arg(long, global = true, hide = true)]
     self_check: bool,
 
+    /// Rebuild or recheck when dialect sources or fhec.toml change.
+    #[arg(long, global = true)]
+    watch: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -61,6 +65,8 @@ enum Command {
     },
     /// Remove the generated out dir.
     Clean,
+    /// Print the effective fhec.toml as JSON.
+    Config,
 }
 
 fn main() {
@@ -83,13 +89,21 @@ fn main() {
         acl,
         no_verify: cli.no_verify,
         self_check: cli.self_check,
+        watch: cli.watch,
     };
     let code = match cli.command {
+        Command::Build if g.watch => fhec_cli::watch::cmd_watch(&g, commands::cmd_build),
+        Command::Check if g.watch => fhec_cli::watch::cmd_watch(&g, commands::cmd_check),
         Command::Build => commands::cmd_build(&g),
         Command::Check => commands::cmd_check(&g),
+        Command::Init | Command::Explain { .. } | Command::Clean | Command::Config if g.watch => {
+            eprintln!("fhec: --watch is only valid with build or check");
+            2
+        }
         Command::Init => commands::cmd_init(),
         Command::Explain { code } => commands::cmd_explain(&code),
         Command::Clean => commands::cmd_clean(&g),
+        Command::Config => commands::cmd_config(&g),
     };
     std::process::exit(code);
 }

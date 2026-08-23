@@ -114,6 +114,66 @@ fn invalid_acl_mode_is_rejected() {
 }
 
 #[test]
+fn init_then_config_prints_effective_json() {
+    let tmp = tempfile::tempdir().unwrap();
+    assert_eq!(fhec(tmp.path(), &["init"]).status.code(), Some(0));
+
+    let out = fhec(tmp.path(), &["config"]);
+    assert_eq!(out.status.code(), Some(0), "config: {}", stderr(&out));
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout(&out)).expect("config stdout is JSON");
+    let obj = parsed.as_object().expect("object");
+    assert_eq!(obj["project"]["src"], "contracts");
+    assert_eq!(obj["project"]["out"], "generated");
+    assert_eq!(obj["target"]["profile"], "cofhe");
+    assert_eq!(obj["acl"]["mode"], "insert");
+    let path = obj["path"].as_str().expect("path string");
+    assert!(path.ends_with("fhec.toml"), "path: {path}");
+    let root = obj["root"].as_str().expect("root string");
+    assert_eq!(
+        Path::new(root).canonicalize().unwrap(),
+        tmp.path().canonicalize().unwrap()
+    );
+    let hash = obj["hash"].as_str().expect("hash string");
+    assert_eq!(hash.len(), 64, "hash: {hash}");
+    assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "hash: {hash}");
+    assert!(!obj.contains_key("strictness"));
+    assert!(!obj.contains_key("text"));
+}
+
+#[test]
+fn config_missing_reports_draft_code() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = fhec(tmp.path(), &["config"]);
+    // Guard: if some ancestor of the tempdir carries a fhec.toml this test
+    // cannot assert anything meaningful.
+    if out.status.code() == Some(0) {
+        return;
+    }
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("FHE1004"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn watch_rejected_on_non_build_commands() {
+    let tmp = tempfile::tempdir().unwrap();
+    for args in [
+        ["init", "--watch"].as_slice(),
+        ["explain", "FHE2007", "--watch"].as_slice(),
+        ["clean", "--watch"].as_slice(),
+        ["config", "--watch"].as_slice(),
+    ] {
+        let out = fhec(tmp.path(), args);
+        assert_eq!(out.status.code(), Some(2), "args: {args:?}");
+        assert!(
+            stderr(&out).contains("--watch is only valid with build or check"),
+            "stderr: {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
 fn clean_removes_only_the_out_dir() {
     let tmp = tempfile::tempdir().unwrap();
     assert_eq!(fhec(tmp.path(), &["init"]).status.code(), Some(0));
