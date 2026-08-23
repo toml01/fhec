@@ -1,4 +1,4 @@
-//! Integration tests: parse inline sources with the vendored solar parser inside one
+//! Integration tests: parse inline sources with the solar parser fork inside one
 //! session/arena scope, bind, and assert resolutions — the same shape the real
 //! pipeline uses.
 

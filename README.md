@@ -103,7 +103,7 @@ back to `.fsol` positions through the manifest.
 | `crates/fhec-emit` | Byte-range patcher, temp naming, re-parse guards, mirror tree, source maps |
 | `crates/fhec-verify` | solc runner (standard JSON) + error forwarding |
 | `crates/fhec-cli` | The `fhec` binary |
-| `crates/vendor/` | Vendored [solar](https://github.com/paradigmxyz/solar) parser fork (see `VENDOR.md`) |
+| [toml01/solar](https://github.com/toml01/solar) | Forked [solar](https://github.com/paradigmxyz/solar) parser (`fhec` branch; [compare](https://github.com/paradigmxyz/solar/compare/v0.2.0...toml01:solar:fhec)) |
 | `spec/` | The normative `.fsol` language specification |
 | `fixtures/` | Conformance corpus: golden, rejection, no-op, and source-map suites |
 | `packages/fhec` | npm wrapper (esbuild/biome-style platform-binary distribution) |
@@ -135,5 +135,5 @@ hardware, not smart contracts into library calls.
 
 ## License
 
-MIT. The vendored solar parser is dual-licensed MIT/Apache-2.0 by Paradigm;
-see `crates/vendor/VENDOR.md` for provenance and local modifications.
+MIT. The solar parser fork is dual-licensed MIT/Apache-2.0 by Paradigm;
+see [toml01/solar](https://github.com/toml01/solar) (`FHEC.md`) for provenance.

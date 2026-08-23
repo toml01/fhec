@@ -5,22 +5,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
-    # Dependencies below exist in this workspace *only* for the vendored solar
-    # parser fork under crates/vendor/. Those six manifests must keep upstream's
-    # dependency requirements unchanged (crates/vendor/VENDOR.md: "Dependency
-    # versions and feature sets are unchanged"), so a bump there would break the
-    # byte-identical-to-upstream guarantee. No fhec-* crate declares any of them
-    # directly; they reach fhec crates only through solar-*, and the transitive
-    # copies of these crates that fhec code does pull in (e.g. syn via
-    # clap_derive / serde_derive) are resolved by Cargo, not by Dependabot.
-    # Re-check this list whenever crates/vendor/ is re-vendored to a newer tag.
+    # Bump the solar fork rev in Cargo.toml by hand after merging upstream on
+    # toml01/solar's fhec branch.
     ignore:
-      # crates/vendor/solar-parse, crates/vendor/solar-interface
-      - dependency-name: itertools
-      # crates/vendor/solar-macros
-      - dependency-name: syn
-      # crates/vendor/solar-parse
-      - dependency-name: num-bigint
+      - dependency-name: solar-parse
+      - dependency-name: solar-ast
+      - dependency-name: solar-interface
+      - dependency-name: solar-data-structures
   - package-ecosystem: npm
     directory: /
     schedule:
