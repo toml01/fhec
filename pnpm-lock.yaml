@@ -11,8 +11,8 @@ importers:
   packages/difftest:
     devDependencies:
       '@cofhe/mock-contracts':
-        specifier: 0.6.1
-        version: 0.6.1
+        specifier: 0.7.0
+        version: 0.7.0
       '@fhenixprotocol/cofhe-contracts':
         specifier: 0.1.5
         version: 0.1.5
@@ -75,8 +75,8 @@ packages:
   '@adraffy/ens-normalize@1.11.1':
     resolution: {integrity: sha512-nhCBV3quEgesuf7c7KYfperqSS14T8bYuvJ8PcLJp6znkZpFc0AuW4qBtr8eKVyPPe/8RSr7sglCWPU5eaxwKQ==}
 
-  '@cofhe/mock-contracts@0.6.1':
-    resolution: {integrity: sha512-COBenHcZZ4hRox5KWYJnD5RrZB0Dd3wXkFTNTsBUOeBre6IEMWA7odAxUQcrx0oEhtoX81vbj+LSb9hqO68KMQ==}
+  '@cofhe/mock-contracts@0.7.0':
+    resolution: {integrity: sha512-/XMCSnReiLVBik2EXqIekyF1MaPxp/z544CWx5bSTEnTEPlQ3mSAc4sK2nxMiHeEXOdy9D87ivzEd2tjga50zA==}
 
   '@cspotcode/source-map-support@0.8.1':
     resolution: {integrity: sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw==}
@@ -149,11 +149,11 @@ packages:
     resolution: {integrity: sha512-vBZP4NlzfOlerQTnba4aqZoMhE/a9HY7HRqoOPaETQcSQuWEIyZMHGfVu6w9wGtGK5fED5qRs2DteVCjOH60sA==}
     engines: {node: '>=14'}
 
-  '@fhenixprotocol/cofhe-contracts@0.1.4':
-    resolution: {integrity: sha512-WNtMxEwZvtjFEHAlOJD1ydKF2qf4zl2/eneYQibe6pnnoeFGWyT9+TRcdgt9iReoB/urZCNzsYAAQCDL1MTPIQ==}
-
   '@fhenixprotocol/cofhe-contracts@0.1.5':
     resolution: {integrity: sha512-K0E0iB5hFybDmJz3ZvEHOq5qrVOUJwuOxB1s8kN16WG01MTYPvWiLtdQlP8SrszA2ZY4EFIQUYDOGcDOXt6bmA==}
+
+  '@fhenixprotocol/cofhe-contracts@0.2.0-beta.3':
+    resolution: {integrity: sha512-tr1AfoWIojKCP92G1VTsfIQIDwR+LHoBH6xX5ZKO4UXW14+sffgZYDJ3PuNaSaP/v1yWgn+5mslEd1/TtlCmfA==}
 
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
@@ -1336,9 +1336,9 @@ snapshots:
 
   '@adraffy/ens-normalize@1.11.1': {}
 
-  '@cofhe/mock-contracts@0.6.1':
+  '@cofhe/mock-contracts@0.7.0':
     dependencies:
-      '@fhenixprotocol/cofhe-contracts': 0.1.4
+      '@fhenixprotocol/cofhe-contracts': 0.2.0-beta.3
       '@openzeppelin/contracts': 5.4.0
       '@openzeppelin/contracts-upgradeable': 5.4.0(@openzeppelin/contracts@5.4.0)
 
@@ -1478,11 +1478,11 @@ snapshots:
 
   '@fastify/busboy@2.1.1': {}
 
-  '@fhenixprotocol/cofhe-contracts@0.1.4':
+  '@fhenixprotocol/cofhe-contracts@0.1.5':
     dependencies:
       '@openzeppelin/contracts': 5.6.1
 
-  '@fhenixprotocol/cofhe-contracts@0.1.5':
+  '@fhenixprotocol/cofhe-contracts@0.2.0-beta.3':
     dependencies:
       '@openzeppelin/contracts': 5.6.1
 
