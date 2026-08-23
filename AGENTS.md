@@ -1,6 +1,6 @@
 # AGENTS.md
 
-`.fsol` → readable CoFHE Solidity. Dual workspace: Cargo `crates/*` (the compiler) + pnpm `packages/*` (npm wrapper + difftest). Normative behavior is `spec/spec.md` (RFC-2119); section numbers are stable — do not renumber.
+`.fsol` → readable CoFHE Solidity. Dual workspace: Cargo `crates/*` (the compiler) + pnpm `packages/*` (npm wrapper + Hardhat 2 plugin + difftest). Normative behavior is `spec/spec.md` (RFC-2119); section numbers are stable — do not renumber.
 
 ## Commands
 
@@ -22,6 +22,7 @@ cargo test -p fhec-lower --test golden
 cargo test -p fhec-check --test check
 pnpm --filter difftest test          # transpiles then hardhat
 pnpm --filter difftest run check:types
+pnpm --filter @fhec/hardhat-plugin test
 ```
 
 `fixtures_runner` is one `#[test]` per area (all cases). Iterate a single construct in `crates/fhec-{check,lower}/tests/*.rs`, not by hoping cargo will isolate one fixture directory.
@@ -56,7 +57,7 @@ Solar is `git = https://github.com/toml01/solar` at a workspace-pinned rev (all 
 - No `euint256`. Profile types: `ebool`, `euint8/16/32/64/128`, `eaddress`.
 - Existing FHE library calls the profile does not understand are left to solc — do not reject them.
 
-Out of scope unless asked: Hardhat/Foundry plugins, decrypt/reveal, other FHE targets, LSP, formatter.
+Out of scope unless asked: Hardhat 3 plugin, decrypt/reveal, other FHE targets, LSP, formatter.
 
 ## Diagnostics
 
@@ -82,7 +83,8 @@ CI rust job does **not** install solc or CoFHE, so a green workspace test is not
 
 ## `packages/`
 
-- `fhec` — esbuild/biome-style binary shim. Resolution: `FHEC_BINARY_PATH` → platform package → `target/{release,debug}/fhec`. `build:native` only stages **darwin-arm64**; other hosts skip the smoke tests.
+- `fhec` — esbuild/biome-style binary shim. Resolution lives in `lib/resolve.js` and is exported as `fhec/resolve`: `FHEC_BINARY_PATH` → platform package → `target/{release,debug}/fhec`. `build:native` only stages **darwin-arm64**; other hosts skip the smoke tests.
+- `hardhat-plugin` (`@fhec/hardhat-plugin`) — Hardhat 2 only. Runs `fhec build` before compile, repoints `paths.sources` at `out`, remaps solc spans via `generated/.fhec/manifest.json`. Do not implement Hardhat 3. Do not deploy CoFHE mocks (that is `@cofhe/hardhat-plugin`). Plugin tests resolve the native binary via `FHEC_BINARY_PATH` or `target/{release,debug}/fhec` — never require `build:native`.
 - `difftest` — Hardhat 2 harness (`node >= 22`). Exact version pins (no `^`/`~`). Do not bump Hardhat to 3 (Dependabot ignores that major). Compare plaintext, ACL `isAllowed`, and revert **identity** — **never ciphertext handles**. Mint encrypted inputs per side via `args: async (ctx) => …` (`encryptInput`). Write `*Ref.sol` independently; never copy fhec output as the oracle. Mock bootstrap lives in `src/mocks.ts` — do not reinvent it.
 
 ## Env (solc)
