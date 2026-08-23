@@ -1,10 +1,10 @@
 # AGENTS.md
 
-`.fsol` → readable CoFHE Solidity. Dual workspace: Cargo `crates/*` (the compiler) + pnpm `packages/*` (npm wrapper + Hardhat 2 plugin + difftest). Normative behavior is `spec/spec.md` (RFC-2119); section numbers are stable — do not renumber.
+`.fsol` → readable CoFHE Solidity. Dual workspace: Cargo `crates/*` (the compiler) + pnpm `packages/*` (npm wrapper + Hardhat 2 plugin + difftest). Normative behavior is `spec/spec.md` (RFC-2119, v0.2.0); section numbers are stable — do not renumber. `PLAN.md` is a historical design note (still mentions 0.1.x / vendored solar) — trust the spec and the code when they conflict.
 
 ## Commands
 
-CI (`.github/workflows/ci.yml`):
+CI rust job (`.github/workflows/ci.yml`; does **not** install solc or CoFHE):
 
 ```
 cargo fmt --all --check
@@ -14,10 +14,15 @@ cargo test --workspace
 
 Keep `rust-toolchain.toml` (`1.98`) in sync with the CI `dtolnay/rust-toolchain` pin — the action ignores the toml.
 
+CI ts job: Node 22, `pnpm install`, `pnpm -r run --if-present build`. The Hardhat plugin has a `build` script (`tsc`). CI does **not** run difftest or `check:types`.
+
+CI plugin job: rust 1.98 + Node 22, `cargo build -p fhec-cli`, then `pnpm --filter @fhec/hardhat-plugin test`.
+
 Focused:
 
 ```
 cargo test -p fhec-cli --test fixtures_runner
+cargo test -p fhec-cli --test fixtures_runner golden_fixtures -- --exact
 cargo test -p fhec-lower --test golden
 cargo test -p fhec-check --test check
 pnpm --filter difftest test          # transpiles then hardhat
@@ -25,9 +30,9 @@ pnpm --filter difftest run check:types
 pnpm --filter @fhec/hardhat-plugin test
 ```
 
-`fixtures_runner` is one `#[test]` per area (all cases). Iterate a single construct in `crates/fhec-{check,lower}/tests/*.rs`, not by hoping cargo will isolate one fixture directory.
+`fixtures_runner` is four `#[test]`s (`golden_fixtures`, `rejection_fixtures`, `noop_fixtures`, `sourcemap_fixtures`); each walks every case in its areas. Cargo cannot isolate one fixture directory. Iterate a single construct in `crates/fhec-{check,lower}/tests/*.rs`.
 
-`fhec` binary: `cargo build -p fhec-cli` → `target/debug/fhec`. Dogfood JS wrapper with `pnpm --filter fhec exec node bin/fhec.js …` — `pnpm exec fhec` does not resolve a package’s own bin.
+`fhec` binary: `cargo build -p fhec-cli` → `target/debug/fhec`. Dogfood the JS wrapper with `pnpm --filter fhec exec node bin/fhec.js …` — `pnpm exec fhec` does not resolve a package’s own bin. `build:native` only stages **darwin-arm64** and exits 1 on other hosts; on Linux use the cargo binary (the JS shim falls back to `target/{release,debug}/fhec`).
 
 ## Pipeline (not obvious from filenames)
 
@@ -41,31 +46,31 @@ Stages, always in this order, inside **one** solar `Session` + `Arena` (AST is a
 7. emit (`fhec-emit`) — byte-range splice, re-parse guards, `generated/` mirror + `.fhec/manifest.json`
 8. solc gate (`fhec-verify`) — `solc --standard-json`; **span remap to `.fsol` is CLI `gate.rs`**, not this crate
 
-`fhec check` still runs the lowerer and discards output, so spec §7 rejects and spec §8 ACL diagnostics fire on check.
+`fhec check` still runs the lowerer and discards output, so spec §7 rejects and spec §8 ACL diagnostics fire on check. Checker errors refuse the whole unit. A lowering fault (FHE3011/3013/4003/9001) drops every patch for that file — no partial output.
 
 `fhec-ir` is a **rendering** IR (byte-range fragments), not an optimizer IR. Output = input bytes except inside non-overlapping patches. Only `.fsol` is rewritten; `.sol` is byte-identical except spec §2.6 import-specifier `.fsol` → `.sol`. Nested operator sites must be rendered recursively — never emit overlapping patches (FHE9001). Temps: `__fhe_<hint>_<n>`, one counter per function.
 
-Solar is `git = https://github.com/toml01/solar` at a workspace-pinned rev (all four `solar-*` crates share it). Bump by hand after merging the `fhec` branch; Dependabot ignores these. `VariableDefinition.in_sugar` is a fork extension. Do not add crates.io `solar-*`. The stale `TODO(fhec-syntax)` in `fhec-bind` about a missing `in` marker is wrong — the marker already exists.
+Solar is `git = https://github.com/toml01/solar` at a workspace-pinned rev (all four `solar-*` crates share it). Bump by hand after merging the `fhec` branch; Dependabot ignores these. `VariableDefinition.in_sugar` is a fork extension. Do not add crates.io `solar-*`. The `TODO(fhec-syntax)` in `fhec-bind` about a missing `in` marker is stale — the marker already exists and check/sugar consume it.
 
-`fhec-ir`, `fhec-targets`, `fhec-lower`, `fhec-emit` use `#![warn(missing_docs)]`; CI denies warnings, so new public items need rustdoc.
+`fhec-ir`, `fhec-targets`, `fhec-lower`, `fhec-emit`, `fhec-verify` use `#![warn(missing_docs)]`; CI denies warnings, so new public items need rustdoc.
 
 ## Invariants (refuse rather than guess)
 
 - **Prime directive (spec §1.3):** never miscompile. Uncertainty → error + no patches for that file. Wrong FHE output is silent wrong ciphertexts, not reverts.
 - **No-op / idempotence (spec §1.4):** plain CoFHE Solidity is byte-identical; `T(T(x)) == T(x)`. Hidden `--self-check` asserts this; fixture goldens run it.
+- Encrypted operand + `Unknown` type → **FHE2001**, refuse. Existing FHE library calls the profile does not understand are left to solc — do not reject them.
 - Encrypted `if` executes **both** branches and merges with `FHE.select`. No `return`/`revert`/`emit`/plaintext writes in those branches. Two indexed writes whose keys may alias → **FHE3011** (split into sequential `if`s; see EncryptedVault).
-- No `euint256`. Profile types: `ebool`, `euint8/16/32/64/128`, `eaddress`.
-- Existing FHE library calls the profile does not understand are left to solc — do not reject them.
+- No `euint256`. Profile types: `ebool`, `euint8/16/32/64/128`, `eaddress`. Since cofhe-contracts 0.2.0, encrypted inputs are `externalEuintX` + one trailing `bytes` proof (`InEuintX` structs are gone).
 
-Out of scope unless asked: Hardhat 3 plugin, decrypt/reveal, other FHE targets, LSP, formatter.
+Out of scope unless asked: Hardhat 3 plugin, Foundry plugin, decrypt/reveal, other FHE targets, LSP, formatter.
 
 ## Diagnostics
 
-Codes are append-only (`FHE1xxx` load … `FHE9xxx` internal). Meaning never changes; retired codes are not reused. Adding a code means all of: spec §9, `fhec-cli` `explain.rs` `CATALOG`, the emitting crate’s `codes` module.
+Codes are append-only (`FHE1xxx` load … `FHE9xxx` internal). Meaning never changes; retired codes are not reused. Adding a code means all of: spec §9, `fhec-cli` `explain.rs` `CATALOG`, the emitting crate’s `codes` module (or `CODE_*` const).
 
 `--json` prints the spec §10.2 array on **stdout**; human form is stderr. Spans: 0-based half-open bytes; 1-based line/col; columns are UTF-8 bytes. Exit: `0` ok, `1` error diagnostics, `2` usage/internal.
 
-`fhec.toml` uses `deny_unknown_fields` except reserved `[strictness]`. Defaults: `src = "contracts"`, `out = "generated"`, profile `cofhe` `0.1.x`, `solc = ">=0.8.25 <0.9.0"`, `evm_version = "cancun"`.
+`fhec.toml` uses `deny_unknown_fields` except reserved `[strictness]`. Defaults: `src = "contracts"`, `out = "generated"`, profile `cofhe` `0.2.x`, `solc = ">=0.8.25 <0.9.0"`, `evm_version = "cancun"`.
 
 ## Tests & fixtures
 
@@ -73,15 +78,11 @@ Conformance corpus: `fixtures/<area>/<case>/` (see `fixtures/README.md`). Golden
 
 Lowering changes usually need **both** `crates/fhec-lower/tests/golden.rs` and matching `fixtures/**/expected.sol`. Dialect output also regenerates `packages/difftest/contracts/generated/` (committed). `--frozen` fails if that tree would drift.
 
-Tests that need a real compiler or CoFHE checkout **SKIP** (still green) when missing. The built-in default checkout path only exists on the original dev machine — everywhere else set:
-
-- `FHEC_COFHE_CONTRACTS` — repo root containing `contracts/FHE.sol` (fixture/e2e/gate tests symlink it to `node_modules/@fhenixprotocol/cofhe-contracts`)
-- `FHEC_CORPUS_DIRS` — colon-separated `.sol` trees for syntax/check corpus tests
-- `FHEC_SOLC` — pin `solc` (else PATH, then svm-rs homes)
-
-CI rust job does **not** install solc or CoFHE, so a green workspace test is not full gate coverage. Fixture/e2e linking is Unix `symlink`.
+Tests that need a real compiler or CoFHE **SKIP** (still green) when missing. Gate/fixture/e2e default to `packages/difftest/node_modules/@fhenixprotocol/cofhe-contracts` after `pnpm install`. Override with `FHEC_COFHE_CONTRACTS` (package root with `FHE.sol`, or checkout with `contracts/FHE.sol`). Corpus tests (`fhec-syntax`, `fhec-check`) use `FHEC_CORPUS_DIRS` (colon-separated `.sol` trees) and otherwise fall back to `/Users/toml/dev/...` — they SKIP elsewhere. `FHEC_SOLC` pins `solc` (else PATH, then svm-rs homes). Fixture/e2e linking is Unix `symlink`. A green workspace `cargo test` is not full gate coverage.
 
 ## `packages/`
+
+Root `packageManager` is `pnpm@10.33.0`.
 
 - `fhec` — esbuild/biome-style binary shim. Resolution lives in `lib/resolve.js` and is exported as `fhec/resolve`: `FHEC_BINARY_PATH` → platform package → `target/{release,debug}/fhec`. `build:native` only stages **darwin-arm64**; other hosts skip the smoke tests.
 - `hardhat-plugin` (`@fhec/hardhat-plugin`) — Hardhat 2 only. Runs `fhec build` before compile, repoints `paths.sources` at `out`, remaps solc spans via `generated/.fhec/manifest.json`. Do not implement Hardhat 3. Do not deploy CoFHE mocks (that is `@cofhe/hardhat-plugin`). Plugin tests resolve the native binary via `FHEC_BINARY_PATH` or `target/{release,debug}/fhec` — never require `build:native`.
