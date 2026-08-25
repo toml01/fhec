@@ -13,9 +13,9 @@ tests compare *bytes*, and the solc gate proves the output *compiles* — neithe
 notices when `FHE.select` swallows an uninitialised handle or when the ACL pass
 under-grants. Only running the code does.
 
-Nothing here depends on the transpiler. The harness is a library plus a working
-fixture pair, so it is already green today and the generated contracts drop in
-later without touching it.
+The runner itself does not depend on the transpiler. Generated contracts are
+compiled beside independently written references, including the FHERC20
+dialect output and the unmodified upstream FHERC20 implementation.
 
 ```
 pnpm --filter difftest test
@@ -118,11 +118,13 @@ executes the scenario twice; pass `{ logOps: true }` when debugging.
 
 ### Encrypted inputs without the SDK
 
-`in euint32` sugar is a v1 transpiler feature, so the harness has to mint
+External encrypted inputs require the harness to mint
 verified inputs itself. cofhe-contracts 0.2.0 **removed the `InEuintXX`
 structs**: an encrypted argument is now a *pair* — an `externalEuintXX` handle
-(a plain `bytes32`) in the parameter's own position, plus **one** `bytes` proof
-as the call's trailing argument, shared by every encrypted input of that call.
+(a plain `bytes32`) in the parameter's own position, plus **one** `bytes` proof,
+shared by every encrypted input of that call. Legacy `in eT` sugar appends that
+proof; canonical interfaces such as ERC-7984's AndCall overloads may place it
+before a following `bytes data` argument.
 
 ```solidity
 function setCount(externalEuint32 _inCount, bytes memory inputProof) external {
@@ -273,6 +275,21 @@ Current pairs:
   encrypted return called as a transaction), and R2 (a transient grant to an
   `AuditorSink` that immediately *uses* the handle, so a dropped grant would
   break revert parity).
+- **FHERC20** — all eight canonical IERC7984 transfer overloads across external
+  and directed-shared inputs; valid, self, unauthorized, and expired operators;
+  EOA/accept/reject/revert callbacks and full rejection refunds; saturating
+  mint/transfer arithmetic and burn; balance/supply ACL and indicator views.
+  Hand-written callback receivers and paired shared-call drivers keep each
+  share/create/call/receive chain inside one transaction. The ABI test fails
+  closed on all eight signatures/selectors, one `bytes32` result each, required
+  events/errors, and Solidity-computed IFHERC20/IERC7984/IERC20 interface IDs.
+
+The current PR #26 baseline has one deliberately isolated characterization,
+not a relaxed comparison rule: an unauthorized basic external
+`confidentialTransferFrom` carrying a valid proof bound to the wrong consumer
+reverts `FHERC20UnauthorizedSpender` upstream but reaches `InvalidSigner` in the
+generated proof-first lowering. Every other FHERC20 scenario, including
+external FromAndCall and shared From compound-invalid ordering, is strict.
 
 One shape is deliberately absent: writing `balances[msg.sender]` **and**
 `balances[to]` inside a *single* encrypted `if` is rejected by spec §5.2's
@@ -328,6 +345,8 @@ packages/difftest/
   contracts/
     EncryptedCounterRef.sol         reference oracle
     EncryptedCounterDivergent.sol   two deliberately-wrong twins
+    FHERC20Receiver.sol             independent IERC7984 callback receiver
+    FHERC20SharedDriver.sol         paired directed-share driver and ABI ID probe
     generated/                      landing zone for fhec output (see its README)
     mocks/CofheMocksImports.sol     pulls @cofhe/mock-contracts into compilation
   src/
