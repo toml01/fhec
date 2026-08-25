@@ -17,6 +17,9 @@ contract FHERC20Receiver is IERC7984Receiver {
 
     Mode public immutable mode;
     euint64 private _lastAmount;
+    address public lastOperator;
+    address public lastFrom;
+    bytes32 public lastDataHash;
 
     constructor(Mode mode_) {
         mode = mode_;
@@ -27,15 +30,18 @@ contract FHERC20Receiver is IERC7984Receiver {
     }
 
     function onConfidentialTransferReceived(
-        address,
-        address,
+        address operator,
+        address from,
         sharedEuint64 amount,
-        bytes calldata
+        bytes calldata data
     ) external returns (sharedEbool) {
         // Consume the directed input before selecting any callback behavior.
         euint64 received = FHE.receiveEuint64Param(amount);
         _lastAmount = received;
         FHE.allowThis(_lastAmount);
+        lastOperator = operator;
+        lastFrom = from;
+        lastDataHash = keccak256(data);
 
         if (mode == Mode.EmptyRevert) {
             assembly ("memory-safe") {

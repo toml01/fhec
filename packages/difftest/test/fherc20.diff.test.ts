@@ -16,6 +16,7 @@ import {
   EXPECTED_CALLBACK_FINAL,
   EXPECTED_CORE_FINAL,
   EXPECTED_SHARED_FINAL,
+  CALLBACK_ACCEPT_DATA,
   OPERATOR_UNTIL,
   makeFherc20ArithmeticScenario,
   makeFherc20CallbackScenario,
@@ -203,6 +204,25 @@ describe('differential :: transpiled FHERC20 (dialect) vs upstream fhenix-confid
     expect(afterReject.plaintexts.aliceBalance).to.equal('170');
     expect(afterReject.plaintexts.rejectingBalance).to.equal('0');
 
+    for (const token of [reference, generated]) {
+      const receiver = (await hre.ethers.deployContract('FHERC20Receiver', [0])) as unknown as Contract;
+      await receiver.waitForDeployment();
+      const tokenAddress = await token.getAddress();
+      await (await token.mint(accounts.alice, 20n)).wait();
+      await (await (token.connect((await hre.ethers.getSigners())[0]) as Contract).setOperator(accounts.carol, OPERATOR_UNTIL)).wait();
+      const input = await env.encryptInput(20n, 'euint64', accounts.carol, tokenAddress);
+      await (
+        await (token.connect((await hre.ethers.getSigners())[2]) as Contract)[
+          'confidentialTransferFromAndCall(address,address,bytes32,bytes,bytes)'
+        ](accounts.alice, await receiver.getAddress(), input.handle, input.signature, CALLBACK_ACCEPT_DATA)
+      ).wait();
+
+      expect(await receiver.lastOperator()).to.equal(accounts.carol);
+      expect(await receiver.lastFrom()).to.equal(accounts.alice);
+      expect(await receiver.lastDataHash()).to.equal(hre.ethers.keccak256(CALLBACK_ACCEPT_DATA));
+      expect((await env.getPlaintext(await receiver.lastAmount()))?.toString()).to.equal('20');
+    }
+
     const final = result.a.snapshots[result.a.snapshots.length - 1];
     expect(final.plaintexts.aliceBalance).to.equal(EXPECTED_CALLBACK_FINAL.alice);
     expect(final.plaintexts.bobBalance).to.equal(EXPECTED_CALLBACK_FINAL.bob);
@@ -368,14 +388,20 @@ describe('differential :: transpiled FHERC20 (dialect) vs upstream fhenix-confid
       ['confidentialTransferFromAndCall(address,address,bytes32,bytes,bytes)', '0x34c45743'],
       ['confidentialTransferFromAndCall(address,address,bytes32,bytes)', '0xc7b8a75e'],
     ]);
-    const requiredEvents = ['OperatorSet', 'ConfidentialTransfer', 'AmountDisclosed', 'Transfer', 'AmountDiscloseRequested'];
+    const requiredEvents = [
+      'OperatorSet(address indexed holder, address indexed operator, uint48 until)',
+      'ConfidentialTransfer(address indexed from, address indexed to, bytes32 indexed amount)',
+      'AmountDisclosed(bytes32 indexed encryptedAmount, uint64 amount)',
+      'Transfer(address indexed from, address indexed to, uint256 value)',
+      'AmountDiscloseRequested(bytes32 indexed encryptedAmount, address indexed requester)',
+    ];
     const requiredErrors = [
-      'FHERC20InvalidReceiver',
-      'FHERC20InvalidSender',
-      'FHERC20UnauthorizedSpender',
-      'FHERC20ZeroBalance',
-      'FHERC20UnauthorizedUseOfEncryptedAmount',
-      'FHERC20IncompatibleFunction',
+      'FHERC20InvalidReceiver(address receiver)',
+      'FHERC20InvalidSender(address sender)',
+      'FHERC20UnauthorizedSpender(address holder, address spender)',
+      'FHERC20ZeroBalance(address holder)',
+      'FHERC20UnauthorizedUseOfEncryptedAmount(bytes32 amount, address user)',
+      'FHERC20IncompatibleFunction()',
     ];
 
     for (const [signature, selector] of expectedTransfers) {
@@ -400,18 +426,24 @@ describe('differential :: transpiled FHERC20 (dialect) vs upstream fhenix-confid
         expect(fn!.outputs[0].type).to.equal('bytes32');
       }
 
-      const eventNames = new Set(
+      const eventSignatures = new Set(
         iface.fragments
           .filter((fragment): fragment is EventFragment => fragment.type === 'event')
-          .map((fragment) => fragment.name)
+          .map((fragment) => fragment.format('full'))
       );
-      const errorNames = new Set(
+      const errorSignatures = new Set(
         iface.fragments
           .filter((fragment): fragment is ErrorFragment => fragment.type === 'error')
-          .map((fragment) => fragment.name)
+          .map((fragment) => fragment.format('full'))
       );
-      for (const eventName of requiredEvents) expect(eventNames.has(eventName), `${artifactName} event ${eventName}`).to.equal(true);
-      for (const errorName of requiredErrors) expect(errorNames.has(errorName), `${artifactName} error ${errorName}`).to.equal(true);
+      for (const signature of requiredEvents) expect(eventSignatures.has(`event ${signature}`), `${artifactName} event ${signature}`).to.equal(true);
+      for (const signature of requiredErrors) {
+        const error = iface.getError(signature);
+        expect(error, `${artifactName} error ${signature}`).not.to.equal(null);
+        expect(error!.format('full')).to.equal(`error ${signature}`);
+        expect(error!.selector).to.equal(hre.ethers.id(error!.format('sighash')).slice(0, 10));
+        expect(errorSignatures.has(`error ${signature}`), `${artifactName} error ${signature}`).to.equal(true);
+      }
     }
 
     const { reference, generated } = await deployTokenPair();

@@ -4,6 +4,7 @@ import type { Scenario, StepContext } from '../src/differential';
 
 export const UINT64_MAX = (1n << 64n) - 1n;
 export const OPERATOR_UNTIL = 1n << 40n;
+export const CALLBACK_ACCEPT_DATA = '0xaabb';
 
 export const EXPECTED_CORE_FINAL = {
   alice: '855',
@@ -218,9 +219,15 @@ export function makeFherc20CallbackScenario(wiring: CallbackWiring): Scenario {
         args: (ctx) => tokenAmountArgs(ctx, 10n, [wiring.bob], ['0x01']),
       },
       {
-        fn: 'confidentialTransferAndCall(address,bytes32,bytes,bytes)',
-        label: 'accepting callback keeps 20',
-        args: (ctx) => tokenAmountArgs(ctx, 20n, [wiring.acceptingReceiver], ['0xaabb']),
+        fn: 'setOperator',
+        label: 'alice authorizes carol for accepting callback',
+        args: [wiring.carol, OPERATOR_UNTIL],
+      },
+      {
+        fn: 'confidentialTransferFromAndCall(address,address,bytes32,bytes,bytes)',
+        from: 2,
+        label: 'accepting callback keeps 20 and receives operator payload',
+        args: (ctx) => tokenAmountArgs(ctx, 20n, [wiring.alice, wiring.acceptingReceiver], [CALLBACK_ACCEPT_DATA]),
       },
       {
         fn: 'confidentialTransferAndCall(address,bytes32,bytes,bytes)',
