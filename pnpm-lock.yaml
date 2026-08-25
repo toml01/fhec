@@ -73,6 +73,25 @@ importers:
 
   packages/fhec-darwin-arm64: {}
 
+  packages/hardhat-plugin:
+    dependencies:
+      fhec:
+        specifier: workspace:*
+        version: link:../fhec
+      smol-toml:
+        specifier: 1.8.0
+        version: 1.8.0
+    devDependencies:
+      '@types/node':
+        specifier: 22.10.5
+        version: 22.10.5
+      hardhat:
+        specifier: 2.29.1
+        version: 2.29.1(ts-node@10.9.2(@types/node@22.10.5)(typescript@5.9.3))(typescript@5.9.3)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+
 packages:
 
   '@adraffy/ens-normalize@1.11.1':
@@ -1276,6 +1295,10 @@ packages:
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
+
+  smol-toml@1.8.0:
+    resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
+    engines: {node: '>= 18'}
 
   solc@0.8.26:
     resolution: {integrity: sha512-yiPQNVf5rBFHwN6SIf3TUUvVAFKcQqmSUFeq+fb6pNRCo0ZCgpYOZDi3BVoezCPIAcKrVYd/qXlBLUP9wVrZ9g==}
@@ -2918,6 +2941,8 @@ snapshots:
   shebang-regex@3.0.0: {}
 
   signal-exit@4.1.0: {}
+
+  smol-toml@1.8.0: {}
 
   solc@0.8.26(debug@4.4.3):
     dependencies:

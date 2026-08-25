@@ -1,4 +1,4 @@
-//! `fhec` binary: build/check/init/explain/clean.
+//! `fhec` binary: build/check/init/explain/clean/config.
 //!
 //! Library layout (the binary in `main.rs` is a thin clap shell):
 //! - [`config`] — stage 1: `fhec.toml` model, upward search, content hash
@@ -8,6 +8,7 @@
 //! - [`diag`] — spec §10.2 diagnostic model, human + JSON renderers
 //! - [`explain`] — static spec §9 catalog for `fhec explain`
 //! - [`commands`] — command drivers returning exit codes
+//! - [`watch`] — `--watch` loop for `build` and `check`
 
 pub mod commands;
 pub mod config;
@@ -16,3 +17,4 @@ pub mod explain;
 pub mod gate;
 pub mod load;
 pub mod stages;
+pub mod watch;
