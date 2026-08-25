@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "`fhec` binary: build/check/init/explain/clean"
+description = "`fhec` binary: build/check/init/explain/clean/config"
 
 [lib]
 name = "fhec_cli"
@@ -24,7 +24,9 @@ fhec-lower = { path = "../fhec-lower" }
 fhec-syntax = { path = "../fhec-syntax" }
 fhec-targets = { path = "../fhec-targets" }
 fhec-verify = { path = "../fhec-verify" }
+ctrlc = "3"
 globset = "0.4"
+notify-debouncer-mini = "0.6"
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

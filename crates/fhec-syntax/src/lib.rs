@@ -1,8 +1,8 @@
-//! vendored solar-parse/-ast fork + dialect grammar extensions
+//! forked solar-parse/-ast + dialect grammar extensions
 //!
-//! Thin wrapper over the vendored [solar](https://github.com/paradigmxyz/solar) parser
-//! (`crates/vendor/`). Downstream fhec crates should use the re-exports below instead of
-//! depending on the vendored crates directly, so the vendoring boundary stays in one place.
+//! Thin wrapper over the [solar](https://github.com/toml01/solar) parser fork.
+//! Downstream fhec crates should use the re-exports below instead of depending
+//! on the solar crates directly, so the fork boundary stays in one place.
 
 pub use solar_ast as ast;
 pub use solar_parse as parse;

@@ -6,9 +6,9 @@ license.workspace = true
 description = "symbols, scopes, imports, inheritance"
 
 [dependencies]
-solar-ast = { path = "../vendor/solar-ast" }
-solar-interface = { path = "../vendor/solar-interface" }
-solar-data-structures = { path = "../vendor/solar-data-structures" }
+solar-ast.workspace = true
+solar-interface.workspace = true
+solar-data-structures.workspace = true
 
 [dev-dependencies]
-solar-parse = { path = "../vendor/solar-parse" }
+solar-parse.workspace = true

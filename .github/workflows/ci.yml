@@ -14,12 +14,10 @@ jobs:
         with:
           toolchain: "1.98"
           components: rustfmt, clippy
-      # fmt and clippy are scoped to fhec crates: vendored solar code (crates/vendor/)
-      # is kept byte-identical to upstream and is not reformatted or linted by us.
       - name: Check formatting
-        run: cargo fmt -p fhec-syntax -p fhec-bind -p fhec-check -p fhec-ir -p fhec-targets -p fhec-lower -p fhec-emit -p fhec-verify -p fhec-cli --check
+        run: cargo fmt --all --check
       - name: Lint
-        run: cargo clippy -p fhec-syntax -p fhec-bind -p fhec-check -p fhec-ir -p fhec-targets -p fhec-lower -p fhec-emit -p fhec-verify -p fhec-cli --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
 
@@ -36,3 +34,22 @@ jobs:
         run: pnpm install
       - name: Build
         run: pnpm -r run --if-present build
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.98"
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install
+      - name: Build fhec binary
+        run: cargo build -p fhec-cli
+      - name: Test Hardhat plugin
+        run: pnpm --filter @fhec/hardhat-plugin test

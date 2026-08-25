@@ -3,7 +3,7 @@ name = "fhec-syntax"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "vendored solar-parse/-ast fork + dialect grammar extensions"
+description = "forked solar-parse/-ast + dialect grammar extensions"
 
 [dependencies]
 solar-parse.workspace = true
