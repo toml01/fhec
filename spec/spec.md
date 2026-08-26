@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 0.2.0 |
+| **Version** | 0.3.0 |
 | **Status** | Draft |
-| **Date** | 2026-08-22 |
+| **Date** | 2026-08-27 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** in this document are to be interpreted as described in RFC 2119 and RFC 8174 when, and only when, they appear in all capitals, as shown here.
@@ -103,13 +103,13 @@ contract EncryptedCounter {
 
 1. Dialect source files use the extension `.fsol`. Plain `.sol` files in the same project MUST pass through unmodified except §2.6.
 2. A `.fsol` file MUST carry a `pragma solidity` constraint whose satisfiable range lies within `>=0.8.25 <0.9.0`. Constraints outside this range are FHE1001 errors, enforced by the load stage; a pragma the load stage cannot parse defers to solc rather than erroring. (The CoFHE interface file itself requires `>=0.8.25`; CoFHE deployments require the `cancun` EVM target.)
-3. Except for the extension in §2.3, the grammar of `.fsol` is exactly the grammar of Solidity in the supported pragma range. Every valid Solidity file in that range is a valid `.fsol` file.
+3. Except for the extensions in §2.3 and §2.7, the grammar of `.fsol` is exactly the grammar of Solidity in the supported pragma range. Every valid Solidity file in that range is a valid `.fsol` file.
 
 ### §2.2 Parse errors
 
 Input that does not parse under the dialect grammar is rejected with FHE1002. Unresolvable imports are FHE1003.
 
-### §2.3 The `in` parameter sugar (the single v1 grammar extension)
+### §2.3 The `in` parameter sugar
 
 Grammar: in a function or constructor parameter list, the production
 
@@ -123,7 +123,7 @@ is added, where `encrypted-type` is one of the profile's encrypted value types (
 
 1. Each parameter `in eT name` becomes the declaration `externalT name_input` in the same position (external handle types are value types; no data location).
 2. One shared parameter `bytes memory inputProof` is appended at the end of the parameter list — once per function, regardless of k. This matches the SDK convention (cofhe SDK 0.7.0): a function with encrypted inputs ends with one plain `bytes` parameter receiving the shared batch signature.
-3. Conversion statements are inserted at the start of the function body, before any existing statement, in parameter-list order:
+3. Conversion statements are inserted at the *materialization point*, in parameter-list order. The materialization point is the start of the function body, before any existing statement — unless the body opens with a `precondition` block, which moves it after that block (§2.7).
    - k = 1: `eT name = FHE.asT(name_input, inputProof);`
    - k > 1: a single batch verification. One signature covers the whole batch (cofhe-contracts#78), so per-parameter `FHE.asT(hash, proof)` calls — which each rebuild a one-element batch digest — would fail verification. The expansion builds one `UnsignedEncryptedInput[]` in parameter order (security zone 0, matching FHE.sol's own batch helpers), verifies it once through `Impl.verifyBatchInputs(inputs, inputProof)`, and wraps each returned `bytes32` handle into its value type:
 
@@ -163,6 +163,62 @@ The output is the input byte sequence, altered only inside patch spans produced 
 ### §2.6 Import rewriting
 
 An import specifier that ends in `.fsol` MUST be rewritten to end in `.sol` in the output. No other import rewriting is performed. This is the only permitted byte difference in otherwise-untouched files.
+
+### §2.7 The `precondition` block
+
+Grammar: in any statement position, the production
+
+```
+statement := 'precondition' block
+```
+
+is added. `precondition` is a **contextual** keyword: it is recognized only when it is immediately followed by `{`. It remains a legal ordinary Solidity identifier everywhere else, so this production conflicts with no valid Solidity program and the no-op corpus (§1.4) is unaffected.
+
+**Purpose.** By default the §2.3 conversion statements are the first thing a body executes, so an encrypted input is verified *before* any authorization check the author wrote. A `precondition` block names a plaintext guard that MUST run first, so an unauthorized call reverts with the contract's own error rather than with a proof-verification error. The transpiler never reorders author statements: only the generated materializers move, and only when the author wrote the marker.
+
+**Execution order.** For a function whose body opens with a `precondition` block:
+
+```
+ABI decode
+→ modifier preludes
+→ precondition block
+→ input materializers      # this function's dialect inputs, source parameter order
+→ ordinary body
+→ modifier postludes
+```
+
+Without the marker, the materializers stay at body entry (§2.3) and the order is unchanged.
+
+**Legality.** A `precondition` block is legal only when all of the following hold; every other occurrence is FHE1017, which refuses the whole compilation unit:
+
+1. It is the **first statement** of the body (after `{`, ignoring trivia).
+2. There is **at most one** in the function. A second block anywhere in the body — including nested inside the first — is illegal.
+3. The host is a `function` or `constructor` whose parameter list declares **at least one dialect-managed encrypted input** (today: an `in eT` parameter, §2.3). Without one there is nothing to guard.
+
+The parser accepts the block in every statement position; positional legality is a checker rule, so a misplaced block yields FHE1017 rather than a parse error.
+
+**Body restrictions.** The block is a *plaintext guard*. The following are permitted:
+
+- plaintext parameters, plaintext state **reads**, constants, and `msg.sender` / `msg.data` / `block.*`;
+- local **plaintext** declarations and assignments, and `++`/`--` on such a local — the block's scope does **not** escape, so nothing declared inside it is visible afterwards;
+- nested blocks and plaintext `if`;
+- `require` / `assert` / `revert`, and the pure builtins `keccak256`, `sha256`, `ripemd160`, `ecrecover`, `addmod`, `mulmod`;
+- plaintext conversions (`uint256(x)`, `address(0)`, an in-unit contract or type conversion);
+- calls to functions of **this compilation unit** that resolve statically to declarations that are `view` or `pure` **and** whose declared return types the transpiler can prove are plaintext. Solidity only lets an override tighten mutability, so a `view` declaration bounds every override.
+
+Naming a dialect-managed encrypted input inside the block is FHE3014: the block runs before that input's conversion, so the value does not exist yet.
+
+Everything else is FHE3015:
+
+- **state writes** (a local plaintext assignment stays legal; the diagnostic MUST say *state write*), including `delete` and writes to a parameter;
+- every **encrypted-typed expression** — encrypted operations, encrypted control flow, encrypted state reads, and `view` calls that return encrypted values;
+- `emit`;
+- calls the transpiler cannot classify: imported, unresolved, ambiguous, member (`Lib.f()`, `token.f()`), state-changing, or with a return type it cannot prove plaintext — **even when the source declares them `view` or `pure`**;
+- `return`, loops, `break` / `continue`, `try`, inline assembly, and any other statement form not listed above.
+
+The permitted list is a whitelist. A construct the transpiler does not recognize is refused, never assumed harmless (§1.3).
+
+**Lowering.** The transpiler removes **only** the marker (the keyword and the trivia up to the block's `{`), leaving an ordinary nested block whose bytes are untouched, and inserts the materializers immediately after that block's closing `}`. The marker patch and the insertion never overlap (§2.5). Idempotence follows: the output has no marker and no `in` parameters, so `T(T(x)) == T(x)`.
 
 ---
 
@@ -434,6 +490,7 @@ Assigned in this version:
 | FHE1010 | error | in-sugar-non-encrypted-type |
 | FHE1011 | error | in-sugar-name-collision (§2.3) |
 | FHE1012 | error | in-sugar-bad-position (§2.3) |
+| FHE1017 | error | precondition-bad-position (§2.7) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
 | FHE2002 | error | incompatible-encrypted-operands (e.g. eaddress + euint32) |
@@ -459,6 +516,8 @@ Assigned in this version:
 | FHE3011 | error | undecidable-write-aliasing (§5.2) |
 | FHE3012 | error | side-effecting-encrypted-operand (§5.5) |
 | FHE3013 | error | unsupported-statement-in-encrypted-branch (§5.2) |
+| FHE3014 | error | encrypted-input-used-in-precondition (§2.7) |
+| FHE3015 | error | precondition-forbidden-effect (§2.7) |
 | FHE3020 | error | encrypted-index |
 | FHE3021 | error | encrypted-loop-condition |
 | FHE3022 | error | ebool-in-plaintext-bool-context |
@@ -538,3 +597,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.1.3 (2026-08-17)** — findings from the CLI wiring: FHE1006 frozen-drift; §2.1 names the load stage as the pragma-gate owner; §8.4 states that suggest-mode notes appear on `check` and defines the safe-fix-it boundary for `--fix`.
 - **0.1.4 (2026-08-22)** — §1.4 defines the self-check diagnostic-suppression rule (re-run diagnostics below error severity are suppressed).
 - **0.2.0 (2026-08-22)** — cofhe-contracts 0.2.0 input model: §1.5 replaces the removed `InEuintX` input structs with the `externalE*` handle types; §2.3 lowers the sugar to an in-place `externalT name_input` parameter plus one shared trailing `bytes memory inputProof` parameter per function, converts one input via the two-argument `FHE.asT(hash, proof)` and several inputs via a single `Impl.verifyBatchInputs` batch (one signature covers the whole batch); FHE1011 additionally guards the `inputProof` name.
+- **0.3.0 (2026-08-27)** — second grammar extension: §2.7 adds the contextual `precondition` block, which moves a function's generated encrypted-input materializers after an author-written plaintext guard; §2.3 renames its insertion point to the *materialization point* and drops the "single v1 grammar extension" claim from its title; §2.1 lists both extensions; new codes FHE1017 (position), FHE3014 (managed input named in the block), FHE3015 (forbidden effect).
