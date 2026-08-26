@@ -374,11 +374,17 @@ fn expand_function_sugar(
         prelude.push_str(&indent);
         prelude.push_str(stmt);
     }
-    plan.push(Patch::insert(
-        at,
-        prelude,
-        Provenance::new("§2.3 in-sugar-conversion", ctx.range(first.param_span)),
-    ));
+    // Tagged as a declaration: the prelude declares the handles, and a patch
+    // that reads one (an ACL grant on the next statement) can anchor at the
+    // very same offset when the source has no whitespace there.
+    plan.push(
+        Patch::insert(
+            at,
+            prelude,
+            Provenance::new("§2.3 in-sugar-conversion", ctx.range(first.param_span)),
+        )
+        .declaration(),
+    );
     Ok(())
 }
 
