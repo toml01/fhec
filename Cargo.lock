@@ -2547,7 +2547,7 @@ checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 [[package]]
 name = "solar-ast"
 version = "0.2.0"
-source = "git+https://github.com/toml01/solar?rev=37f5296ec7f222068eefe01be2b3acf30333fb21#37f5296ec7f222068eefe01be2b3acf30333fb21"
+source = "git+https://github.com/toml01/solar?rev=aff80b33f1d01568e78f7c231e1b5ac995c3cc1f#aff80b33f1d01568e78f7c231e1b5ac995c3cc1f"
 dependencies = [
  "alloy-primitives",
  "bumpalo",
@@ -2563,7 +2563,7 @@ dependencies = [
 [[package]]
 name = "solar-config"
 version = "0.2.0"
-source = "git+https://github.com/toml01/solar?rev=37f5296ec7f222068eefe01be2b3acf30333fb21#37f5296ec7f222068eefe01be2b3acf30333fb21"
+source = "git+https://github.com/toml01/solar?rev=aff80b33f1d01568e78f7c231e1b5ac995c3cc1f#aff80b33f1d01568e78f7c231e1b5ac995c3cc1f"
 dependencies = [
  "colorchoice",
  "strum",
@@ -2572,7 +2572,7 @@ dependencies = [
 [[package]]
 name = "solar-data-structures"
 version = "0.2.0"
-source = "git+https://github.com/toml01/solar?rev=37f5296ec7f222068eefe01be2b3acf30333fb21#37f5296ec7f222068eefe01be2b3acf30333fb21"
+source = "git+https://github.com/toml01/solar?rev=aff80b33f1d01568e78f7c231e1b5ac995c3cc1f#aff80b33f1d01568e78f7c231e1b5ac995c3cc1f"
 dependencies = [
  "bumpalo",
  "indexmap 2.14.0",
@@ -2586,7 +2586,7 @@ dependencies = [
 [[package]]
 name = "solar-interface"
 version = "0.2.0"
-source = "git+https://github.com/toml01/solar?rev=37f5296ec7f222068eefe01be2b3acf30333fb21#37f5296ec7f222068eefe01be2b3acf30333fb21"
+source = "git+https://github.com/toml01/solar?rev=aff80b33f1d01568e78f7c231e1b5ac995c3cc1f#aff80b33f1d01568e78f7c231e1b5ac995c3cc1f"
 dependencies = [
  "annotate-snippets",
  "anstream",
@@ -2612,7 +2612,7 @@ dependencies = [
 [[package]]
 name = "solar-macros"
 version = "0.2.0"
-source = "git+https://github.com/toml01/solar?rev=37f5296ec7f222068eefe01be2b3acf30333fb21#37f5296ec7f222068eefe01be2b3acf30333fb21"
+source = "git+https://github.com/toml01/solar?rev=aff80b33f1d01568e78f7c231e1b5ac995c3cc1f#aff80b33f1d01568e78f7c231e1b5ac995c3cc1f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2622,7 +2622,7 @@ dependencies = [
 [[package]]
 name = "solar-parse"
 version = "0.2.0"
-source = "git+https://github.com/toml01/solar?rev=37f5296ec7f222068eefe01be2b3acf30333fb21#37f5296ec7f222068eefe01be2b3acf30333fb21"
+source = "git+https://github.com/toml01/solar?rev=aff80b33f1d01568e78f7c231e1b5ac995c3cc1f#aff80b33f1d01568e78f7c231e1b5ac995c3cc1f"
 dependencies = [
  "alloy-primitives",
  "bitflags 2.13.1",
