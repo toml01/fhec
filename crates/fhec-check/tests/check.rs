@@ -674,6 +674,269 @@ fn sugar_error_cases() {
     // preserved), so no FHE1012 case exists for locals.
 }
 
+// ---- §2.7 `precondition` blocks ---------------------------------------------
+
+/// A contract whose `g` carries an `in euint32` parameter, so a
+/// `precondition` block is legal there. `pre` is the block body; `rest` is
+/// the remainder of `g`'s body.
+fn pre_contract(pre: &str, rest: &str) -> String {
+    format!(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract P {{\n\
+           euint32 enc;\n\
+           uint256 plainState;\n\
+           mapping(address => bool) operators;\n\
+           error Bad(address who);\n\
+           event Ping(uint256 x);\n\
+           function isOperator(address who) public view returns (bool) {{\n\
+             return operators[who];\n\
+           }}\n\
+           function encGetter() public view returns (euint32) {{ return enc; }}\n\
+           function bump() public {{ plainState += 1; }}\n\
+           function g(address from, in euint32 amount) public {{\n\
+             precondition {{\n{pre}\n}}\n{rest}\n}}\n\
+         }}\n"
+    )
+}
+
+/// Error codes for a source, sorted (warnings and notes dropped).
+fn error_codes(src: &str) -> Vec<String> {
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let mut v: Vec<String> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.code.to_string())
+            .collect();
+        v.sort();
+        v
+    })
+}
+
+fn assert_pre_codes(pre: &str, expected: &[&str]) {
+    let got = error_codes(&pre_contract(pre, "enc = amount;"));
+    let mut want: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+    want.sort();
+    assert_eq!(got, want, "precondition body: {pre}");
+}
+
+#[test]
+fn precondition_plaintext_guard_is_accepted() {
+    let src = pre_contract(
+        "if (!isOperator(from)) revert Bad(from);\n\
+         require(from != address(0), \"zero\");",
+        "enc = amount;",
+    );
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        let errs: Vec<&str> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.code)
+            .collect();
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(c.precondition_sites.len(), 1);
+        let site = &c.precondition_sites[0];
+        assert_eq!(snip(site.marker_span), "precondition ");
+        let block = snip(site.block_span);
+        assert!(block.starts_with('{') && block.ends_with('}'), "{block}");
+        assert_eq!(c.sugar_sites.len(), 1);
+        assert_eq!(c.sugar_sites[0].function, site.function);
+    });
+}
+
+#[test]
+fn precondition_permits_block_local_declaration_and_assignment() {
+    assert_pre_codes(
+        "uint256 n = plainState;\n\
+         n = n + 1;\n\
+         n++;\n\
+         if (n == 0) revert Bad(from);",
+        &[],
+    );
+}
+
+#[test]
+fn precondition_block_scope_does_not_escape() {
+    // Re-declaring the same name after the block is legal, which proves the
+    // block introduced its own scope (FHE1020 would fire otherwise).
+    let src = pre_contract(
+        "uint256 n = 1; n = n + 1;",
+        "uint256 n = 2; n; enc = amount;",
+    );
+    assert_eq!(error_codes(&src), Vec::<String>::new());
+}
+
+#[test]
+fn precondition_rejects_the_managed_encrypted_input() {
+    assert_pre_codes("amount;", &["FHE3014"]);
+    assert_pre_codes(
+        "if (isOperator(from)) revert Bad(from);\namount;",
+        &["FHE3014"],
+    );
+}
+
+#[test]
+fn precondition_rejects_encrypted_expressions() {
+    // Encrypted state read.
+    assert_pre_codes("enc;", &["FHE3015"]);
+    // A `view` call returning an encrypted value.
+    assert_pre_codes("encGetter();", &["FHE3015"]);
+    // An encrypted local declaration.
+    assert_pre_codes("euint32 t = enc;", &["FHE3015"]);
+}
+
+#[test]
+fn precondition_rejects_state_writes() {
+    assert_pre_codes("plainState = 1;", &["FHE3015"]);
+    assert_pre_codes("plainState += 1;", &["FHE3015"]);
+    assert_pre_codes("operators[from] = true;", &["FHE3015"]);
+    assert_pre_codes("delete plainState;", &["FHE3015"]);
+    // The message names a *state* write; local assignment stays legal.
+    let src = pre_contract("plainState = 1;", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(d.message.contains("state write"), "{}", d.message);
+    });
+}
+
+#[test]
+fn precondition_rejects_parameter_writes() {
+    assert_pre_codes("from = address(0);", &["FHE3015"]);
+}
+
+#[test]
+fn precondition_rejects_state_changing_and_member_calls() {
+    assert_pre_codes("bump();", &["FHE3015"]);
+    assert_pre_codes(
+        "if (FHE.isInitialized(enc)) revert Bad(from);",
+        &["FHE3015"],
+    );
+}
+
+#[test]
+fn precondition_rejects_imported_and_unresolved_calls() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import { extCheck } from \"@vendor/Helper.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          error Bad(address who);\n\
+          function g(address from, in euint32 amount) public {\n\
+            precondition { if (!extCheck(from)) revert Bad(from); }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015"]);
+}
+
+#[test]
+fn precondition_rejects_unsupported_statement_forms() {
+    assert_pre_codes("emit Ping(1);", &["FHE3015"]);
+    assert_pre_codes("return;", &["FHE3015"]);
+    assert_pre_codes(
+        "for (uint256 i = 0; i < 2; i++) { plainState; }",
+        &["FHE3015"],
+    );
+    assert_pre_codes("while (false) { }", &["FHE3015"]);
+    assert_pre_codes("assembly { }", &["FHE3015"]);
+    assert_pre_codes("try this.bump() { } catch { }", &["FHE3015"]);
+}
+
+#[test]
+fn precondition_permits_nested_blocks_and_plaintext_if() {
+    assert_pre_codes(
+        "{ uint256 n = 1; if (n == 1) { if (!isOperator(from)) revert Bad(from); } }",
+        &[],
+    );
+}
+
+#[test]
+fn precondition_late_position_is_fhe1017() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(uint256 z, in euint32 amount) public {\n\
+            z;\n\
+            precondition { z; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        assert_eq!(snip(c.diagnostics[0].span), "precondition");
+        assert!(c.precondition_sites.is_empty());
+    });
+}
+
+#[test]
+fn precondition_duplicate_is_fhe1017() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(in euint32 amount) public {\n\
+            precondition { }\n\
+            precondition { }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        // A duplicate refuses the unit: no site survives.
+        assert!(c.precondition_sites.is_empty());
+    });
+}
+
+#[test]
+fn nested_precondition_is_a_duplicate() {
+    let src = pre_contract("precondition { }", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        assert!(c.precondition_sites.is_empty());
+    });
+}
+
+#[test]
+fn precondition_without_a_managed_input_is_fhe1017() {
+    let bare = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P { function g(address from) public { precondition { from; } } }";
+    with_checked(&[("t.fsol", bare)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        assert!(c.precondition_sites.is_empty());
+    });
+    // A modifier is never a legal host: it cannot carry `in` parameters.
+    let modifier = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P { modifier m() { precondition { } _; } }";
+    with_checked(&[("t.fsol", modifier)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn no_precondition_leaves_the_sugar_untouched() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P { euint32 enc; function g(in euint32 a) public { enc = a; } }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.precondition_sites.is_empty());
+        assert_eq!(c.sugar_sites.len(), 1);
+    });
+}
+
 // ---- helpers referenced from bodies ------------------------------------------
 
 // `unknownFn`, `stateWriterB`, `fhelperWrite`, `plainStateRead` are

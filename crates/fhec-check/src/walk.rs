@@ -292,7 +292,10 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     }
                 }
             }
-            Block(b) | UncheckedBlock(b) | Precondition(b) => self.walk_block(b),
+            Block(b) | UncheckedBlock(b) => self.walk_block(b),
+            // A `precondition` block is a plaintext guard with its own,
+            // stricter rules (spec §2.7); its scope does not escape.
+            Precondition(b) => self.check_precondition_block(b),
             Break | Continue => {
                 if self.in_branch() {
                     self.error(
