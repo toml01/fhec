@@ -1,0 +1,47 @@
+[
+  {
+    "code": "FHE1017",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 326,
+      "end_byte": 338,
+      "start_line": 15,
+      "start_col": 9,
+      "end_line": 15,
+      "end_col": 21
+    },
+    "message": "a `precondition` block must be the first statement of a function or constructor body: it guards the generated encrypted-input conversions, which are inserted directly after it",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE1017",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 574,
+      "end_byte": 586,
+      "start_line": 25,
+      "start_col": 9,
+      "end_line": 25,
+      "end_col": 21
+    },
+    "message": "a function may declare at most one `precondition` block",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE1017",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 774,
+      "end_byte": 786,
+      "start_line": 33,
+      "start_col": 9,
+      "end_line": 33,
+      "end_col": 21
+    },
+    "message": "a `precondition` block is only permitted on a function or constructor that declares at least one dialect-managed encrypted input (`in eT`); without one there is nothing for it to guard — use a plain block or a modifier",
+    "rule": "§2.7"
+  }
+]

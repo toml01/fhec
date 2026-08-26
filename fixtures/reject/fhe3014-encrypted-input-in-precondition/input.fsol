@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract PreconditionUsesInput {
+    euint32 balance;
+
+    error Denied();
+
+    // `amount` is materialized *after* the block, so it does not exist here.
+    function deposit(in euint32 amount) public {
+        precondition {
+            amount;
+        }
+        balance = amount;
+    }
+}

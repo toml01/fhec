@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// Spec §2.7 execution order: modifier prelude, precondition block, input
+// materializer, ordinary body, modifier postlude.
+contract PreconditionModifierOrder {
+    euint32 balance;
+    uint256 entered;
+    bool open;
+
+    error Closed();
+
+    modifier nonReentrant() {
+        entered = 1;
+        _;
+        entered = 0;
+    }
+
+    function deposit(in euint32 amount, in euint32 fee) public nonReentrant {
+        precondition {
+            if (!open) revert Closed();
+        }
+        balance = amount + fee;
+    }
+}

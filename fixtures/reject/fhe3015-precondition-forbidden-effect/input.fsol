@@ -1,0 +1,80 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// One function per forbidden effect (spec §2.7). `externalGuard` is
+// deliberately undeclared: it resolves to a name outside this compilation
+// unit, which the checker refuses rather than trusting.
+contract PreconditionForbiddenEffect {
+    euint32 balance;
+    uint256 counter;
+
+    event Ping(uint256 n);
+
+    error Denied();
+
+    function confidentialBalance() public view returns (euint32) {
+        return balance;
+    }
+
+    function stateWrite(in euint32 amount) public {
+        precondition {
+            counter = 1;
+        }
+        balance = amount;
+    }
+
+    function encryptedStateRead(in euint32 amount) public {
+        precondition {
+            balance;
+        }
+        balance = amount;
+    }
+
+    function encryptedGetter(in euint32 amount) public {
+        precondition {
+            confidentialBalance();
+        }
+        balance = amount;
+    }
+
+    function unresolvedCall(in euint32 amount) public {
+        precondition {
+            if (!externalGuard(msg.sender)) revert Denied();
+        }
+        balance = amount;
+    }
+
+    function emitEvent(in euint32 amount) public {
+        precondition {
+            emit Ping(1);
+        }
+        balance = amount;
+    }
+
+    function earlyReturn(in euint32 amount) public {
+        precondition {
+            return;
+        }
+        balance = amount;
+    }
+
+    function loop(in euint32 amount) public {
+        precondition {
+            for (uint256 i = 0; i < 2; i++) {
+                counter;
+            }
+        }
+        balance = amount;
+    }
+
+    function assemblyBlock(in euint32 amount) public {
+        precondition {
+            assembly {
+                let x := 1
+            }
+        }
+        balance = amount;
+    }
+}

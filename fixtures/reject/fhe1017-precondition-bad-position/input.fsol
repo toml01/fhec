@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract PreconditionBadPosition {
+    euint32 balance;
+    bool open;
+
+    error Closed();
+
+    // Not the first statement of the body.
+    function late(in euint32 amount) public {
+        balance = amount;
+        precondition {
+            if (!open) revert Closed();
+        }
+    }
+
+    // A second block in the same function.
+    function duplicate(in euint32 amount) public {
+        precondition {
+            if (!open) revert Closed();
+        }
+        precondition {
+            if (open) revert Closed();
+        }
+        balance = amount;
+    }
+
+    // No dialect-managed encrypted input to guard.
+    function unmanaged(uint256 n) public {
+        precondition {
+            if (n == 0) revert Closed();
+        }
+        open = n > 0;
+    }
+}
