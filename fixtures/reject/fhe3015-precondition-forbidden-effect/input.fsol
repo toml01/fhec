@@ -78,3 +78,19 @@ contract PreconditionForbiddenEffect {
         balance = amount;
     }
 }
+
+// Writes whose target only *looks* local. Kept in a second contract so the
+// spans of the cases above do not move when this one grows.
+contract PreconditionEscapingWrites {
+    euint32 balance;
+    uint256[2] slots;
+
+    // A named return is part of the signature and outlives the block, even
+    // though the binder calls it a local.
+    function namedReturnWrite(in euint32 amount) public returns (uint256 outPlain) {
+        precondition {
+            outPlain = 42;
+        }
+        balance = amount;
+    }
+}

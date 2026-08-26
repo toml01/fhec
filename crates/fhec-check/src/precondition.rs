@@ -202,7 +202,23 @@ impl<'ast> FnChecker<'_, 'ast> {
     /// than hiding them. Ordinary typing runs too (so encryptedness is known
     /// exactly); the whitelist then decides what may stay.
     pub(crate) fn check_precondition_block(&mut self, block: &'ast ast::Block<'ast>) {
+        // The outermost block's span decides which locals are the block's own
+        // (a nested `precondition` is inside it, so it needs no update).
+        let outer = self.pre_span.replace(block.span);
         self.pre_block(block);
+        self.pre_span = outer;
+    }
+
+    /// Whether `v` is declared *inside* the `precondition` block being walked.
+    ///
+    /// The binder resolves both block locals and the function's named returns
+    /// to [`Resolution::Local`] (a named return "behaves as a local"), but a
+    /// named return is part of the signature and outlives the block. Only the
+    /// declaration position separates them.
+    fn declared_in_precondition(&self, v: fhec_bind::VarId) -> bool {
+        let decl = self.unit.var(v).decl.span;
+        self.pre_span
+            .is_some_and(|pre| pre.lo() <= decl.lo() && decl.hi() <= pre.hi())
     }
 
     fn pre_block(&mut self, block: &'ast ast::Block<'ast>) {
@@ -472,17 +488,28 @@ impl<'ast> FnChecker<'_, 'ast> {
     /// after it. Everything else is reported as a state write.
     fn pre_write(&mut self, lhs: &'ast ast::Expr<'ast>, span: Span) {
         let root = lvalue_root(lhs);
-        let local =
-            root.is_some_and(|id| matches!(self.unit.resolve(id), Some(Resolution::Local(_))));
-        if local && matches!(lhs.peel_parens().kind, ast::ExprKind::Ident(_)) {
+        // A named return resolves to `Local` too, so the resolution alone does
+        // not say whether the write escapes: the declaration position does.
+        let escapes = root.and_then(|id| match self.unit.resolve(id) {
+            Some(Resolution::Local(v)) if self.declared_in_precondition(*v) => None,
+            Some(Resolution::Local(_) | Resolution::Param(_)) => Some(id.as_str().to_string()),
+            _ => None,
+        });
+        if escapes.is_none()
+            && root.is_some_and(|id| matches!(self.unit.resolve(id), Some(Resolution::Local(_))))
+            && matches!(lhs.peel_parens().kind, ast::ExprKind::Ident(_))
+        {
             // `x = ...` / `x += ...` / `x++` on a block-local: legal.
             return;
         }
-        if root.is_some_and(|id| matches!(self.unit.resolve(id), Some(Resolution::Param(_)))) {
+        if let Some(name) = escapes {
             self.pre_reject(
                 span,
-                "a `precondition` block must not write to a parameter: its effect would \
-                 escape the block, which is a plaintext guard only",
+                format!(
+                    "a `precondition` block must not write to `{name}`: it is declared \
+                     outside the block, so the effect would escape a guard that is \
+                     plaintext only"
+                ),
             );
             return;
         }

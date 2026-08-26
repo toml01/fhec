@@ -118,5 +118,20 @@
     },
     "message": "inline assembly is not permitted in a `precondition` block: its effects are opaque to the checker",
     "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 2295,
+      "end_byte": 2308,
+      "start_line": 92,
+      "start_col": 13,
+      "end_line": 92,
+      "end_col": 26
+    },
+    "message": "a `precondition` block must not write to `outPlain`: it is declared outside the block, so the effect would escape a guard that is plaintext only",
+    "rule": "§2.7"
   }
 ]

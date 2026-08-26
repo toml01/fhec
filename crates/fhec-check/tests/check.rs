@@ -810,6 +810,34 @@ fn precondition_rejects_parameter_writes() {
     assert_pre_codes("from = address(0);", &["FHE3015"]);
 }
 
+/// The binder resolves a named return to `Resolution::Local`, but it is part
+/// of the signature: writing it from the guard escapes the block.
+#[test]
+fn precondition_rejects_named_return_writes() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(in euint32 amount) public returns (uint256 outPlain) {\n\
+            precondition { outPlain = 42; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), vec!["FHE3015".to_string()]);
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(
+            d.message.contains("declared outside the block"),
+            "{}",
+            d.message
+        );
+    });
+}
+
 #[test]
 fn precondition_rejects_state_changing_and_member_calls() {
     assert_pre_codes("bump();", &["FHE3015"]);
