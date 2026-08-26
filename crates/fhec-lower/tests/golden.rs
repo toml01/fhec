@@ -487,6 +487,216 @@ fn sugar_expands_param_and_conversion() {
 }
 
 // ---------------------------------------------------------------------------
+// `precondition` blocks (spec §2.7)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn precondition_moves_the_conversion_after_the_block() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   mapping(address => bool) operators;\n\
+         \x20   error NotOperator(address who);\n\
+         \x20   function isOperator(address who) public view returns (bool) {\n\
+         \x20       return operators[who];\n\
+         \x20   }\n\
+         \x20   function setA(address from, in euint32 amount) external {\n\
+         \x20       precondition {\n\
+         \x20           if (!isOperator(from)) revert NotOperator(from);\n\
+         \x20       }\n\
+         \x20       a = amount;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   mapping(address => bool) operators;\n\
+         \x20   error NotOperator(address who);\n\
+         \x20   function isOperator(address who) public view returns (bool) {\n\
+         \x20       return operators[who];\n\
+         \x20   }\n\
+         \x20   function setA(address from, externalEuint32 amount_input, \
+         bytes memory inputProof) external {\n\
+         \x20       {\n\
+         \x20           if (!isOperator(from)) revert NotOperator(from);\n\
+         \x20       }\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn precondition_batches_several_inputs_after_the_block() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   error Denied();\n\
+         \x20   function setA(bool ok, in euint32 x, in euint32 y) external {\n\
+         \x20       precondition {\n\
+         \x20           require(ok, \"denied\");\n\
+         \x20       }\n\
+         \x20       a = x;\n\
+         \x20       a = y;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   error Denied();\n\
+         \x20   function setA(bool ok, externalEuint32 x_input, externalEuint32 y_input, \
+         bytes memory inputProof) external {\n\
+         \x20       {\n\
+         \x20           require(ok, \"denied\");\n\
+         \x20       }\n\
+         \x20       UnsignedEncryptedInput[] memory __fhe_inputs_0 = new UnsignedEncryptedInput[](2);\n\
+         \x20       __fhe_inputs_0[0] = UnsignedEncryptedInput(uint256(externalEuint32.unwrap(x_input)), 0, Utils.EUINT32_TFHE);\n\
+         \x20       __fhe_inputs_0[1] = UnsignedEncryptedInput(uint256(externalEuint32.unwrap(y_input)), 0, Utils.EUINT32_TFHE);\n\
+         \x20       bytes32[] memory __fhe_hashes_1 = Impl.verifyBatchInputs(__fhe_inputs_0, inputProof);\n\
+         \x20       euint32 x = euint32.wrap(__fhe_hashes_1[0]);\n\
+         \x20       euint32 y = euint32.wrap(__fhe_hashes_1[1]);\n\
+         \x20       a = x;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       a = y;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn precondition_local_declarations_stay_inside_the_block() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   uint256 limit;\n\
+         \x20   error TooBig();\n\
+         \x20   function setA(uint256 n, in euint32 amount) external {\n\
+         \x20       precondition {\n\
+         \x20           uint256 cap = limit;\n\
+         \x20           cap = cap + 1;\n\
+         \x20           if (n > cap) revert TooBig();\n\
+         \x20       }\n\
+         \x20       uint256 cap = n;\n\
+         \x20       cap;\n\
+         \x20       a = amount;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   uint256 limit;\n\
+         \x20   error TooBig();\n\
+         \x20   function setA(uint256 n, externalEuint32 amount_input, \
+         bytes memory inputProof) external {\n\
+         \x20       {\n\
+         \x20           uint256 cap = limit;\n\
+         \x20           cap = cap + 1;\n\
+         \x20           if (n > cap) revert TooBig();\n\
+         \x20       }\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
+         \x20       uint256 cap = n;\n\
+         \x20       cap;\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn precondition_sits_between_modifier_prelude_and_body() {
+    // Modifier preludes are solc's job: the generated conversions must still
+    // land after the author's guard, and the modifier list is untouched.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   uint256 guard;\n\
+         \x20   error Denied();\n\
+         \x20   modifier nonReentrant() {\n\
+         \x20       guard = 1;\n\
+         \x20       _;\n\
+         \x20       guard = 0;\n\
+         \x20   }\n\
+         \x20   function setA(bool ok, in euint32 amount) external nonReentrant {\n\
+         \x20       precondition {\n\
+         \x20           if (!ok) revert Denied();\n\
+         \x20       }\n\
+         \x20       a = amount;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   uint256 guard;\n\
+         \x20   error Denied();\n\
+         \x20   modifier nonReentrant() {\n\
+         \x20       guard = 1;\n\
+         \x20       _;\n\
+         \x20       guard = 0;\n\
+         \x20   }\n\
+         \x20   function setA(bool ok, externalEuint32 amount_input, \
+         bytes memory inputProof) external nonReentrant {\n\
+         \x20       {\n\
+         \x20           if (!ok) revert Denied();\n\
+         \x20       }\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn precondition_refusals_produce_no_patches() {
+    // A checker error refuses the whole unit: nothing is lowered.
+    let out = transpile_with(
+        &[(
+            "t.fsol",
+            "pragma solidity ^0.8.25;\n\
+             import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+             contract C {\n\
+             \x20   euint32 a;\n\
+             \x20   function setA(in euint32 amount) external {\n\
+             \x20       precondition { amount; }\n\
+             \x20       a = amount;\n\
+             \x20   }\n\
+             }\n",
+        )],
+        AclMode::Insert,
+    );
+    assert_eq!(out.check_error_codes, ["FHE3014"]);
+}
+
+// ---------------------------------------------------------------------------
 // if → select (spec §5)
 // ---------------------------------------------------------------------------
 
