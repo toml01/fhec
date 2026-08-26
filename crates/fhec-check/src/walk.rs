@@ -292,7 +292,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     }
                 }
             }
-            Block(b) | UncheckedBlock(b) => self.walk_block(b),
+            Block(b) | UncheckedBlock(b) | Precondition(b) => self.walk_block(b),
             Break | Continue => {
                 if self.in_branch() {
                     self.error(

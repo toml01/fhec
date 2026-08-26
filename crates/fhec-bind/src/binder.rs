@@ -984,7 +984,10 @@ impl<'a, 'ast> Walker<'a, 'ast> {
                     }
                 }
             }
-            Block(block) | UncheckedBlock(block) => {
+            // A `precondition { ... }` block (spec §2.7) binds exactly like an
+            // ordinary nested block: its declarations are scoped to it and do
+            // not escape. Positional legality is the checker's job.
+            Block(block) | UncheckedBlock(block) | Precondition(block) => {
                 self.push_scope();
                 for s in block.stmts.iter() {
                     self.walk_stmt(s);

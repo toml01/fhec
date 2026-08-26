@@ -53,7 +53,9 @@ fn walk_stmt<'ast>(
         return Ok(());
     }
     match &stmt.kind {
-        ast::StmtKind::Block(b) | ast::StmtKind::UncheckedBlock(b) => {
+        ast::StmtKind::Block(b)
+        | ast::StmtKind::UncheckedBlock(b)
+        | ast::StmtKind::Precondition(b) => {
             for s in b.iter() {
                 walk_stmt(ctx, s, skips, plan)?;
             }

@@ -694,6 +694,10 @@ impl<'ast> FnChecker<'_, 'ast> {
                 .is_none_or(|e| self.expr_branch_safe(e)),
             DeclMulti(_, rhs) => self.expr_branch_safe(rhs),
             Block(b) | UncheckedBlock(b) => b.stmts.iter().all(|s| self.stmt_branch_safe(s)),
+            // A `precondition` block (spec §2.7) is never legal in a callee
+            // reached from an encrypted branch, and proving it harmless would
+            // be a guess: refuse (spec §1.3).
+            Precondition(_) => false,
             Break | Continue | Placeholder => true,
             Return(e) => e.as_ref().is_none_or(|e| self.expr_branch_safe(e)),
             Expr(e) => self.expr_branch_safe(e),
