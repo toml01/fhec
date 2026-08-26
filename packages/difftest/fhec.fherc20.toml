@@ -1,0 +1,22 @@
+# fhec config for the FHERC20 dialect pair (second project of this package;
+# see fhec.toml for the counter/vault pair).
+#
+# ACL mode is `suggest`, not `insert`: FHERC20's ACL policy grants balance
+# handles to the affected ACCOUNT (`FHE.allow(handle, from/to)`), never to
+# `msg.sender`. The default R1 insertion (allowThis + allowSender after every
+# encrypted storage write) would over-grant — e.g. it would hand an operator
+# access to the recipient's new balance handle — and break ACL parity with the
+# hand-written reference. All grants are therefore explicit in the .fsol.
+
+[project]
+src = "contracts-dialect-fherc20"
+out = "contracts/generated-fherc20"
+
+[target]
+profile = "cofhe"
+version = "0.2.x"
+solc = ">=0.8.25 <0.9.0"
+evm_version = "cancun"
+
+[acl]
+mode = "suggest"
