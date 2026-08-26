@@ -93,4 +93,12 @@ contract PreconditionEscapingWrites {
         }
         balance = amount;
     }
+
+    // An element write follows its base variable: this one is a state write.
+    function stateElementWrite(in euint32 amount) public {
+        precondition {
+            slots[0] = 1;
+        }
+        balance = amount;
+    }
 }

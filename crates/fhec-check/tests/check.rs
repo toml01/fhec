@@ -686,6 +686,7 @@ fn pre_contract(pre: &str, rest: &str) -> String {
          contract P {{\n\
            euint32 enc;\n\
            uint256 plainState;\n\
+           uint256[2] plainArr;\n\
            mapping(address => bool) operators;\n\
            error Bad(address who);\n\
            event Ping(uint256 x);\n\
@@ -808,6 +809,25 @@ fn precondition_rejects_state_writes() {
 #[test]
 fn precondition_rejects_parameter_writes() {
     assert_pre_codes("from = address(0);", &["FHE3015"]);
+}
+
+/// An element or member write reaches the same variable the whole-variable
+/// write would, so it must get the same verdict *and* the same reason.
+#[test]
+fn precondition_element_writes_follow_the_base_variable() {
+    // A block-local: the write cannot be observed outside the block (§2.7).
+    assert_pre_codes("uint256[2] memory a; a[0] = 1; a[1] += 2;", &[]);
+    // A state array: still a state write, and the message must say so.
+    assert_pre_codes("plainArr[0] = 1;", &["FHE3015"]);
+    let src = pre_contract("plainArr[0] = 1;", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(d.message.contains("state write"), "{}", d.message);
+    });
 }
 
 /// The binder resolves a named return to `Resolution::Local`, but it is part

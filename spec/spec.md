@@ -200,7 +200,7 @@ The parser accepts the block in every statement position; positional legality is
 **Body restrictions.** The block is a *plaintext guard*. The following are permitted:
 
 - plaintext parameters, plaintext state **reads**, constants, and `msg.sender` / `msg.data` / `block.*`;
-- local **plaintext** declarations, and assignments and `++`/`--` to a local **declared inside the block** — the block's scope does **not** escape, so nothing declared inside it is visible afterwards;
+- local **plaintext** declarations, and assignments and `++`/`--` to a local **declared inside the block** — the block's scope does **not** escape, so nothing declared inside it is visible afterwards. The write MAY target an element or a member of such a local (`a[0] = 1`, `s.f = 1`): the base variable decides, and it is equally invisible outside the block;
 - nested blocks and plaintext `if`;
 - `require` / `assert` / `revert`, and the pure builtins `keccak256`, `sha256`, `ripemd160`, `ecrecover`, `addmod`, `mulmod`;
 - plaintext conversions (`uint256(x)`, `address(0)`, an in-unit contract or type conversion);
@@ -211,7 +211,7 @@ Naming a dialect-managed encrypted input inside the block is FHE3014: the block 
 Everything else is FHE3015:
 
 - **state writes** (a write to a local declared inside the block stays legal; the diagnostic MUST say *state write*), including `delete`;
-- **escaping writes**: a write whose target is declared outside the block and outlives it — a parameter, a **named return**, or a local of an enclosing scope. The diagnostic MUST name the variable and say the effect would escape the block;
+- **escaping writes**: a write whose base variable is declared outside the block and outlives it — a parameter, a **named return**, or a local of an enclosing scope. The diagnostic MUST name the variable and say the effect would escape the block;
 - every **encrypted-typed expression** — encrypted operations, encrypted control flow, encrypted state reads, and `view` calls that return encrypted values;
 - `emit`;
 - calls the transpiler cannot classify: imported, unresolved, ambiguous, member (`Lib.f()`, `token.f()`), state-changing, or with a return type it cannot prove plaintext — **even when the source declares them `view` or `pure`**;

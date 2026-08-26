@@ -485,41 +485,61 @@ impl<'ast> FnChecker<'_, 'ast> {
 
     /// A write target. Only locals declared inside the block may be written:
     /// the block's scope does not escape, so such a write cannot be observed
-    /// after it. Everything else is reported as a state write.
+    /// after it. That holds for the whole variable and for one element or
+    /// member of it alike — `arr[0] = 1` on a block-local is as invisible
+    /// outside the block as `arr = ...` is. Everything else escapes, and is
+    /// reported by *why* it escapes.
     fn pre_write(&mut self, lhs: &'ast ast::Expr<'ast>, span: Span) {
-        let root = lvalue_root(lhs);
-        // A named return resolves to `Local` too, so the resolution alone does
-        // not say whether the write escapes: the declaration position does.
-        let escapes = root.and_then(|id| match self.unit.resolve(id) {
-            Some(Resolution::Local(v)) if self.declared_in_precondition(*v) => None,
-            Some(Resolution::Local(_) | Resolution::Param(_)) => Some(id.as_str().to_string()),
-            _ => None,
-        });
-        if escapes.is_none()
-            && root.is_some_and(|id| matches!(self.unit.resolve(id), Some(Resolution::Local(_))))
-            && matches!(lhs.peel_parens().kind, ast::ExprKind::Ident(_))
-        {
-            // `x = ...` / `x += ...` / `x++` on a block-local: legal.
+        // A tuple lvalue is a list of write targets; judge each on its own.
+        if let ast::ExprKind::Tuple(els) = &lhs.peel_parens().kind {
+            for el in els.iter() {
+                if let Some(el) = el.as_ref().unspan() {
+                    self.pre_write(el, span);
+                }
+            }
             return;
         }
-        if let Some(name) = escapes {
-            self.pre_reject(
+        match self.write_target(lhs) {
+            WriteTarget::BlockLocal => {
+                // Legal. The subscripts and members of the path are ordinary
+                // reads and still obey the whitelist.
+                self.pre_walk_expr(lhs);
+            }
+            WriteTarget::Escaping(name) => self.pre_reject(
                 span,
                 format!(
                     "a `precondition` block must not write to `{name}`: it is declared \
                      outside the block, so the effect would escape a guard that is \
                      plaintext only"
                 ),
-            );
-            return;
+            ),
+            WriteTarget::State => self.pre_reject(
+                span,
+                "a state write is not permitted in a `precondition` block: the block runs \
+                 before the encrypted inputs are verified, so the write would persist for \
+                 calls that later revert (only locals declared inside the block may be \
+                 assigned)",
+            ),
         }
-        self.pre_reject(
-            span,
-            "a state write is not permitted in a `precondition` block: the block runs \
-             before the encrypted inputs are verified, so the write would persist for \
-             calls that later revert (only locals declared inside the block may be \
-             assigned)",
-        );
+    }
+
+    /// Classifies the base of an lvalue path (`x`, `x[i]`, `x.f`, and nestings).
+    fn write_target(&self, lhs: &'ast ast::Expr<'ast>) -> WriteTarget {
+        let Some(root) = lvalue_root(lhs) else {
+            return WriteTarget::State;
+        };
+        match self.unit.resolve(root) {
+            Some(Resolution::Local(v)) if self.declared_in_precondition(*v) => {
+                WriteTarget::BlockLocal
+            }
+            // A parameter, or a named return — both are part of the signature
+            // and outlive the block, even though the binder calls the latter
+            // a local.
+            Some(Resolution::Local(_) | Resolution::Param(_)) => {
+                WriteTarget::Escaping(root.as_str().to_string())
+            }
+            _ => WriteTarget::State,
+        }
     }
 
     fn pre_call(
@@ -624,6 +644,16 @@ impl<'ast> FnChecker<'_, 'ast> {
                 )
             })
     }
+}
+
+/// What an lvalue path ultimately writes to.
+enum WriteTarget {
+    /// A local declared inside the `precondition` block: the write is legal.
+    BlockLocal,
+    /// A parameter or named return: the write would outlive the block.
+    Escaping(String),
+    /// A state variable, or a target the checker cannot pin down.
+    State,
 }
 
 /// The root identifier of an lvalue, when it has one.

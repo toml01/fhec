@@ -133,5 +133,20 @@
     },
     "message": "a `precondition` block must not write to `outPlain`: it is declared outside the block, so the effect would escape a guard that is plaintext only",
     "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 2525,
+      "end_byte": 2537,
+      "start_line": 100,
+      "start_col": 13,
+      "end_line": 100,
+      "end_col": 25
+    },
+    "message": "a state write is not permitted in a `precondition` block: the block runs before the encrypted inputs are verified, so the write would persist for calls that later revert (only locals declared inside the block may be assigned)",
+    "rule": "§2.7"
   }
 ]
