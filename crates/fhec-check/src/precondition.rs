@@ -127,6 +127,18 @@ pub(crate) fn scan<'ast>(unit: &BoundUnit<'ast>, out: &mut CheckedUnit) {
         let mut site = None;
         for (top_first, stmt, block) in found {
             let keyword = keyword_span(stmt.span);
+            // "Duplicate" is checked first: every occurrence after a claimed
+            // one is also not the body's first statement, and naming the
+            // duplication is the more useful of the two facts.
+            if claimed {
+                refused = true;
+                bad_position(
+                    out,
+                    keyword,
+                    "a function may declare at most one `precondition` block",
+                );
+                continue;
+            }
             if !top_first {
                 refused = true;
                 bad_position(
@@ -135,15 +147,6 @@ pub(crate) fn scan<'ast>(unit: &BoundUnit<'ast>, out: &mut CheckedUnit) {
                     "a `precondition` block must be the first statement of a function or \
                      constructor body: it guards the generated encrypted-input conversions, \
                      which are inserted directly after it",
-                );
-                continue;
-            }
-            if claimed {
-                refused = true;
-                bad_position(
-                    out,
-                    keyword,
-                    "a function may declare at most one `precondition` block",
                 );
                 continue;
             }
