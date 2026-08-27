@@ -141,15 +141,19 @@ fn scan_params<'ast>(
             ),
         );
     }
-    if !matches!(
-        f.ast.header.visibility(),
-        Some(ast::Visibility::Public) | Some(ast::Visibility::External)
-    ) {
+    // `external` only, not `public`. Lowering rewrites the declaration alone;
+    // an internal call site keeps passing the source `eT`, which no longer
+    // matches the generated `sharedT` parameter. A `public` function is
+    // callable internally (self-calls, recursion), so allowing it would emit
+    // Solidity that does not type-check. `external` has no internal call
+    // sites, so the rewrite is complete by construction.
+    if f.ast.header.visibility() != Some(ast::Visibility::External) {
         return bad_position(
             out,
             anchor,
-            "`in shared` is only permitted on a `public` or `external` function: a shared \
-             handle is an ABI wire type, so an internal caller has nothing to pass"
+            "`in shared` is only permitted on an `external` function: a shared handle is an \
+             ABI wire type, and an internal call site is not rewritten, so a `public` \
+             function's own internal callers could not pass one"
                 .to_string(),
         );
     }

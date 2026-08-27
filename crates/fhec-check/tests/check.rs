@@ -1541,7 +1541,7 @@ fn shared_codes(members: &str) -> Vec<&'static str> {
 
 #[test]
 fn shared_input_states_a_site_and_no_in_sugar_site() {
-    let src = unit("function g(in shared euint32 amount) public { a = amount; }");
+    let src = unit("function g(in shared euint32 amount) external { a = amount; }");
     with_checked(&[("t.fsol", &src)], |c, snip| {
         assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
         // The §2.3 scan must not claim it: `in shared` is a different
@@ -1608,19 +1608,23 @@ fn a_bodiless_shared_declaration_states_a_site_with_no_returns() {
 #[test]
 fn illegal_shared_positions_are_fhe1015() {
     for members in [
-        // Kind, visibility, and mutability of a shared input.
+        // Kind, visibility, and mutability of a shared input. `public` is
+        // illegal as well: a public function is callable internally, and
+        // lowering rewrites the declaration alone, so an internal call site
+        // would still pass the unshared `eT`.
         "function g(in shared euint32 amount) internal { a = amount; }",
         "function g(in shared euint32 amount) private { a = amount; }",
-        "function g(in shared euint32 amount) public view { amount; }",
-        "function g(in shared euint32 amount) public pure { amount; }",
+        "function g(in shared euint32 amount) public { a = amount; }",
+        "function g(in shared euint32 amount) external view { amount; }",
+        "function g(in shared euint32 amount) external pure { amount; }",
         "constructor(in shared euint32 amount) { a = amount; }",
         "modifier m(in shared euint32 amount) { _; }",
         // The MVP mixing rule.
-        "function g(in shared euint32 s, in euint32 e) public { a = s; a = e; }",
-        "function g(in(p) shared euint32 s, bytes calldata p) public { a = s; p; }",
+        "function g(in shared euint32 s, in euint32 e) external { a = s; a = e; }",
+        "function g(in(p) shared euint32 s, bytes calldata p) external { a = s; p; }",
         // Shape of a shared input.
-        "function g(in shared(msg.sender) euint32 s) public { a = s; }",
-        "function g(in shared uint256 s) public { s; }",
+        "function g(in shared(msg.sender) euint32 s) external { a = s; }",
+        "function g(in shared uint256 s) external { s; }",
         // Kind, visibility, and mutability of a shared return.
         "function g() internal returns (shared(msg.sender) euint64) { return b; }",
         "function g() public view returns (shared(msg.sender) euint64) { return b; }",
@@ -1646,8 +1650,8 @@ fn illegal_shared_positions_are_fhe1015() {
 #[test]
 fn the_generated_wire_name_must_be_free() {
     for members in [
-        "function g(in shared euint32 amount) public { uint256 amount_shared = 1; a = amount; amount_shared; }",
-        "function g(in shared euint32 amount, uint256 amount_shared) public { a = amount; amount_shared; }",
+        "function g(in shared euint32 amount) external { uint256 amount_shared = 1; a = amount; amount_shared; }",
+        "function g(in shared euint32 amount, uint256 amount_shared) external { a = amount; amount_shared; }",
     ] {
         assert_eq!(shared_codes(members), ["FHE1016"], "members: {members}");
     }

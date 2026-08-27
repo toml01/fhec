@@ -19,8 +19,8 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 607,
-      "end_byte": 631,
+      "start_byte": 609,
+      "end_byte": 633,
       "start_line": 19,
       "start_col": 32,
       "end_line": 19,

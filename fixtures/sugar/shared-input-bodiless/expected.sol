@@ -15,5 +15,5 @@ abstract contract SharedInputBodiless {
     function withdraw(
         sharedEuint64 amount_shared,
         uint256 tag
-    ) public virtual returns (sharedEuint64);
+    ) external virtual returns (sharedEuint64);
 }

@@ -12,7 +12,7 @@ contract SharedInputPrecondition {
 
     error NotOwner();
 
-    function deposit(in shared euint64 amount) public {
+    function deposit(in shared euint64 amount) external {
         precondition {
             if (msg.sender != owner) revert NotOwner();
         }

@@ -9,7 +9,7 @@ import "@fhenixprotocol/cofhe-contracts/FHE.sol";
 contract SharedInputBasic {
     euint32 a;
 
-    function deposit(sharedEuint32 amount_shared, uint256 tag) public {
+    function deposit(sharedEuint32 amount_shared, uint256 tag) external {
         euint32 amount = FHE.receiveEuint32Param(amount_shared);
         a = amount;
         FHE.allowThis(a);

@@ -10,13 +10,13 @@ import "@fhenixprotocol/cofhe-contracts/FHE.sol";
 contract SharedNameCollision {
     euint64 b;
 
-    function collidesWithLocal(in shared euint64 amount) public {
+    function collidesWithLocal(in shared euint64 amount) external {
         uint256 amount_shared = 1;
         b = amount;
         amount_shared;
     }
 
-    function collidesWithParam(in shared euint64 amount, uint256 amount_shared) public {
+    function collidesWithParam(in shared euint64 amount, uint256 amount_shared) external {
         b = amount;
         amount_shared;
     }
