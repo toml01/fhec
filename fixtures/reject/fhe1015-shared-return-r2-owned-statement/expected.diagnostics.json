@@ -1,0 +1,47 @@
+[
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1179,
+      "end_byte": 1191,
+      "start_line": 30,
+      "start_col": 20,
+      "end_line": 30,
+      "end_col": 32
+    },
+    "message": "this `return` sits in a statement the §8.2 R2 rule owns (an external call there takes an encrypted argument), and the returned expression still needs lowering; R2 renders only its own call site, and a shared return replaces the R3 re-render that used to cover the rest. Compute the value in its own statement and return the variable",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1455,
+      "end_byte": 1474,
+      "start_line": 39,
+      "start_col": 20,
+      "end_line": 39,
+      "end_col": 39
+    },
+    "message": "this `return` sits in a statement the §8.2 R2 rule owns (an external call there takes an encrypted argument), and the returned expression still needs lowering; R2 renders only its own call site, and a shared return replaces the R3 re-render that used to cover the rest. Compute the value in its own statement and return the variable",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1694,
+      "end_byte": 1724,
+      "start_line": 47,
+      "start_col": 16,
+      "end_line": 47,
+      "end_col": 46
+    },
+    "message": "this `return` sits in a statement the §8.2 R2 rule owns (an external call there takes an encrypted argument), and the returned expression still needs lowering; R2 renders only its own call site, and a shared return replaces the R3 re-render that used to cover the rest. Compute the value in its own statement and return the variable",
+    "rule": "§2.8"
+  }
+]

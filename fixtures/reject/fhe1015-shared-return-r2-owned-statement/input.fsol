@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A shared return may not leave a rewrite site inside a statement the §8.2 R2
+// rule owns. R2 inserts its `allowTransient` grants before that statement and
+// renders only its own call site; every other rewrite in the statement belongs
+// to the operator pass, which skips the whole owned span. While R3 (§8.3)
+// applied, its whole-statement re-render happened to cover the returned
+// expression as well — a shared return replaces R3, so nothing does any more.
+// Refusing the shape keeps the transpiler from emitting an unlowered operator
+// (spec §1.3).
+interface IVault {
+    function pull(euint64 v) external returns (euint64);
+
+    function idx(euint64 v) external returns (uint256);
+}
+
+contract SharedReturnR2OwnedStatement {
+    euint64 balance;
+    euint64 fee;
+    ebool flag;
+    euint64[] vals;
+    IVault vault;
+
+    // The R2 fact anchors on the enclosing `try`, which contains the `return`.
+    function operatorUnderTry() public returns (shared(msg.sender) euint64) {
+        try vault.pull(balance) returns (euint64 pulled) {
+            return pulled - fee;
+        } catch {
+            return fee;
+        }
+    }
+
+    // A ternary is a rewrite site too (§5.4).
+    function ternaryUnderTry() public returns (shared(msg.sender) euint64) {
+        try vault.pull(balance) returns (euint64 pulled) {
+            return flag ? pulled : fee;
+        } catch {
+            return fee;
+        }
+    }
+
+    // The R2 fact anchors on the `return` statement itself.
+    function operatorBesideTheCall() public returns (shared(msg.sender) euint64) {
+        return vals[vault.idx(balance)] + fee;
+    }
+}

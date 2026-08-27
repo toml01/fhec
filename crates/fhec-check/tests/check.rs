@@ -1667,6 +1667,108 @@ fn a_shared_return_must_return_exactly_its_declared_type() {
     }
 }
 
+/// Wraps contract members in a unit that also declares a vault interface, for
+/// the §8.2 R2 interaction below.
+fn vault_unit(members: &str) -> String {
+    format!(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         interface IVault {{\n\
+           function pull(euint64 v) external returns (euint64);\n\
+           function idx(euint64 v) external returns (uint256);\n\
+           function tag(uint256 t) external returns (uint256);\n\
+         }}\n\
+         contract S {{\n\
+           euint64 b;\n\
+           euint64 fee;\n\
+           ebool flag;\n\
+           euint64[] vals;\n\
+           IVault vault;\n\
+         {members}\n\
+         }}\n"
+    )
+}
+
+fn vault_codes(members: &str) -> Vec<&'static str> {
+    with_checked(&[("t.fsol", &vault_unit(members))], |c, _| {
+        c.diagnostics.iter().map(|d| d.code).collect()
+    })
+}
+
+#[test]
+fn a_shared_return_refuses_a_rewrite_site_the_r2_rule_would_swallow() {
+    // §8.2 R2 owns the whole statement it anchors on: it renders its own call
+    // site and pass 1 then skips every statement inside that span. While R3
+    // applied, its whole-statement re-render happened to cover the returned
+    // expression; a shared return suppresses R3 (§8.3) and wraps in place, so
+    // nothing lowers the expression any more. Refuse rather than emit a
+    // silently unlowered operator (§1.3).
+    for members in [
+        // The R2 fact anchors on the enclosing `try`, which contains the
+        // `return`.
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           try vault.pull(b) returns (euint64 pulled) { return pulled - fee; }\n\
+           catch { return fee; }\n\
+         }",
+        // The R2 fact anchors on the `return` statement itself.
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           return vals[vault.idx(b)] + fee;\n\
+         }",
+        // A ternary is a rewrite site too (§5.4).
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           try vault.pull(b) returns (euint64 pulled) { return flag ? pulled : fee; }\n\
+           catch { return fee; }\n\
+         }",
+    ] {
+        assert_eq!(vault_codes(members), ["FHE1015"], "members: {members}");
+        with_checked(&[("t.fsol", &vault_unit(members))], |c, _| {
+            assert!(c.shared_return_sites.is_empty(), "members: {members}");
+        });
+    }
+}
+
+#[test]
+fn a_shared_return_with_nothing_left_to_lower_survives_an_r2_statement() {
+    // The regression guard for the rule above: R2's own call site is the only
+    // rewrite the statement needs, and R2 renders it itself. Nothing is at
+    // risk, so the site must still be stated.
+    let members = "function g() public returns (shared(msg.sender) euint64) {\n\
+                     try vault.pull(b) returns (euint64 pulled) { return pulled; }\n\
+                     catch { return fee; }\n\
+                   }";
+    assert!(vault_codes(members).is_empty(), "members: {members}");
+    with_checked(&[("t.fsol", &vault_unit(members))], |c, snip| {
+        assert_eq!(c.acl.external_args.len(), 1, "the R2 fact must still stand");
+        assert_eq!(c.shared_return_sites.len(), 1);
+        let exprs = &c.shared_return_sites[0].return_exprs;
+        assert_eq!(
+            exprs.iter().map(|s| snip(*s)).collect::<Vec<_>>(),
+            ["pulled", "fee"]
+        );
+    });
+}
+
+#[test]
+fn a_shared_return_without_any_r2_fact_is_untouched_by_the_rule() {
+    // The common case: operators in the returned expression lower normally
+    // because no R2 fact owns the statement.
+    for members in [
+        "function g() public returns (shared(msg.sender) euint64) { return b + fee; }",
+        "function g() public returns (shared(msg.sender) euint64) { return flag ? b : fee; }",
+        // An external call with no encrypted argument states no R2 fact.
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           return vals[vault.tag(1)] + fee;\n\
+         }",
+    ] {
+        assert!(vault_codes(members).is_empty(), "members: {members}");
+        with_checked(&[("t.fsol", &vault_unit(members))], |c, _| {
+            assert!(c.acl.external_args.is_empty(), "members: {members}");
+            assert_eq!(c.shared_return_sites.len(), 1, "members: {members}");
+            assert_eq!(c.operator_sites.len() + c.ternary_sites.len(), 1);
+        });
+    }
+}
+
 #[test]
 fn shared_stays_an_ordinary_identifier_in_the_checker_too() {
     // §1.4: plain Solidity naming a variable `shared` produces no site and no

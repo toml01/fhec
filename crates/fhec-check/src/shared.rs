@@ -19,11 +19,10 @@
 //! parse error. Only *legal* occurrences become sites, so the lowerer can act
 //! on a site unconditionally.
 //!
-//! # Two conservative MVP restrictions on shared returns
+//! # Three conservative MVP restrictions on shared returns
 //!
-//! Both draw a boundary around known, tracked defects in the ACL pass's
-//! statement composition rather than risk a silent miscompile (§1.3). Both are
-//! purely syntactic, so neither depends on the order the checks run in.
+//! Each draws a boundary around a known, tracked defect in the ACL pass's
+//! statement composition rather than risk a silent miscompile (§1.3).
 //!
 //! 1. **No assignment in the returned expression.** An encrypted assignment
 //!    inside a `return` states an R1 storage-write fact anchored on the
@@ -36,6 +35,10 @@
 //!    statement stays under the conditional and the rest — including the
 //!    `return` — escape it. Requiring braces keeps a shared return out of that
 //!    shape entirely.
+//! 3. **No rewrite site in a returned expression an R2 grant owns.** See
+//!    [`r2_owned_stmts`]. The first two rules are purely syntactic; this one
+//!    reads the R2 facts, so it must run after the per-function walk — which
+//!    it does, because [`scan`] is the last stage of [`crate::check`].
 //!
 //! The shared-return rewrite itself never inserts a statement: it wraps the
 //! returned expression in place with two zero-width insertions at the
@@ -54,6 +57,7 @@ use crate::sites::{CheckedUnit, SharedInputSite, SharedReturnSite};
 use crate::sugar::ident_occurs;
 use crate::trust::Trust;
 use crate::ty::Ty;
+use crate::walk::span_within;
 
 /// The spec section every diagnostic in this module cites.
 const RULE: &str = "§2.8";
@@ -402,6 +406,7 @@ fn scan_returns<'ast>(
 
     let mut refused = false;
     let mut return_exprs: Vec<Span> = Vec::new();
+    let r2_owned = r2_owned_stmts(out, fid);
     if let Some(body) = &f.ast.body {
         let mut found: Vec<(&ast::Stmt<'ast>, bool)> = Vec::new();
         for s in body.stmts.iter() {
@@ -444,6 +449,22 @@ fn scan_returns<'ast>(
                 );
                 continue;
             }
+            if r2_owned.iter().any(|owned| span_within(stmt.span, *owned)) {
+                if let Some(site) = rewrite_site_in(out, fid, e.span) {
+                    refused = true;
+                    bad_position(
+                        out,
+                        site,
+                        "this `return` sits in a statement the §8.2 R2 rule owns (an external \
+                         call there takes an encrypted argument), and the returned expression \
+                         still needs lowering; R2 renders only its own call site, and a shared \
+                         return replaces the R3 re-render that used to cover the rest. \
+                         Compute the value in its own statement and return the variable"
+                            .to_string(),
+                    );
+                    continue;
+                }
+            }
             match out.types.get(e.span) {
                 Some(Ty::Encrypted(t)) if *t == ety => return_exprs.push(e.span),
                 other => {
@@ -475,6 +496,57 @@ fn scan_returns<'ast>(
             file: f.file,
         });
     }
+}
+
+/// The statement spans one function's R2 facts (§8.2) anchor on.
+///
+/// A statement that triggers R2 becomes the ACL pass's property: R2 inserts its
+/// `allowTransient` grants before the statement and renders the call site
+/// itself, and pass 1 then skips **every** statement inside that span, not only
+/// the one R2 rendered. Anything else in that span that needs lowering is
+/// therefore dropped without a word. That is a tracked defect of the ACL/ops
+/// composition (issue #38), older and wider than the shared boundary; this
+/// rule fences the shared boundary off from it, it does not repair it.
+///
+/// A shared return newly exposes it through `return`. While R3 (§8.3) applied,
+/// its whole-statement re-render happened to lower the returned expression as
+/// well; a shared return suppresses R3 and wraps in place with two zero-width
+/// insertions, so nothing covers the expression any more. Rather than emit a
+/// silently wrong ciphertext (§1.3), refuse the shape.
+///
+/// The judgement is deliberately conservative: the checker knows neither the
+/// ACL mode nor whether R2 will dedupe against a grant the source already
+/// carries, and either would make R2 leave the statement alone. A stated fact
+/// is enough to refuse.
+fn r2_owned_stmts(out: &CheckedUnit, fid: fhec_bind::FunctionId) -> Vec<Span> {
+    out.acl
+        .external_args
+        .iter()
+        .filter(|c| c.function == fid)
+        .map(|c| c.stmt_span)
+        .collect()
+}
+
+/// The span of the first rewrite site lowering would have to render inside
+/// `expr`, if any.
+///
+/// Only expression-level sites can occur in a returned expression. Assignment
+/// sites (compound assignment, `++`/`--`) cannot: restriction 1 above refuses
+/// those first.
+fn rewrite_site_in(out: &CheckedUnit, fid: fhec_bind::FunctionId, expr: Span) -> Option<Span> {
+    let operators = out
+        .operator_sites
+        .iter()
+        .filter(|s| s.function == fid)
+        .map(|s| s.span);
+    let ternaries = out
+        .ternary_sites
+        .iter()
+        .filter(|s| s.function == fid)
+        .map(|s| s.span);
+    operators
+        .chain(ternaries)
+        .find(|span| span_within(*span, expr))
 }
 
 /// Every `return` statement of a body, paired with whether it sits inside a
