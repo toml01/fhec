@@ -1064,6 +1064,35 @@ fn precondition_permits_plaintext_conversions() {
     assert_eq!(error_codes(src), Vec::<String>::new());
 }
 
+/// `wrap`/`unwrap` names a type, not a function — but only a *plaintext* type
+/// may be converted here. A profile encrypted type is refused however it is
+/// spelled: bare (`euint32.wrap`) or qualified (`Lib.euint32.wrap`).
+#[test]
+fn precondition_rejects_wrap_of_an_encrypted_type() {
+    let src = "pragma solidity ^0.8.25;\n\
+        type euint32 is bytes32;\n\
+        library Lib {\n\
+          type euint64 is bytes32;\n\
+          type Money is uint256;\n\
+        }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(bytes32 raw, uint256 n, in euint32 amount) public {\n\
+            precondition {\n\
+              euint32.unwrap(enc2(raw));\n\
+              Lib.euint64.wrap(raw);\n\
+              Lib.euint64.unwrap(Lib.euint64.wrap(raw));\n\
+              Lib.Money.unwrap(Lib.Money.wrap(n));\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+          function enc2(bytes32 raw) internal pure returns (bytes32) { return raw; }\n\
+        }\n";
+    // Three refusals: the bare `unwrap` and both qualified forms. The
+    // genuinely plaintext `Lib.Money` conversions stay legal.
+    assert_eq!(error_codes(src), ["FHE3015", "FHE3015", "FHE3015"]);
+}
+
 /// The conservative default holds for everything that is not recognizably a
 /// plaintext conversion.
 #[test]

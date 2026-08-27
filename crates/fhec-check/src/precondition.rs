@@ -635,30 +635,17 @@ impl<'ast> FnChecker<'_, 'ast> {
         name: solar_interface::Ident,
     ) -> bool {
         // `Lib.Money(x)`: the whole callee is a qualified type name.
-        if self.qualified_type(obj, name).is_some() {
-            return true;
+        if let Some(td) = self.qualified_type(obj, name) {
+            return self.plaintext_type_decl(td);
         }
         // `Money.wrap(x)`: the object is the UDVT, the member is the
-        // primitive. A *trusted* encrypted or external-input type name is not
-        // one of these: those are profile calls, judged elsewhere.
+        // primitive.
         if !matches!(name.as_str(), "wrap" | "unwrap") {
             return false;
         }
         let td = match &obj.peel_parens().kind {
             ast::ExprKind::Ident(id) => match self.unit.resolve(*id) {
-                Some(Resolution::TypeName(td))
-                    if matches!(
-                        crate::decl::custom_ty(
-                            self.unit,
-                            self.trust,
-                            id.as_str(),
-                            &Resolution::TypeName(*td),
-                        ),
-                        Ty::Plain(crate::ty::PlainTy::Opaque)
-                    ) =>
-                {
-                    *td
-                }
+                Some(Resolution::TypeName(td)) => *td,
                 _ => return false,
             },
             ast::ExprKind::Member(inner, member) => match self.qualified_type(inner, *member) {
@@ -668,6 +655,28 @@ impl<'ast> FnChecker<'_, 'ast> {
             _ => return false,
         };
         matches!(self.unit.type_decl(td).kind, TypeDeclKind::Udvt(_))
+            && self.plaintext_type_decl(td)
+    }
+
+    /// Whether an in-unit type declaration is one the block may convert
+    /// through.
+    ///
+    /// An encrypted type or an external-input handle is refused however it is
+    /// spelled: bare (`euint32.wrap(x)`) or qualified (`Lib.euint32.wrap(x)`).
+    /// Both are profile types, so `wrap`/`unwrap` on them produces a value the
+    /// block must not hold — the same trust rule that types `euint32` decides,
+    /// so a plaintext UDVT that merely shares the name is unaffected.
+    fn plaintext_type_decl(&self, td: fhec_bind::TypeDeclId) -> bool {
+        let name = self.unit.type_decl(td).name;
+        !matches!(
+            crate::decl::custom_ty(
+                self.unit,
+                self.trust,
+                name.as_str(),
+                &Resolution::TypeName(td),
+            ),
+            Ty::Encrypted(_) | Ty::Plain(crate::ty::PlainTy::ExternalInput(_))
+        )
     }
 
     /// The in-unit type declaration a `Contract.Name` path names, if any.
