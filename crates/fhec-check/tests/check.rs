@@ -790,6 +790,39 @@ fn precondition_rejects_encrypted_expressions() {
     assert_pre_codes("euint32 t = enc;", &["FHE3015"]);
 }
 
+/// A type the positive fragment does not cover is `Unknown`, which means
+/// "the checker does not know" — never "plaintext". A qualified type name
+/// can hide an encrypted value, so reading one is refused (§1.3).
+#[test]
+fn precondition_rejects_an_unresolved_type() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\" as Fhe;\n\
+        contract Holder { struct Box { uint256 v; } }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          Holder.Box boxState;\n\
+          Fhe.euint32 hidden;\n\
+          function g(in euint32 amount) public {\n\
+            precondition { boxState; hidden; Holder.Box memory b = boxState; b; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(
+        error_codes(src),
+        ["FHE3015", "FHE3015", "FHE3015", "FHE3015"]
+    );
+    with_checked(&[("t.fsol", src)], |c, _| {
+        for d in c.diagnostics.iter().filter(|d| d.code == "FHE3015") {
+            assert!(
+                d.message.contains("cannot prove is plaintext"),
+                "{}",
+                d.message
+            );
+        }
+    });
+}
+
 #[test]
 fn precondition_rejects_state_writes() {
     assert_pre_codes("plainState = 1;", &["FHE3015"]);

@@ -36,6 +36,13 @@ use crate::walk::FnChecker;
 /// The spec section every diagnostic in this module cites.
 const RULE: &str = "§2.7";
 
+/// The refusal for a value whose declared type the positive fragment (§3.1)
+/// does not cover. `Ty::Unknown` means "the checker does not know", so it is
+/// refused exactly like an encrypted type would be (§1.3).
+const UNRESOLVED_TYPE: &str = "this value has a type the checker cannot prove is plaintext; a \
+                               `precondition` block is a plaintext guard and may only use values \
+                               it can prove are plaintext";
+
 /// Whether a function's parameter list declares at least one encrypted input
 /// the dialect materializes inside the body.
 ///
@@ -333,13 +340,23 @@ impl<'ast> FnChecker<'_, 'ast> {
             );
             return false;
         }
-        if declared_ty(self.unit, self.trust, &v.ty).is_encrypted() {
-            self.pre_reject(
-                v.span,
-                "an encrypted local cannot be declared in a `precondition` block: the block \
-                 is a plaintext guard that runs before the encrypted inputs exist",
-            );
-            return false;
+        match declared_ty(self.unit, self.trust, &v.ty) {
+            Ty::Encrypted(_) => {
+                self.pre_reject(
+                    v.span,
+                    "an encrypted local cannot be declared in a `precondition` block: the \
+                     block is a plaintext guard that runs before the encrypted inputs exist",
+                );
+                return false;
+            }
+            // `Unknown` is "the checker does not know", never "plaintext": a
+            // qualified type name (`NS.euint32`) leaves the positive fragment
+            // and could name an encrypted type (§1.3).
+            Ty::Unknown => {
+                self.pre_reject(v.span, UNRESOLVED_TYPE);
+                return false;
+            }
+            Ty::Plain(_) => {}
         }
         self.decl_var(v, v.initializer.is_some());
         true
@@ -464,13 +481,21 @@ impl<'ast> FnChecker<'_, 'ast> {
 
     fn pre_ident(&mut self, id: solar_interface::Ident, span: Span) {
         use Resolution::*;
-        match self.unit.resolve(id) {
-            // Plaintext parameters, block locals, state reads, constants, and
-            // the names used as call/cast callees.
-            Some(
-                Local(_) | Param(_) | StateVar(_) | FileConst(_) | Function(_) | Contract(_)
-                | TypeName(_) | Builtin(_) | Event(_) | Error(_),
-            ) => {}
+        match self.unit.resolve(id).cloned() {
+            // A value read. Encryptedness alone is not enough: a declared type
+            // the positive fragment does not cover (`NS.euint32`, a qualified
+            // custom type) types as `Unknown`, which the recorded-type check
+            // above cannot distinguish from plaintext. Refuse it here (§1.3).
+            Some(res @ (Local(_) | Param(_) | StateVar(_) | FileConst(_))) => {
+                if self
+                    .var_decl_ty(&res)
+                    .is_some_and(|(t, _)| t == Ty::Unknown)
+                {
+                    self.pre_reject(span, UNRESOLVED_TYPE);
+                }
+            }
+            // The names used as call/cast callees, and event/error paths.
+            Some(Function(_) | Contract(_) | TypeName(_) | Builtin(_) | Event(_) | Error(_)) => {}
             _ => self.pre_reject(
                 span,
                 format!(
