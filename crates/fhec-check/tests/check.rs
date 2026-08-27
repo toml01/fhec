@@ -687,6 +687,8 @@ fn pre_contract(pre: &str, rest: &str) -> String {
            euint32 enc;\n\
            uint256 plainState;\n\
            uint256[2] plainArr;\n\
+           struct Pair {{ uint256 a; uint256 b; }}\n\
+           Pair pairState;\n\
            mapping(address => bool) operators;\n\
            error Bad(address who);\n\
            event Ping(uint256 x);\n\
@@ -695,7 +697,7 @@ fn pre_contract(pre: &str, rest: &str) -> String {
            }}\n\
            function encGetter() public view returns (euint32) {{ return enc; }}\n\
            function bump() public {{ plainState += 1; }}\n\
-           function g(address from, in euint32 amount) public {{\n\
+           function g(address from, uint256[] memory list, in euint32 amount) public {{\n\
              precondition {{\n{pre}\n}}\n{rest}\n}}\n\
          }}\n"
     )
@@ -828,6 +830,42 @@ fn precondition_element_writes_follow_the_base_variable() {
             .expect("FHE3015");
         assert!(d.message.contains("state write"), "{}", d.message);
     });
+}
+
+/// A reference-typed local can *alias* data declared outside the block, so a
+/// write through it is not invisible after all. Freshness must be provable.
+#[test]
+fn precondition_rejects_a_write_through_an_aliasing_local() {
+    // `a` is bound to the parameter's array: `a[0] = 1` mutates the caller's.
+    assert_pre_codes("uint256[] memory a = list; a[0] = 1;", &["FHE3015"]);
+    // A storage pointer to a state array is the same hazard.
+    assert_pre_codes("uint256[2] storage a = plainArr; a[0] = 1;", &["FHE3015"]);
+    // A struct member through an aliasing local.
+    assert_pre_codes("Pair memory p = pairState; p.a = 1;", &["FHE3015"]);
+    let src = pre_contract("uint256[] memory a = list; a[0] = 1;", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(d.message.contains("may alias"), "{}", d.message);
+    });
+}
+
+/// A local the declaration proves fresh has nothing to alias.
+#[test]
+fn precondition_permits_a_write_through_a_fresh_local() {
+    // No initializer: freshly zero-valued.
+    assert_pre_codes("uint256[2] memory a; a[0] = 1;", &[]);
+    assert_pre_codes("Pair memory p; p.a = 1;", &[]);
+    // A fresh allocation.
+    assert_pre_codes("uint256[] memory a = new uint256[](3); a[0] = 1;", &[]);
+    // An inline array literal, and a struct literal.
+    assert_pre_codes("uint256[2] memory a = [uint256(1), 2]; a[0] = 3;", &[]);
+    assert_pre_codes("Pair memory p = Pair(1, 2); p.a = 3;", &[]);
+    // Rebinding the local itself is not a write *through* it.
+    assert_pre_codes("uint256[] memory a = list; a = list;", &[]);
 }
 
 /// The binder resolves a named return to `Resolution::Local`, but it is part

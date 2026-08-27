@@ -101,4 +101,14 @@ contract PreconditionEscapingWrites {
         }
         balance = amount;
     }
+
+    // `local` is a memory-array alias of the parameter, not a copy, so the
+    // element write is visible to the caller after the block.
+    function aliasingElementWrite(uint256[] memory list, in euint32 amount) public {
+        precondition {
+            uint256[] memory local = list;
+            local[0] = 1;
+        }
+        balance = amount;
+    }
 }
