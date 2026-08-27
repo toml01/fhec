@@ -1667,6 +1667,38 @@ fn a_shared_return_must_return_exactly_its_declared_type() {
     }
 }
 
+#[test]
+fn a_call_to_a_shared_return_types_as_unknown_at_its_call_site() {
+    // The binder resolves a shared return's declared type so the FHE2012 rule
+    // above can compare against it. Call-site inference must NOT inherit that:
+    // what the call actually yields is the `sharedT` wire handle, so an
+    // encrypted operand meeting it is FHE2001, never `FHE.add(take(), b)`.
+    let members = "function take() public returns (shared(msg.sender) euint64) { return b; }\n\
+                   function use() public { b = take() + b; }";
+    assert_eq!(shared_codes(members), ["FHE2001"], "members: {members}");
+    // The two rules are separate code paths: `take`'s own statement-shape
+    // check is unaffected and the site still stands.
+    with_checked(&[("t.fsol", &unit(members))], |c, _| {
+        assert_eq!(c.shared_return_sites.len(), 1);
+    });
+}
+
+#[test]
+fn a_plain_encrypted_return_still_types_at_its_call_site() {
+    // The regression guard for the rule above: only a `shared(...)` return is
+    // opaque. A *named* encrypted return is what the binder resolves for the
+    // ordinary case, and it must keep lowering as before. (An unnamed plain
+    // return is `Unknown` at a call site today for an unrelated reason — the
+    // binder registers no var for it — which is why the shared-return rule is
+    // a restoration, not a new restriction.)
+    let members = "function take() public returns (euint64 out) { out = b; }\n\
+                   function use() public { b = take() + b; }";
+    assert!(shared_codes(members).is_empty(), "members: {members}");
+    with_checked(&[("t.fsol", &unit(members))], |c, _| {
+        assert_eq!(c.operator_sites.len(), 1);
+    });
+}
+
 /// Wraps contract members in a unit that also declares a vault interface, for
 /// the §8.2 R2 interaction below.
 fn vault_unit(members: &str) -> String {
