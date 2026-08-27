@@ -73,5 +73,65 @@
     },
     "message": "`in(x)` names this parameter, which must be declared `bytes memory x` or `bytes calldata x` to carry the input proof",
     "rule": "§2.3"
+  },
+  {
+    "code": "FHE1013",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1194,
+      "end_byte": 1212,
+      "start_line": 40,
+      "start_col": 51,
+      "end_line": 40,
+      "end_col": 69
+    },
+    "message": "`in(inputProof)` names this parameter, which must be declared `bytes memory inputProof` or `bytes calldata inputProof` to carry the input proof",
+    "rule": "§2.3"
+  },
+  {
+    "code": "FHE1013",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1423,
+      "end_byte": 1447,
+      "start_line": 47,
+      "start_col": 60,
+      "end_line": 47,
+      "end_col": 84
+    },
+    "message": "`in(inputProof)` names this parameter, which must be declared `bytes memory inputProof` or `bytes calldata inputProof` to carry the input proof",
+    "rule": "§2.3"
+  },
+  {
+    "code": "FHE1013",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1644,
+      "end_byte": 1654,
+      "start_line": 54,
+      "start_col": 30,
+      "end_line": 54,
+      "end_col": 40
+    },
+    "message": "`in(inputProof)` must name a `bytes memory` or `bytes calldata` parameter of this parameter list, but no such parameter is declared here",
+    "rule": "§2.3"
+  },
+  {
+    "code": "FHE1013",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1868,
+      "end_byte": 1878,
+      "start_line": 60,
+      "start_col": 31,
+      "end_line": 60,
+      "end_col": 41
+    },
+    "message": "`in(inputProof)` must name a `bytes memory` or `bytes calldata` parameter of this parameter list, but no such parameter is declared here",
+    "rule": "§2.3"
   }
 ]

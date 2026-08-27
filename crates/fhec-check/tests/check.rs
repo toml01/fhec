@@ -778,6 +778,33 @@ fn binder_error_cases_state_no_site() {
             "contract C { function f(in(sig) euint32 x, bytes storage sig) internal { x; sig; } }",
             "FHE1013",
         ),
+        // FHE1013: a fixed-width `bytesNN` is a value type, not `bytes`.
+        (
+            "contract C { function f(in(sig) euint32 x, bytes32 sig) public { x; sig; } }",
+            "FHE1013",
+        ),
+        (
+            "contract C { function f(in(sig) euint32 x, bytes1 sig) public { x; sig; } }",
+            "FHE1013",
+        ),
+        // FHE1013: `string memory` has the right location but the wrong type.
+        (
+            "contract C { function f(in(sig) euint32 x, string memory sig) public { x; sig; } }",
+            "FHE1013",
+        ),
+        // FHE1013: an unnamed `bytes memory` parameter carries no name the
+        // binder could match, so the list declares no `sig`.
+        (
+            "contract C { function f(in(sig) euint32 x, bytes memory) public { x; } }",
+            "FHE1013",
+        ),
+        // FHE1013: the binder resolves against this parameter list only, so a
+        // `bytes memory` in the `returns` list never matches.
+        (
+            "contract C { function f(in(sig) euint32 x) public returns (bytes memory sig) \
+             { x; sig = \"\"; } }",
+            "FHE1013",
+        ),
         // FHE1014: implicit and explicit mixed in one list.
         (
             "contract C { function f(in euint32 x, in(sig) euint32 y, bytes memory sig) public \

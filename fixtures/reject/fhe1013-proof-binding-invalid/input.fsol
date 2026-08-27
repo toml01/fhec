@@ -35,4 +35,30 @@ contract S {
         x;
         inputProof;
     }
+
+    // The binder names a fixed-width `bytesNN`, which is a value type.
+    function fixedWidth(in(inputProof) euint32 x, bytes32 inputProof) public {
+        x;
+        inputProof;
+    }
+
+    // The binder names a parameter with the right data location but the
+    // wrong elementary type.
+    function wrongElementaryType(in(inputProof) euint32 x, string memory inputProof) public {
+        x;
+        inputProof;
+    }
+
+    // The `bytes memory` parameter has no name, so this list declares no
+    // `inputProof` for the binder to match.
+    function unnamedProof(in(inputProof) euint32 x, bytes memory) public {
+        x;
+    }
+
+    // The binder resolves against the parameter list only, so a `bytes memory`
+    // entry of the `returns` list never matches.
+    function inReturnsList(in(inputProof) euint32 x) public returns (bytes memory inputProof) {
+        x;
+        inputProof = "";
+    }
 }
