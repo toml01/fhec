@@ -194,9 +194,9 @@ pub fn collect_in_sugar<'ast>(unit: &'ast ast::SourceUnit<'ast>) -> Vec<InSugarU
             &mut self,
             var: &'ast ast::VariableDefinition<'ast>,
         ) -> ControlFlow<Self::BreakValue> {
-            if let Some(in_span) = var.in_sugar {
+            if let Some(in_sugar) = var.in_sugar {
                 self.out.push(InSugarUse {
-                    in_span,
+                    in_span: in_sugar.kw_span,
                     param_span: var.span,
                     ty_span: var.ty.span,
                     name: var.name.map(|i| i.to_string()),

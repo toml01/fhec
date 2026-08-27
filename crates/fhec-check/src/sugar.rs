@@ -26,7 +26,7 @@ pub(crate) fn scan<'ast>(
         let sites_before = out.sugar_sites.len();
         for &p in &f.params {
             let v = unit.var(p);
-            let Some(in_span) = v.decl.in_sugar else {
+            let Some(in_sugar) = v.decl.in_sugar else {
                 continue;
             };
             if !legal_kind {
@@ -77,7 +77,7 @@ pub(crate) fn scan<'ast>(
             out.sugar_sites.push(InSugarSite {
                 param_span: v.decl.span,
                 params_span: f.ast.header.parameters.span,
-                in_span,
+                in_span: in_sugar.kw_span,
                 ty: ety,
                 name: name.as_str().to_string(),
                 has_body: f.ast.body.is_some(),
