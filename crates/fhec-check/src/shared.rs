@@ -630,12 +630,18 @@ fn assignment_in<'ast>(e: &'ast ast::Expr<'ast>) -> Option<Span> {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-/// Illegal item-level positions: event/error parameters and state variables.
-fn scan_item(out: &mut CheckedUnit, item: &ast::Item<'_>) {
+/// Illegal item-level positions: event/error parameters, state variables, and
+/// the in-body declaration lists of a `try` statement.
+fn scan_item<'ast>(out: &mut CheckedUnit, item: &'ast ast::Item<'ast>) {
     match &item.kind {
         ast::ItemKind::Contract(c) => {
             for inner in c.body.iter() {
                 scan_item(out, inner);
+            }
+        }
+        ast::ItemKind::Function(f) => {
+            if let Some(body) = &f.body {
+                scan_body(out, body);
             }
         }
         ast::ItemKind::Event(ev) => {
@@ -659,6 +665,51 @@ fn scan_item(out: &mut CheckedUnit, item: &ast::Item<'_>) {
         }
         _ => {}
     }
+}
+
+/// Refuses a shared marker in a `try` statement's declaration lists.
+///
+/// Solar parses the success clause's `returns (...)` list and every `catch`
+/// clause's argument list with the ordinary function-parameter grammar, so a
+/// marker can be written in either (allow-and-flag). Neither is a legal
+/// position (§2.8), and neither is reachable through `BoundUnit`'s function
+/// headers, so the body is walked here. Without this the marker reaches the
+/// emitter unlowered and leaks raw `shared(...)` / `in shared` text into the
+/// generated Solidity, where only the solc gate rejects it — far from the
+/// construct that caused it.
+fn scan_body<'ast>(out: &mut CheckedUnit, body: &'ast ast::Block<'ast>) {
+    use ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Search<'a> {
+        out: &'a mut CheckedUnit,
+    }
+    impl<'ast> Visit<'ast> for Search<'_> {
+        type BreakValue = std::convert::Infallible;
+
+        fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<Self::BreakValue> {
+            if let ast::StmtKind::Try(t) = &stmt.kind {
+                // Solar always pushes the success clause first, whether or not
+                // the source wrote a `returns (...)` list for it.
+                for (i, clause) in t.clauses.iter().enumerate() {
+                    let place = if i == 0 {
+                        "a `try` return-parameter list"
+                    } else {
+                        "a `catch` clause parameter list"
+                    };
+                    for p in clause.args.vars.iter() {
+                        if let Some(s) = p.shared.as_ref() {
+                            wrong_place(self.out, s.span, place);
+                        }
+                    }
+                }
+            }
+            self.walk_stmt(stmt)
+        }
+    }
+
+    let mut search = Search { out };
+    let _ = search.visit_block(body);
 }
 
 fn wrong_place(out: &mut CheckedUnit, span: Span, place: &str) {

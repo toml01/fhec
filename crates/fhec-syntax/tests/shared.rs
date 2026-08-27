@@ -89,11 +89,43 @@ fn illegal_positions_still_parse_and_record() {
             SharedPosition::Error,
         ),
         ("shared(msg.sender) euint64 s;", SharedPosition::StateVar),
+        // Inside a function body, `try` carries two more declaration lists —
+        // the success clause's `returns (...)` and each `catch` clause's
+        // arguments — both parsed with the ordinary parameter grammar. The
+        // collector classifies them `Other`; the checker refuses them.
+        (
+            "function f() external { try this.f() returns (shared(msg.sender) euint64 g) \
+             { g; } catch {} }",
+            SharedPosition::Other,
+        ),
+        (
+            "function f() external { try this.f() {} \
+             catch Error(in shared euint64 r) { r; } }",
+            SharedPosition::Other,
+        ),
     ];
     for (member, position) in cases {
         let uses = collect(&format!("{HEAD}contract C {{ {member} }}"));
         assert_eq!(uses.len(), 1, "{member}");
         assert_eq!(uses[0].position, position, "{member}");
+    }
+}
+
+#[test]
+fn a_marker_in_a_local_declaration_does_not_parse() {
+    // The counterpart of the `try` cases above: solar's statement grammar
+    // never reaches the marker in a local declaration, tuple or not. Pinned so
+    // a later grammar change that starts accepting the shape is caught here
+    // and taught to the checker's legality scan.
+    for member in [
+        "function f() external { shared(msg.sender) euint64 x; x; }",
+        "function f() external { (shared(msg.sender) euint64 x, uint256 y) = (x, 1); y; }",
+    ] {
+        let src = format!("{HEAD}contract C {{ {member} }}");
+        assert!(
+            with_parsed_source("t.fsol", &src, |_| ()).is_err(),
+            "{member}"
+        );
     }
 }
 

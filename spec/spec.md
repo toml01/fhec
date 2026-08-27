@@ -265,7 +265,7 @@ Several shared inputs of one function receive **independently**, one statement e
 
 **Restrictions.** Every violation is FHE1015 unless noted.
 
-1. The marker is permitted only in a `function` parameter list that is `external` and neither `view` nor `pure`. A shared handle is an ABI wire type an internal caller cannot produce, and receiving one changes access-control state. `public`, `internal`, `private`, constructors, modifiers, `view`, `pure`, return lists, event/error parameter lists, and state variables are all illegal. **⚠ Draft decision (`external` only):** `public` is refused because a `public` function is also callable internally, the expansion rewrites the declaration alone, and an internal call site would still pass the unshared `eT`.
+1. The marker is permitted only in a `function` parameter list that is `external` and neither `view` nor `pure`. A shared handle is an ABI wire type an internal caller cannot produce, and receiving one changes access-control state. `public`, `internal`, `private`, constructors, modifiers, `view`, `pure`, return lists, event/error parameter lists, `try`/`catch` declaration lists, and state variables are all illegal. **⚠ Draft decision (`external` only):** `public` is refused because a `public` function is also callable internally, the expansion rewrites the declaration alone, and an internal call site would still pass the unshared `eT`.
 2. `in shared` must be followed by an encrypted type.
 3. The parameter must be named: the expansion declares `<name>_shared` and receives it into `<name>`.
 4. A shared input takes no proof binder (`in(proof) shared eT` is illegal) and no recipient (`in shared(x) eT` is illegal — a recipient belongs on a return type).

@@ -99,3 +99,28 @@ contract SharedReturnBadPosition {
         return b = b;
     }
 }
+
+// The `try` statement's own declaration lists. Solar parses both with the
+// ordinary parameter grammar, so a marker can be written in either; neither is
+// reachable from a function header, so the checker walks the body for them.
+interface ISharedVault {
+    function pull(uint256 v) external returns (uint256);
+}
+
+contract SharedTryBadPosition {
+    ISharedVault vault;
+
+    function tryReturns() public {
+        try vault.pull(1) returns (shared(msg.sender) euint64 got) {
+            got;
+        } catch {}
+    }
+
+    function catchArgs() public {
+        try vault.pull(1) returns (uint256 got) {
+            got;
+        } catch Error(in shared euint64 reason) {
+            reason;
+        }
+    }
+}

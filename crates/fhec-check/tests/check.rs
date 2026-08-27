@@ -1648,6 +1648,46 @@ fn illegal_shared_positions_are_fhe1015() {
 }
 
 #[test]
+fn a_shared_marker_in_a_try_declaration_list_is_fhe1015() {
+    // Solar parses the success clause's `returns (...)` list and every `catch`
+    // clause's argument list with the ordinary parameter grammar, so a marker
+    // can be written in either. Neither list is reachable from a function
+    // header, so the checker must find them by walking the body — otherwise
+    // the raw marker text leaks into the generated Solidity unlowered.
+    for members in [
+        "function g() public {\n\
+           try this.h() returns (shared(msg.sender) euint64 got) { got; } catch {}\n\
+         }\n\
+         function h() external returns (euint64) { return b; }",
+        "function g() public {\n\
+           try this.h() returns (euint64 got) { got; }\n\
+           catch Error(in shared euint64 reason) { reason; }\n\
+         }\n\
+         function h() external returns (euint64) { return b; }",
+    ] {
+        assert_eq!(shared_codes(members), ["FHE1015"], "members: {members}");
+    }
+}
+
+#[test]
+fn a_shared_marker_in_a_local_declaration_is_a_parse_error() {
+    // The counterpart of the rule above: solar's statement grammar never
+    // reaches the marker in a local declaration, tuple or not, so there is
+    // nothing for the checker to flag. Pinned so a later grammar change that
+    // starts accepting the shape does not slip past the legality scan.
+    for members in [
+        "function g() public { shared(msg.sender) euint64 x = b; x; }",
+        "function g() public { (shared(msg.sender) euint64 x, uint256 y) = (b, 1); x; y; }",
+    ] {
+        let src = unit(members);
+        assert!(
+            fhec_syntax::with_parsed_source("t.fsol", &src, |_| ()).is_err(),
+            "members: {members}"
+        );
+    }
+}
+
+#[test]
 fn the_generated_wire_name_must_be_free() {
     for members in [
         "function g(in shared euint32 amount) external { uint256 amount_shared = 1; a = amount; amount_shared; }",

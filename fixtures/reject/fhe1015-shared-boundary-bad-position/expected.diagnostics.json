@@ -313,5 +313,35 @@
     },
     "message": "a shared-boundary marker is only permitted on a function parameter (`in shared eT name`) or on a function return type (`shared(msg.sender) eT`), not in an event parameter list",
     "rule": "§2.8"
+  },
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 3096,
+      "end_byte": 3114,
+      "start_line": 114,
+      "start_col": 36,
+      "end_line": 114,
+      "end_col": 54
+    },
+    "message": "a shared-boundary marker is only permitted on a function parameter (`in shared eT name`) or on a function return type (`shared(msg.sender) eT`), not in a `try` return-parameter list",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 3299,
+      "end_byte": 3305,
+      "start_line": 122,
+      "start_col": 26,
+      "end_line": 122,
+      "end_col": 32
+    },
+    "message": "a shared-boundary marker is only permitted on a function parameter (`in shared eT name`) or on a function return type (`shared(msg.sender) eT`), not in a `catch` clause parameter list",
+    "rule": "§2.8"
   }
 ]
