@@ -841,6 +841,52 @@ fn precondition_rejects_an_unresolved_type() {
     });
 }
 
+/// A *plain* container can still hold encrypted data: `euint32[]` types as a
+/// plain array of encrypted elements, and a plain struct may declare an
+/// encrypted field. The root type alone therefore cannot decide (§1.3).
+///
+/// `getWallet` names its return on purpose: an *unnamed* return types as
+/// `Unknown`, which is refused for a different reason.
+#[test]
+fn precondition_rejects_a_nested_encrypted_type() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        struct Wallet { uint256 id; euint32 secret; }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          euint32[] encList;\n\
+          Wallet walletState;\n\
+          function getWallet() public view returns (Wallet memory w) { w = walletState; }\n\
+          function g(in euint32 amount) public {\n\
+            precondition {\n\
+              euint32[] memory xs;\n\
+              encList;\n\
+              walletState;\n\
+              getWallet();\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(
+        error_codes(src),
+        ["FHE3015", "FHE3015", "FHE3015", "FHE3015"]
+    );
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let by = |text: &str| {
+            c.diagnostics
+                .iter()
+                .find(|d| snip(d.span) == text)
+                .unwrap_or_else(|| panic!("no diagnostic on {text}"))
+                .message
+                .clone()
+        };
+        assert!(by("euint32[] memory xs").contains("`euint32`"));
+        assert!(by("encList").contains("`euint32`"));
+        assert!(by("walletState").contains("`euint32`"));
+        assert!(by("getWallet()").contains("returns `euint32`"));
+    });
+}
+
 #[test]
 fn precondition_rejects_state_writes() {
     assert_pre_codes("plainState = 1;", &["FHE3015"]);

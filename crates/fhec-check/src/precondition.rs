@@ -27,7 +27,7 @@ use solar_ast as ast;
 use solar_data_structures::map::FxHashMap;
 use solar_interface::Span;
 
-use crate::decl::declared_ty;
+use crate::decl::{declared_ty, nesting, Nesting};
 use crate::diag::{codes, Diagnostic};
 use crate::sites::{CheckedUnit, PreconditionSite};
 use crate::ty::Ty;
@@ -340,23 +340,28 @@ impl<'ast> FnChecker<'_, 'ast> {
             );
             return false;
         }
-        match declared_ty(self.unit, self.trust, &v.ty) {
-            Ty::Encrypted(_) => {
+        let ty = declared_ty(self.unit, self.trust, &v.ty);
+        match nesting(self.unit, self.trust, &ty) {
+            Nesting::Encrypted(t) => {
                 self.pre_reject(
                     v.span,
-                    "an encrypted local cannot be declared in a `precondition` block: the \
-                     block is a plaintext guard that runs before the encrypted inputs exist",
+                    format!(
+                        "a local holding `{}` cannot be declared in a `precondition` block: \
+                         the block is a plaintext guard that runs before the encrypted \
+                         inputs exist",
+                        t.solidity_name()
+                    ),
                 );
                 return false;
             }
             // `Unknown` is "the checker does not know", never "plaintext": a
             // qualified type name (`NS.euint32`) leaves the positive fragment
             // and could name an encrypted type (§1.3).
-            Ty::Unknown => {
+            Nesting::Unknown => {
                 self.pre_reject(v.span, UNRESOLVED_TYPE);
                 return false;
             }
-            Ty::Plain(_) => {}
+            Nesting::Plain => {}
         }
         self.decl_var(v, v.initializer.is_some());
         true
@@ -501,16 +506,28 @@ impl<'ast> FnChecker<'_, 'ast> {
     fn pre_ident(&mut self, id: solar_interface::Ident, span: Span) {
         use Resolution::*;
         match self.unit.resolve(id).cloned() {
-            // A value read. Encryptedness alone is not enough: a declared type
-            // the positive fragment does not cover (`NS.euint32`, a qualified
-            // custom type) types as `Unknown`, which the recorded-type check
-            // above cannot distinguish from plaintext. Refuse it here (§1.3).
+            // A value read. The recorded type of the expression is not
+            // enough: a declared type the positive fragment does not cover
+            // (`NS.euint32`, a qualified custom type) types as `Unknown`,
+            // which that check cannot tell from plaintext, and a *plain*
+            // container may still hold encrypted data (`euint32[]`). Judge
+            // the declared type all the way down (§1.3).
             Some(res @ (Local(_) | Param(_) | StateVar(_) | FileConst(_))) => {
-                if self
+                match self
                     .var_decl_ty(&res)
-                    .is_some_and(|(t, _)| t == Ty::Unknown)
+                    .map(|(t, _)| nesting(self.unit, self.trust, &t))
                 {
-                    self.pre_reject(span, UNRESOLVED_TYPE);
+                    Some(Nesting::Encrypted(t)) => self.pre_reject(
+                        span,
+                        format!(
+                            "`{}` holds `{}`; a `precondition` block is a plaintext guard \
+                             that runs before any FHE operation of this function",
+                            id.as_str(),
+                            t.solidity_name()
+                        ),
+                    ),
+                    Some(Nesting::Unknown) => self.pre_reject(span, UNRESOLVED_TYPE),
+                    _ => {}
                 }
             }
             // The names used as call/cast callees, and event/error paths.
@@ -752,8 +769,9 @@ impl<'ast> FnChecker<'_, 'ast> {
         let mut unknown = false;
         for &f in fids {
             for r in self.unit.function(f).ast.header.returns() {
-                match declared_ty(self.unit, self.trust, &r.ty) {
-                    Ty::Encrypted(t) => {
+                let ty = declared_ty(self.unit, self.trust, &r.ty);
+                match nesting(self.unit, self.trust, &ty) {
+                    Nesting::Encrypted(t) => {
                         return Some(format!(
                             "this call returns `{}`; a `precondition` block is a plaintext \
                              guard and runs before any encrypted value of this function \
@@ -761,8 +779,8 @@ impl<'ast> FnChecker<'_, 'ast> {
                             t.solidity_name()
                         ))
                     }
-                    Ty::Plain(_) => {}
-                    Ty::Unknown => unknown = true,
+                    Nesting::Plain => {}
+                    Nesting::Unknown => unknown = true,
                 }
             }
         }

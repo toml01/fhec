@@ -213,7 +213,7 @@ Everything else is FHE3015:
 
 - **state writes** (a write to a local declared inside the block stays legal; the diagnostic MUST say *state write*), including `delete`;
 - **escaping writes**: a write whose base variable is declared outside the block and outlives it — a parameter, a **named return**, or a local of an enclosing scope — and every write *through* a block-local. The diagnostic MUST name the variable and say the effect would escape the block;
-- every **encrypted-typed expression** — encrypted operations, encrypted control flow, encrypted state reads, and `view` calls that return encrypted values;
+- every **encrypted-typed expression** — encrypted operations, encrypted control flow, encrypted state reads, and `view` calls that return encrypted values. A type counts as encrypted when an encrypted type appears **anywhere inside it**, not only at its root: `euint32[]` and a struct with an encrypted field are refused exactly as a bare `euint32` is, wherever a declaration, a read, or a call's declared return type names one;
 - `emit`;
 - calls the transpiler cannot classify: imported, unresolved, ambiguous, member (`Lib.f()`, `token.f()` — a qualified *type* conversion is not one of these), state-changing, or with a return type it cannot prove plaintext — **even when the source declares them `view` or `pure`**;
 - `return`, loops, `break` / `continue`, `try`, inline assembly, and any other statement form not listed above.
