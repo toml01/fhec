@@ -172,7 +172,7 @@ Grammar: in any statement position, the production
 statement := 'precondition' block
 ```
 
-is added. `precondition` is a **contextual** keyword: it is recognized only when it is immediately followed by `{`. It remains a legal ordinary Solidity identifier everywhere else, so this production conflicts with no valid Solidity program and the no-op corpus (§1.4) is unaffected.
+is added. `precondition` is a **contextual** keyword: it is recognized only when it is immediately followed by `{`, and **not** when what follows the `{` is call-options syntax — a named option (`precondition{value: 1}()`) or an empty option list before `(` (`precondition{}()`). In those two shapes the token parses as an ordinary identifier, exactly as any other name would, so `precondition` stays a legal Solidity identifier everywhere: this production conflicts with no valid Solidity program, and the no-op corpus (§1.4) is unaffected.
 
 **Purpose.** By default the §2.3 conversion statements are the first thing a body executes, so an encrypted input is verified *before* any authorization check the author wrote. A `precondition` block names a plaintext guard that MUST run first, so an unauthorized call reverts with the contract's own error rather than with a proof-verification error. The transpiler never reorders author statements: only the generated materializers move, and only when the author wrote the marker.
 
