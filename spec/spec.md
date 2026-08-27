@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.4.0 |
+| **Version** | 0.5.0 |
 | **Status** | Draft |
 | **Date** | 2026-08-27 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -103,7 +103,7 @@ contract EncryptedCounter {
 
 1. Dialect source files use the extension `.fsol`. Plain `.sol` files in the same project MUST pass through unmodified except §2.6.
 2. A `.fsol` file MUST carry a `pragma solidity` constraint whose satisfiable range lies within `>=0.8.25 <0.9.0`. Constraints outside this range are FHE1001 errors, enforced by the load stage; a pragma the load stage cannot parse defers to solc rather than erroring. (The CoFHE interface file itself requires `>=0.8.25`; CoFHE deployments require the `cancun` EVM target.)
-3. Except for the extensions in §2.3 and §2.7, the grammar of `.fsol` is exactly the grammar of Solidity in the supported pragma range. Every valid Solidity file in that range is a valid `.fsol` file.
+3. Except for the extensions in §2.3, §2.7, and §2.8, the grammar of `.fsol` is exactly the grammar of Solidity in the supported pragma range. Every valid Solidity file in that range is a valid `.fsol` file.
 
 ### §2.2 Parse errors
 
@@ -209,7 +209,7 @@ Without the marker, the materializers stay at body entry (§2.3) and the order i
 
 1. It is the **first statement** of the body (after `{`, ignoring trivia).
 2. There is **at most one** in the function. A second block anywhere in the body — including nested inside the first — is illegal.
-3. The host is a `function` or `constructor` whose parameter list declares **at least one dialect-managed encrypted input** (today: an `in eT` or `in(proof) eT` parameter, §2.3). Without one there is nothing to guard.
+3. The host is a `function` or `constructor` whose parameter list declares **at least one dialect-managed encrypted input** (an `in eT` or `in(proof) eT` parameter, §2.3, or an `in shared eT` parameter, §2.8). Without one there is nothing to guard.
 
 The parser accepts the block in every statement position; positional legality is a checker rule, so a misplaced block yields FHE1017 rather than a parse error.
 
@@ -238,6 +238,67 @@ Everything else is FHE3015:
 The permitted list is a whitelist. A construct the transpiler does not recognize is refused, never assumed harmless (§1.3).
 
 **Lowering.** The transpiler removes **only** the marker (the keyword and the trivia up to the block's `{`), leaving an ordinary nested block whose bytes are untouched, and inserts the materializers immediately after that block's closing `}`. The marker patch and the insertion never overlap (§2.5). Idempotence follows: the output has no marker and no `in` parameters, so `T(T(x)) == T(x)`.
+
+### §2.8 The shared boundary
+
+An encrypted handle can also cross a contract boundary *directed*: its holder shares it with a named recipient, and the recipient receives it. The profile carries this as a distinct wire type per encrypted type — the **shared handle** `sharedT` — plus a `share` and a `receive` operation (CoFHE: `sharedEuint64`, `FHE.shareEuint64(handle, receiver)`, `FHE.receiveEuint64Param(handle)`). Nothing about the rules below is CoFHE-specific; a profile that lacks the boundary for an encrypted type reports FHE5001 (§1.5).
+
+Two markers are added, one per direction:
+
+```
+parameter := 'in' 'shared' encrypted-type identifier
+return     := 'shared' '(' expression ')' encrypted-type
+```
+
+`shared` is a **contextual** keyword. It is read as a marker only where plain Solidity has no other reading: directly after the reserved `in` keyword, or immediately before `(` in a declaration's type position. Everywhere else it stays an ordinary identifier, so this production conflicts with no valid Solidity program and the no-op corpus (§1.4) is unaffected.
+
+The parser records a marker wherever it can be written unambiguously and judges nothing; every illegal position and shape below is FHE1015, a checker rule, not a parse error.
+
+#### Shared input — `in shared eT name`
+
+**Expansion.** For each such parameter (`eT` maps to wire type `sharedT` and receive function `receiveTParam` per the profile):
+
+1. The parameter becomes `sharedT name_shared` in the same position. Shared handles are value types; no data location.
+2. `eT name = FHE.receiveTParam(name_shared);` is inserted at the *materialization point* (§2.3, §2.7 — after a `precondition` block when the body opens with one, else at body entry).
+
+Several shared inputs of one function receive **independently**, one statement each, in source parameter order. There is no batch: a shared handle was verified when it was shared, so — unlike the external inputs of §2.3 — it carries no input proof and nothing is appended to the parameter list. The ABI therefore gains no proof argument.
+
+**Restrictions.** Every violation is FHE1015 unless noted.
+
+1. The marker is permitted only in a `function` parameter list that is `public` or `external` and neither `view` nor `pure`. A shared handle is an ABI wire type an internal caller cannot produce, and receiving one changes access-control state. `internal`, `private`, constructors, modifiers, `view`, `pure`, return lists, event/error parameter lists, and state variables are all illegal.
+2. `in shared` must be followed by an encrypted type.
+3. The parameter must be named: the expansion declares `<name>_shared` and receives it into `<name>`.
+4. A shared input takes no proof binder (`in(proof) shared eT` is illegal) and no recipient (`in shared(x) eT` is illegal — a recipient belongs on a return type).
+5. **⚠ Draft decision (no mixed inputs):** one parameter list declares either shared inputs or external `in` / `in(proof)` inputs, never both. The two verify under different models — several external inputs form one atomic proof batch — and this version fixes no ordering between that batch and the receives. Splitting the function is the workaround.
+6. On a declaration without a body, only the signature rewrite applies; no receive statement is generated (as §2.3 restriction 3).
+
+**⚠ Draft decision (generated name):** the wire parameter is named `<name>_shared`. If that identifier is already used anywhere in the function's scope, the transpiler MUST reject with FHE1016 rather than rename silently.
+
+#### Shared return — `returns (shared(recipient) eT)`
+
+**Expansion.**
+
+1. The return declaration becomes `sharedT`, so the ABI result type is the shared handle.
+2. Every `return expr;` of the body becomes `return FHE.shareT(expr, recipient);`.
+
+The returned expression is wrapped **where it stands**, never hoisted, so it is evaluated exactly once by construction and ordinary operator lowering (§4) still applies inside it. The wrap is expressed as two insertions at the expression's own boundaries, which cannot overlap any patch inside the expression or any ACL insertion before or after the statement (§2.5).
+
+**Relation to R3.** A shared return **replaces** the §8.3 R3 grant: `FHE.shareT(..., msg.sender)` directs the handle at the caller, so the transpiler MUST NOT also insert `FHE.allowTransient(..., msg.sender)` for it. Every other ACL rule still applies unchanged; in particular an R2 grant (§8.2) for an external call inside the returned expression MUST still be inserted. A shared-boundary rewrite MUST NEVER cost an ACL grant.
+
+**Restrictions.** Every violation is FHE1015 unless noted.
+
+1. The host must be a `function` that is `public` or `external` and neither `view` nor `pure`.
+2. **⚠ Draft decision (recipient):** the recipient MUST be exactly the expression `msg.sender`. Another expression is refused even when it would evaluate to the caller's address, because the transpiler cannot prove that (§1.3). Other recipients are a later revision.
+3. The shared return MUST be the only return value of its function and MUST be unnamed. Tuples, a named fallthrough return, and lists mixing a shared return with a plain or encrypted one are all refused.
+4. `shared(...)` must be followed by an encrypted type, and the `in` marker has no meaning on a return type.
+5. Every `return` in the body MUST be an explicit valued `return expr;`. A bare `return;` is refused.
+6. **⚠ Draft decision (braced returns):** a `return` of a shared value MUST sit inside a braced block, not as the bare body of an `if`/`else`/`for`/`while`/`do`. ACL insertion places grant *statements* before the statement they serve, which a braceless branch body cannot hold; requiring braces keeps the construct clear of that shape.
+7. **⚠ Draft decision (no assignment in the returned expression):** the returned expression MUST NOT contain an assignment or `++`/`--`. An encrypted assignment inside a `return` would state a §8.1 R1 storage-write fact anchored on the `return` statement, whose grant belongs *after* a statement that has already left the function. Assign in its own statement and return the variable.
+8. The returned expression MUST type as exactly the declared `eT`; anything else — a different encrypted type, a plaintext value, or a type the checker cannot prove — is FHE2012.
+
+Restrictions 6 and 7 are conservative refusals, not statements about what is expressible in principle.
+
+**No-op.** Explicit `FHE.receive*` / `FHE.share*` calls written by the author are plain CoFHE Solidity and carry no marker, so they are reproduced byte for byte (§1.4). The output of this section is exactly such a source, so `T(T(x)) == T(x)`.
 
 ---
 
@@ -462,6 +523,8 @@ FHE.allowTransient(__fhe_ret_n, msg.sender);
 
 inserted before `return __fhe_ret_n;`.
 
+R3 does **not** apply to a function whose return is declared `shared(...)` (§2.8): the share call already directs the handle at the caller, and inserting `allowTransient` as well would grant twice.
+
 ### §8.4 View functions
 
 ACL operations cannot execute in `view` context. A `view` function returning an encrypted value gets NO insertion and warning FHE4002 (the caller must have been granted access elsewhere; the getter itself cannot grant it).
@@ -511,6 +574,8 @@ Assigned in this version:
 | FHE1012 | error | in-sugar-bad-position (§2.3) |
 | FHE1013 | error | in-sugar-proof-binding-invalid (§2.3) |
 | FHE1014 | error | in-sugar-proof-binding-inconsistent (§2.3) |
+| FHE1015 | error | shared-boundary-bad-position (§2.8) |
+| FHE1016 | error | shared-boundary-name-collision (§2.8) |
 | FHE1017 | error | precondition-bad-position (§2.7) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
@@ -524,6 +589,7 @@ Assigned in this version:
 | FHE2009 | error | condition-not-ebool (§3.3) |
 | FHE2010 | error | encrypted-op-in-view-or-pure (§3.4) |
 | FHE2011 | error | inc-dec-value-used (§4.2) |
+| FHE2012 | error | shared-boundary-type-mismatch (§2.8) |
 | FHE3001 | error | return-in-encrypted-branch |
 | FHE3002 | error | break-continue-in-encrypted-branch |
 | FHE3003 | error | revert-family-in-encrypted-branch |
@@ -619,4 +685,5 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.1.4 (2026-08-22)** — §1.4 defines the self-check diagnostic-suppression rule (re-run diagnostics below error severity are suppressed).
 - **0.2.0 (2026-08-22)** — cofhe-contracts 0.2.0 input model: §1.5 replaces the removed `InEuintX` input structs with the `externalE*` handle types; §2.3 lowers the sugar to an in-place `externalT name_input` parameter plus one shared trailing `bytes memory inputProof` parameter per function, converts one input via the two-argument `FHE.asT(hash, proof)` and several inputs via a single `Impl.verifyBatchInputs` batch (one signature covers the whole batch); FHE1011 additionally guards the `inputProof` name.
 - **0.3.0 (2026-08-27)** — second grammar extension: §2.7 adds the contextual `precondition` block, which moves a function's generated encrypted-input materializers after an author-written plaintext guard; §2.3 renames its insertion point to the *materialization point* and drops the "single v1 grammar extension" claim from its title; §2.1 lists both extensions; new codes FHE1017 (position), FHE3014 (managed input named in the block), FHE3015 (forbidden effect).
+- **0.5.0 (2026-08-27)** — third grammar extension: §2.8 adds the shared boundary. `in shared eT name` lowers a parameter to the profile's `sharedT` wire type and receives it at the materialization point, with no input proof and no batching; `returns (shared(msg.sender) eT)` makes the ABI result `sharedT` and wraps every returned expression in one `share` call, in place, so single evaluation and nested operator lowering both hold by construction. A shared return replaces the §8.3 R3 grant and never costs any other ACL grant. MVP limits: no mixing of shared and external inputs in one parameter list, one unnamed shared return per function, recipient exactly `msg.sender`, explicit valued `return` inside a braced block, and no assignment in the returned expression. New codes FHE1015 (bad position or shape), FHE1016 (`<name>_shared` collision), FHE2012 (returned expression is not the declared encrypted type); a profile without a shared boundary for a type reuses FHE5001.
 - **0.4.0 (2026-08-27)** — §2.3 adds the explicit proof binder `in(proof) eT name`: the input verifies against an author-declared `bytes memory|calldata` parameter of the same list, which keeps its position, name, and data location, and nothing is appended to the parameter list, so an ERC-7984 `…AndCall` order (proof before `data`) is expressible. The implicit `in eT name` form and its trailing `bytes memory inputProof` are unchanged. New codes FHE1013 (binder does not name a same-list `bytes` parameter) and FHE1014 (one parameter list mixes the two forms or binds two different proofs).
