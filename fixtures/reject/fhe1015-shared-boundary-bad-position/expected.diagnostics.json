@@ -124,11 +124,26 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 1465,
-      "end_byte": 1471,
-      "start_line": 54,
+      "start_byte": 1612,
+      "end_byte": 1645,
+      "start_line": 56,
+      "start_col": 27,
+      "end_line": 56,
+      "end_col": 60
+    },
+    "message": "a shared-boundary declaration takes no data location: `calldata` has no meaning on an encrypted value type (remove it)",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1716,
+      "end_byte": 1722,
+      "start_line": 60,
       "start_col": 32,
-      "end_line": 54,
+      "end_line": 60,
       "end_col": 38
     },
     "message": "`in shared` is only permitted in a `function` parameter list, not in a `modifier` parameter list",
@@ -139,11 +154,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 1740,
-      "end_byte": 1770,
-      "start_line": 65,
+      "start_byte": 1991,
+      "end_byte": 2021,
+      "start_line": 71,
       "start_col": 44,
-      "end_line": 65,
+      "end_line": 71,
       "end_col": 74
     },
     "message": "a shared return must be unnamed: the value is wrapped where it is returned, so a named fallthrough return has nothing to wrap",
@@ -154,11 +169,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 1841,
-      "end_byte": 1859,
-      "start_line": 69,
+      "start_byte": 2092,
+      "end_byte": 2110,
+      "start_line": 75,
       "start_col": 44,
-      "end_line": 69,
+      "end_line": 75,
       "end_col": 62
     },
     "message": "a shared return must be the only return of its function: this list declares more than one return value",
@@ -169,11 +184,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 1963,
-      "end_byte": 1968,
-      "start_line": 73,
+      "start_byte": 2214,
+      "end_byte": 2219,
+      "start_line": 79,
       "start_col": 54,
-      "end_line": 73,
+      "end_line": 79,
       "end_col": 59
     },
     "message": "the only recipient this version accepts is `msg.sender`; the transpiler cannot prove another expression names the caller",
@@ -184,11 +199,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 2053,
-      "end_byte": 2071,
-      "start_line": 77,
+      "start_byte": 2304,
+      "end_byte": 2322,
+      "start_line": 83,
       "start_col": 48,
-      "end_line": 77,
+      "end_line": 83,
       "end_col": 66
     },
     "message": "a shared return is not permitted on a `view` or `pure` function: sharing a handle changes the access-control state",
@@ -199,11 +214,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 2156,
-      "end_byte": 2174,
-      "start_line": 81,
+      "start_byte": 2407,
+      "end_byte": 2425,
+      "start_line": 87,
       "start_col": 49,
-      "end_line": 81,
+      "end_line": 87,
       "end_col": 67
     },
     "message": "a shared return is only permitted on a `public` or `external` function: a shared handle is an ABI wire type, so an internal caller has nothing to receive",
@@ -214,11 +229,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 2280,
-      "end_byte": 2287,
-      "start_line": 85,
+      "start_byte": 2531,
+      "end_byte": 2538,
+      "start_line": 91,
       "start_col": 70,
-      "end_line": 85,
+      "end_line": 91,
       "end_col": 77
     },
     "message": "`shared(...)` must be followed by an encrypted type (ebool, euint8..euint128, eaddress)",
@@ -229,11 +244,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 2396,
-      "end_byte": 2403,
-      "start_line": 90,
+      "start_byte": 2647,
+      "end_byte": 2654,
+      "start_line": 96,
       "start_col": 9,
-      "end_line": 90,
+      "end_line": 96,
       "end_col": 16
     },
     "message": "a function with a shared return must return a value explicitly: `return <expr>;`",
@@ -244,11 +259,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 2509,
-      "end_byte": 2518,
-      "start_line": 94,
+      "start_byte": 2760,
+      "end_byte": 2769,
+      "start_line": 100,
       "start_col": 16,
-      "end_line": 94,
+      "end_line": 100,
       "end_col": 25
     },
     "message": "a `return` of a shared value must sit inside a braced block: wrap the branch body in `{ }`",
@@ -259,14 +274,29 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 2636,
-      "end_byte": 2641,
-      "start_line": 99,
+      "start_byte": 2887,
+      "end_byte": 2892,
+      "start_line": 105,
       "start_col": 16,
-      "end_line": 99,
+      "end_line": 105,
       "end_col": 21
     },
     "message": "the returned expression of a shared return must not assign: assign in its own statement and return the variable",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 2946,
+      "end_byte": 2979,
+      "start_line": 108,
+      "start_col": 46,
+      "end_line": 108,
+      "end_col": 79
+    },
+    "message": "a shared-boundary declaration takes no data location: `memory` has no meaning on an encrypted value type (remove it)",
     "rule": "§2.8"
   },
   {
@@ -319,11 +349,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 3096,
-      "end_byte": 3114,
-      "start_line": 114,
+      "start_byte": 3454,
+      "end_byte": 3472,
+      "start_line": 124,
       "start_col": 36,
-      "end_line": 114,
+      "end_line": 124,
       "end_col": 54
     },
     "message": "a shared-boundary marker is only permitted on a function parameter (`in shared eT name`) or on a function return type (`shared(msg.sender) eT`), not in a `try` return-parameter list",
@@ -334,11 +364,11 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 3299,
-      "end_byte": 3305,
-      "start_line": 122,
+      "start_byte": 3657,
+      "end_byte": 3663,
+      "start_line": 132,
       "start_col": 26,
-      "end_line": 122,
+      "end_line": 132,
       "end_col": 32
     },
     "message": "a shared-boundary marker is only permitted on a function parameter (`in shared eT name`) or on a function return type (`shared(msg.sender) eT`), not in a `catch` clause parameter list",

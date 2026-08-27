@@ -51,6 +51,12 @@ contract SharedInputBadPosition {
         amount;
     }
 
+    // An encrypted type is a value type, so a data location never applies.
+    // The declaration rewrite would otherwise drop the keyword in silence.
+    function locatedInput(in shared euint64 calldata amount) external {
+        b = amount;
+    }
+
     modifier sharedModifier(in shared euint64 amount) {
         _;
     }
@@ -97,6 +103,10 @@ contract SharedReturnBadPosition {
 
     function assigningReturn() public returns (shared(msg.sender) euint64) {
         return b = b;
+    }
+
+    function locatedReturn() public returns (shared(msg.sender) euint64 memory) {
+        return b;
     }
 }
 

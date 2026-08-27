@@ -191,6 +191,11 @@ fn scan_params<'ast>(
         let Some(shared) = decl.shared.as_ref() else {
             continue;
         };
+        if let Some(loc) = decl.data_location {
+            refused = true;
+            bad_data_location(out, decl.span, loc);
+            continue;
+        }
         if shared.has_recipient() {
             refused = true;
             bad_position(
@@ -358,6 +363,9 @@ fn scan_returns<'ast>(
     }
     let decl = returns[0];
     let shared = decl.shared.as_ref().expect("the only return carries it");
+    if let Some(loc) = decl.data_location {
+        return bad_data_location(out, decl.span, loc);
+    }
     match shared.recipient.as_ref() {
         None => {
             return bad_position(
@@ -710,6 +718,23 @@ fn scan_body<'ast>(out: &mut CheckedUnit, body: &'ast ast::Block<'ast>) {
 
     let mut search = Search { out };
     let _ = search.visit_block(body);
+}
+
+/// Refuses an explicit data location on a shared-marked declaration.
+///
+/// Encrypted types and their shared wire types are value types, so no location
+/// applies; plain Solidity rejects `euint64 calldata v` outright. Whole-
+/// declaration replacement in the lowerer would drop the keyword silently,
+/// which is exactly the "guess instead of refuse" §1.3 forbids.
+fn bad_data_location(out: &mut CheckedUnit, span: Span, loc: ast::DataLocation) {
+    bad_position(
+        out,
+        span,
+        format!(
+            "a shared-boundary declaration takes no data location: `{loc}` has no meaning on \
+             an encrypted value type (remove it)"
+        ),
+    );
 }
 
 fn wrong_place(out: &mut CheckedUnit, span: Span, place: &str) {

@@ -1625,6 +1625,10 @@ fn illegal_shared_positions_are_fhe1015() {
         // Shape of a shared input.
         "function g(in shared(msg.sender) euint32 s) external { a = s; }",
         "function g(in shared uint256 s) external { s; }",
+        // An encrypted type is a value type: no data location applies, and
+        // the declaration rewrite must not drop the keyword in silence.
+        "function g(in shared euint32 calldata s) external { a = s; }",
+        "function g(in shared euint32 memory s) external { a = s; }",
         // Kind, visibility, and mutability of a shared return.
         "function g() internal returns (shared(msg.sender) euint64) { return b; }",
         "function g() public view returns (shared(msg.sender) euint64) { return b; }",
@@ -1632,6 +1636,7 @@ fn illegal_shared_positions_are_fhe1015() {
         "function g() public returns (shared(msg.sender) euint64 out) { out = b; }",
         "function g() public returns (shared(msg.sender) euint64, uint256) { return (b, 1); }",
         "function g() public returns (shared(msg.sender) uint256) { return 1; }",
+        "function g() public returns (shared(msg.sender) euint64 memory) { return b; }",
         "address owner;\nfunction g() public returns (shared(owner) euint64) { return b; }",
         // Statement shape inside a shared-return function.
         "function g() public returns (shared(msg.sender) euint64) { return; }",
