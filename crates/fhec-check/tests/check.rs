@@ -1517,6 +1517,165 @@ fn no_precondition_leaves_the_sugar_untouched() {
     });
 }
 
+// ---- the shared boundary (spec §2.8) -----------------------------------------
+
+/// Wraps contract members in a bare unit, without the standard test contract.
+fn unit(members: &str) -> String {
+    format!(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract S {{\n\
+           euint32 a;\n\
+           euint64 b;\n\
+           uint256 plain;\n\
+         {members}\n\
+         }}\n"
+    )
+}
+
+fn shared_codes(members: &str) -> Vec<&'static str> {
+    with_checked(&[("t.fsol", &unit(members))], |c, _| {
+        c.diagnostics.iter().map(|d| d.code).collect()
+    })
+}
+
+#[test]
+fn shared_input_states_a_site_and_no_in_sugar_site() {
+    let src = unit("function g(in shared euint32 amount) public { a = amount; }");
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        // The §2.3 scan must not claim it: `in shared` is a different
+        // expansion with a different wire type.
+        assert!(c.sugar_sites.is_empty());
+        assert_eq!(c.shared_input_sites.len(), 1);
+        let s = &c.shared_input_sites[0];
+        assert_eq!(snip(s.param_span), "in shared euint32 amount");
+        assert_eq!(s.name, "amount");
+        assert_eq!(s.ty.solidity_name(), "euint32");
+        assert!(s.has_body);
+    });
+}
+
+#[test]
+fn shared_return_states_one_site_per_function_and_suppresses_r3() {
+    let src = unit(
+        "function g(bool c) public returns (shared(msg.sender) euint64) {\n\
+           if (c) { return b; }\n\
+           return b;\n\
+         }",
+    );
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.shared_return_sites.len(), 1);
+        let s = &c.shared_return_sites[0];
+        assert_eq!(snip(s.decl_span), "shared(msg.sender) euint64");
+        assert_eq!(s.ty.solidity_name(), "euint64");
+        assert_eq!(s.recipient, "msg.sender");
+        assert_eq!(s.return_exprs.len(), 2);
+        // §8.3 R3 must not also fire: the share call is the grant.
+        assert!(c.acl.returns.is_empty());
+    });
+}
+
+#[test]
+fn an_ordinary_encrypted_return_still_states_an_r3_fact() {
+    // Guards the suppression above against over-reach.
+    let src = unit("function g() public returns (euint64) { return b; }");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert!(c.shared_return_sites.is_empty());
+        assert_eq!(c.acl.returns.len(), 1);
+    });
+}
+
+#[test]
+fn a_bodiless_shared_declaration_states_a_site_with_no_returns() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        interface I {\n\
+          function g(in shared euint32 amount) external;\n\
+          function h() external returns (shared(msg.sender) euint64);\n\
+        }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.shared_input_sites.len(), 1);
+        assert!(!c.shared_input_sites[0].has_body);
+        assert_eq!(c.shared_return_sites.len(), 1);
+        assert!(c.shared_return_sites[0].return_exprs.is_empty());
+    });
+}
+
+#[test]
+fn illegal_shared_positions_are_fhe1015() {
+    for members in [
+        // Kind, visibility, and mutability of a shared input.
+        "function g(in shared euint32 amount) internal { a = amount; }",
+        "function g(in shared euint32 amount) private { a = amount; }",
+        "function g(in shared euint32 amount) public view { amount; }",
+        "function g(in shared euint32 amount) public pure { amount; }",
+        "constructor(in shared euint32 amount) { a = amount; }",
+        "modifier m(in shared euint32 amount) { _; }",
+        // The MVP mixing rule.
+        "function g(in shared euint32 s, in euint32 e) public { a = s; a = e; }",
+        "function g(in(p) shared euint32 s, bytes calldata p) public { a = s; p; }",
+        // Shape of a shared input.
+        "function g(in shared(msg.sender) euint32 s) public { a = s; }",
+        "function g(in shared uint256 s) public { s; }",
+        // Kind, visibility, and mutability of a shared return.
+        "function g() internal returns (shared(msg.sender) euint64) { return b; }",
+        "function g() public view returns (shared(msg.sender) euint64) { return b; }",
+        // Shape of a shared return.
+        "function g() public returns (shared(msg.sender) euint64 out) { out = b; }",
+        "function g() public returns (shared(msg.sender) euint64, uint256) { return (b, 1); }",
+        "function g() public returns (shared(msg.sender) uint256) { return 1; }",
+        "address owner;\nfunction g() public returns (shared(owner) euint64) { return b; }",
+        // Statement shape inside a shared-return function.
+        "function g() public returns (shared(msg.sender) euint64) { return; }",
+        "function g(bool c) public returns (shared(msg.sender) euint64) { if (c) return b; return b; }",
+        "function g() public returns (shared(msg.sender) euint64) { return b = b; }",
+    ] {
+        let got = shared_codes(members);
+        assert_eq!(got, ["FHE1015"], "members: {members}");
+        with_checked(&[("t.fsol", &unit(members))], |c, _| {
+            assert!(c.shared_input_sites.is_empty(), "members: {members}");
+            assert!(c.shared_return_sites.is_empty(), "members: {members}");
+        });
+    }
+}
+
+#[test]
+fn the_generated_wire_name_must_be_free() {
+    for members in [
+        "function g(in shared euint32 amount) public { uint256 amount_shared = 1; a = amount; amount_shared; }",
+        "function g(in shared euint32 amount, uint256 amount_shared) public { a = amount; amount_shared; }",
+    ] {
+        assert_eq!(shared_codes(members), ["FHE1016"], "members: {members}");
+    }
+}
+
+#[test]
+fn a_shared_return_must_return_exactly_its_declared_type() {
+    for members in [
+        // A different encrypted width.
+        "function g() public returns (shared(msg.sender) euint32) { return b; }",
+        // A plaintext value.
+        "function g() public returns (shared(msg.sender) euint64) { return plain; }",
+        // A value the checker cannot type (§1.3: refuse rather than guess).
+        "function g() public returns (shared(msg.sender) euint64) { return unknownFn(); }",
+    ] {
+        assert_eq!(shared_codes(members), ["FHE2012"], "members: {members}");
+    }
+}
+
+#[test]
+fn shared_stays_an_ordinary_identifier_in_the_checker_too() {
+    // §1.4: plain Solidity naming a variable `shared` produces no site and no
+    // diagnostic.
+    let members = "uint256 shared;\n\
+                   function g(uint256 shared_) public { shared = shared_; }";
+    assert!(shared_codes(members).is_empty());
+}
+
 // ---- helpers referenced from bodies ------------------------------------------
 
 // `unknownFn`, `stateWriterB`, `fhelperWrite`, `plainStateRead` are

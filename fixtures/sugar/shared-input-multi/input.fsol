@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// Several shared inputs do NOT batch: each handle was verified when it was
+// shared, so each receives on its own, in source parameter order (§2.8).
+contract SharedInputMulti {
+    euint32 a;
+    euint64 b;
+    ebool flag;
+
+    function settle(
+        in shared euint32 amount,
+        uint256 tag,
+        in shared euint64 total,
+        in shared ebool ok
+    ) external {
+        a = amount;
+        b = total;
+        flag = ok;
+        tag;
+    }
+}

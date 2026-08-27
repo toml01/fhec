@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// One member per illegal shared-boundary position or shape (spec §2.8).
+// Solar parses every one of them (allow-and-flag), so each must reach the
+// checker as FHE1015 rather than as a parse error.
+error SharedError(shared(msg.sender) euint64 v);
+
+contract SharedInputBadPosition {
+    euint64 b;
+
+    shared(msg.sender) euint64 stateVar;
+
+    event SharedEvent(shared(msg.sender) euint64 v);
+
+    constructor(in shared euint64 amount) {
+        b = amount;
+    }
+
+    function internalInput(in shared euint64 amount) internal {
+        b = amount;
+    }
+
+    function viewInput(in shared euint64 amount) public view {
+        amount;
+    }
+
+    function mixedInputs(in shared euint64 s, in euint64 e) public {
+        b = s;
+        b = e;
+    }
+
+    function boundBinder(in(proof) shared euint64 amount, bytes calldata proof) public {
+        b = amount;
+        proof;
+    }
+
+    function inputWithRecipient(in shared(msg.sender) euint64 amount) public {
+        b = amount;
+    }
+
+    function nonEncryptedInput(in shared uint256 amount) public {
+        amount;
+    }
+
+    modifier sharedModifier(in shared euint64 amount) {
+        _;
+    }
+}
+
+// Return-side shapes. Kept in a second contract so the spans of the cases
+// above do not move when this one grows.
+contract SharedReturnBadPosition {
+    euint64 b;
+    address owner;
+
+    function namedReturn() public returns (shared(msg.sender) euint64 out) {
+        out = b;
+    }
+
+    function tupleReturn() public returns (shared(msg.sender) euint64, uint256) {
+        return (b, 1);
+    }
+
+    function otherRecipient() public returns (shared(owner) euint64) {
+        return b;
+    }
+
+    function viewReturn() public view returns (shared(msg.sender) euint64) {
+        return b;
+    }
+
+    function internalReturn() internal returns (shared(msg.sender) euint64) {
+        return b;
+    }
+
+    function nonEncryptedReturn() public returns (shared(msg.sender) uint256) {
+        return 1;
+    }
+
+    function bareReturn() public returns (shared(msg.sender) euint64) {
+        return;
+    }
+
+    function bracelessReturn(bool c) public returns (shared(msg.sender) euint64) {
+        if (c) return b;
+        return b;
+    }
+
+    function assigningReturn() public returns (shared(msg.sender) euint64) {
+        return b = b;
+    }
+}

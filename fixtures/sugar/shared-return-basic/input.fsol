@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A shared return replaces the §8.3 R3 `allowTransient` grant: the share call
+// directs the handle at the caller, so no R3 insertion is made (§2.8).
+contract SharedReturnBasic {
+    euint64 balance;
+
+    function take() public returns (shared(msg.sender) euint64) {
+        return balance;
+    }
+
+    function pick(bool which) external returns (shared(msg.sender) euint64) {
+        if (which) {
+            return balance;
+        }
+        return balance;
+    }
+}

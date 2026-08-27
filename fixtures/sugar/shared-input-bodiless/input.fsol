@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A bodiless declaration rewrites its signature only (§2.8, §2.3 restriction
+// 3): the wire types change, and no receive statement is generated.
+interface ISharedInputBodiless {
+    function deposit(in shared euint32 amount) external;
+
+    function peek() external returns (shared(msg.sender) euint64);
+}
+
+abstract contract SharedInputBodiless {
+    function withdraw(
+        in shared euint64 amount,
+        uint256 tag
+    ) public virtual returns (shared(msg.sender) euint64);
+}

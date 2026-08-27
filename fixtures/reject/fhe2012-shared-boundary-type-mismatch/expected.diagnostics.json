@@ -1,0 +1,47 @@
+[
+  {
+    "code": "FHE2012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 650,
+      "end_byte": 654,
+      "start_line": 20,
+      "start_col": 16,
+      "end_line": 20,
+      "end_col": 20
+    },
+    "message": "this function shares `euint32`, but the returned expression is `euint64`",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE2012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 749,
+      "end_byte": 754,
+      "start_line": 24,
+      "start_col": 16,
+      "end_line": 24,
+      "end_col": 21
+    },
+    "message": "this function shares `euint64`, but the returned expression is a plaintext value",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE2012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 850,
+      "end_byte": 862,
+      "start_line": 28,
+      "start_col": 16,
+      "end_line": 28,
+      "end_col": 28
+    },
+    "message": "this function shares `euint64`, but the returned expression is of a type the checker cannot prove is that encrypted type",
+    "rule": "§2.8"
+  }
+]

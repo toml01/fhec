@@ -29,7 +29,7 @@ fixtures/<area>/<case-name>/
 | `operators/` | golden | §4 operator lowering + §3.3 coercions |
 | `select/` | golden | §5.2 if→select branch versioning |
 | `acl/` | golden | §8 R1/R2/R3 insertion, dedupe, suggest mode |
-| `sugar/` | golden | §2.3 `in` parameter expansion and §2.7 `precondition` blocks |
+| `sugar/` | golden | §2.3 `in` parameter expansion, §2.7 `precondition` blocks, §2.8 shared boundary |
 | `imports/` | golden | §2.6 `.fsol` import-specifier rewriting |
 | `contracts/` | golden | full-contract integration (EncryptedCounter) |
 | `typing/` | rejection | one fixture per FHE2xxx code |

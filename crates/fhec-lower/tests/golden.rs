@@ -595,6 +595,216 @@ fn sugar_binder_expands_a_constructor_parameter_list() {
 }
 
 // ---------------------------------------------------------------------------
+// The shared boundary (spec §2.8)
+// ---------------------------------------------------------------------------
+
+/// Wraps contract members in a bare unit for shared-boundary goldens.
+fn shared_unit(members: &str) -> String {
+    format!(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface IVault {{\n\
+         \x20   function pull(euint64 v) external returns (euint64);\n\
+         }}\n\
+         \n\
+         contract S {{\n\
+         \x20   euint32 a;\n\
+         \x20   euint64 b;\n\
+         \x20   euint64 c;\n\
+         \x20   IVault vault;\n\
+         {members}\
+         }}\n"
+    )
+}
+
+fn shared_golden(members_in: &str, members_out: &str) {
+    golden(&shared_unit(members_in), &shared_unit(members_out));
+}
+
+#[test]
+fn shared_input_receives_at_body_entry() {
+    shared_golden(
+        "\x20   function setA(in shared euint32 amount, uint256 tag) external {\n\
+         \x20       a = amount;\n\
+         \x20       tag;\n\
+         \x20   }\n",
+        "\x20   function setA(sharedEuint32 amount_shared, uint256 tag) external {\n\
+         \x20       euint32 amount = FHE.receiveEuint32Param(amount_shared);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       tag;\n\
+         \x20   }\n",
+    );
+}
+
+#[test]
+fn several_shared_inputs_receive_one_by_one_in_parameter_order() {
+    // Unlike external inputs (§2.3), shared handles carry no input proof, so
+    // there is no batch to verify: each receives on its own.
+    shared_golden(
+        "\x20   function set(in shared euint64 second, in shared euint32 first) external {\n\
+         \x20       b = second;\n\
+         \x20       a = first;\n\
+         \x20   }\n",
+        "\x20   function set(sharedEuint64 second_shared, sharedEuint32 first_shared) external {\n\
+         \x20       euint64 second = FHE.receiveEuint64Param(second_shared);\n\
+         \x20       euint32 first = FHE.receiveEuint32Param(first_shared);\n\
+         \x20       b = second;\n\
+         \x20       FHE.allowThis(b);\n\
+         \x20       FHE.allowSender(b);\n\
+         \x20       a = first;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n",
+    );
+}
+
+#[test]
+fn shared_return_wraps_in_place_and_emits_no_r3_grant() {
+    shared_golden(
+        "\x20   function take() public returns (shared(msg.sender) euint64) {\n\
+         \x20       return b;\n\
+         \x20   }\n",
+        "\x20   function take() public returns (sharedEuint64) {\n\
+         \x20       return FHE.shareEuint64(b, msg.sender);\n\
+         \x20   }\n",
+    );
+}
+
+#[test]
+fn shared_return_lowers_nested_operators_and_shares_once() {
+    shared_golden(
+        "\x20   function take() public returns (shared(msg.sender) euint64) {\n\
+         \x20       return b + c;\n\
+         \x20   }\n",
+        "\x20   function take() public returns (sharedEuint64) {\n\
+         \x20       return FHE.shareEuint64(FHE.add(b, c), msg.sender);\n\
+         \x20   }\n",
+    );
+}
+
+#[test]
+fn shared_return_keeps_the_r2_grant() {
+    // The §8.2 R2 rule owns the `try` statement and inserts its grant before
+    // it; the share wrap brackets the returned expression inside the clause
+    // block. Neither displaces the other, and the grant survives.
+    shared_golden(
+        "\x20   function drain() public returns (shared(msg.sender) euint64) {\n\
+         \x20       try vault.pull(b) returns (euint64 pulled) {\n\
+         \x20           return pulled;\n\
+         \x20       } catch {\n\
+         \x20           return c;\n\
+         \x20       }\n\
+         \x20   }\n",
+        "\x20   function drain() public returns (sharedEuint64) {\n\
+         \x20       FHE.allowTransient(b, address(vault));\n\
+         \x20       try vault.pull(b) returns (euint64 pulled) {\n\
+         \x20           return FHE.shareEuint64(pulled, msg.sender);\n\
+         \x20       } catch {\n\
+         \x20           return FHE.shareEuint64(c, msg.sender);\n\
+         \x20       }\n\
+         \x20   }\n",
+    );
+}
+
+#[test]
+fn shared_return_evaluates_its_expression_once() {
+    // The wrap never hoists and re-reads, so a call in the returned
+    // expression appears exactly once in the output.
+    let members = "\x20   uint256 reads;\n\
+                   \x20   function fetch() internal returns (euint64 out) {\n\
+                   \x20       reads += 1;\n\
+                   \x20       out = b;\n\
+                   \x20   }\n\
+                   \x20   function take() public returns (shared(msg.sender) euint64) {\n\
+                   \x20       return fetch();\n\
+                   \x20   }\n";
+    let out = transpile(&[("t.fsol", &shared_unit(members))]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("        return FHE.shareEuint64(fetch(), msg.sender);\n"),
+        "output: {text}"
+    );
+    // Twice in the file: the declaration and the one call site.
+    assert_eq!(text.matches("fetch()").count(), 2, "output: {text}");
+    assert_eq!(
+        text.matches("FHE.shareEuint64").count(),
+        1,
+        "output: {text}"
+    );
+}
+
+#[test]
+fn a_bodiless_shared_declaration_rewrites_its_signature_only() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface I {\n\
+         \x20   function set(in shared euint32 amount) external;\n\
+         \x20   function take() external returns (shared(msg.sender) euint64);\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface I {\n\
+         \x20   function set(sharedEuint32 amount_shared) external;\n\
+         \x20   function take() external returns (sharedEuint64);\n\
+         }\n",
+    );
+}
+
+#[test]
+fn explicit_share_and_receive_calls_are_a_no_op() {
+    // §1.4: plain CoFHE Solidity that crosses the boundary by hand carries no
+    // dialect marker, so the output is the input byte for byte.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract Explicit {\n\
+        \x20   euint64 balance;\n\
+        \n\
+        \x20   function set(sharedEuint64 amount_shared) public {\n\
+        \x20       euint64 amount = FHE.receiveEuint64Param(amount_shared);\n\
+        \x20       balance = amount;\n\
+        \x20       FHE.allowThis(balance);\n\
+        \x20       FHE.allowSender(balance);\n\
+        \x20   }\n\
+        \n\
+        \x20   function take() public returns (sharedEuint64) {\n\
+        \x20       return FHE.shareEuint64(balance, msg.sender);\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.files[0].1, src);
+    assert!(
+        !out.any_patches,
+        "a plain CoFHE source must produce no patch"
+    );
+}
+
+#[test]
+fn shared_stays_an_ordinary_identifier_through_lowering() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract Shared {\n\
+        \x20   uint256 shared;\n\
+        \n\
+        \x20   function bump(uint256 shared_) public returns (uint256) {\n\
+        \x20       shared = shared + shared_;\n\
+        \x20       return shared;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.files[0].1, src);
+    assert!(!out.any_patches);
+}
+
+// ---------------------------------------------------------------------------
 // `precondition` blocks (spec §2.7)
 // ---------------------------------------------------------------------------
 
