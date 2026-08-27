@@ -1126,6 +1126,48 @@ fn precondition_rejects_state_changing_and_member_calls() {
     );
 }
 
+/// `view`/`pure` forbids state access, not memory mutation: a `pure` callee
+/// may still write through a `memory` array/struct/`bytes`/`string`
+/// argument, letting an effect escape the block by proxy instead of through
+/// a direct write. `calldata` is read-only, so a callee that only takes
+/// `calldata` reference parameters stays permitted.
+#[test]
+fn precondition_rejects_a_call_that_can_write_through_a_memory_argument() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(uint256[] memory list, in euint32 amount) public returns (uint256) {\n\
+            precondition {\n\
+              require(list.length > 0, \"empty\");\n\
+              zap(list);\n\
+            }\n\
+            enc = amount;\n\
+            return list[0];\n\
+          }\n\
+          function zap(uint256[] memory a) internal pure { a[0] = 42; }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015"]);
+}
+
+#[test]
+fn precondition_permits_a_call_that_only_takes_calldata_arguments() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          error Bad();\n\
+          function g(uint256[] calldata list, in euint32 amount) public {\n\
+            precondition {\n\
+              if (!nonEmpty(list)) revert Bad();\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+          function nonEmpty(uint256[] calldata a) internal pure returns (bool) { return a.length > 0; }\n\
+        }\n";
+    assert_eq!(error_codes(src), Vec::<String>::new());
+}
+
 #[test]
 fn precondition_rejects_imported_and_unresolved_calls() {
     let src = "pragma solidity ^0.8.25;\n\

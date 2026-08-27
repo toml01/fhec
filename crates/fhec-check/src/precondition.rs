@@ -720,6 +720,9 @@ impl<'ast> FnChecker<'_, 'ast> {
                     } else if let Some(message) = self.unusable_return(&fids) {
                         self.pre_reject(e.span, message);
                         return;
+                    } else if let Some(message) = self.mutable_memory_param(&fids) {
+                        self.pre_reject(e.span, message);
+                        return;
                     } else {
                         true
                     }
@@ -797,6 +800,34 @@ impl<'ast> FnChecker<'_, 'ast> {
             "this call has a return type the checker cannot prove is plaintext; a \
              `precondition` block may only use values it can prove are plaintext"
                 .to_string()
+        })
+    }
+
+    /// Whether any candidate of an overload group takes a `memory` reference
+    /// parameter.
+    ///
+    /// `view`/`pure` only forbid state access, not memory mutation: a `pure`
+    /// callee may still write through a `memory` array/struct/`bytes`/
+    /// `string` argument, letting an effect escape the block by proxy
+    /// instead of through a direct write. `calldata` is read-only and
+    /// `storage`/`transient` writes are already state changes `view`/`pure`
+    /// forbid outright, so only `memory` needs this guard.
+    fn mutable_memory_param(&self, fids: &[fhec_bind::FunctionId]) -> Option<String> {
+        fids.iter().find_map(|&f| {
+            self.unit
+                .function(f)
+                .ast
+                .header
+                .parameters
+                .iter()
+                .find_map(|p| {
+                    (p.data_location == Some(ast::DataLocation::Memory)).then(|| {
+                        "this call takes a `memory` reference parameter; a `precondition` block \
+                     may not call anything that could write through it, since that write \
+                     would escape the block the same way a direct write would"
+                            .to_string()
+                    })
+                })
         })
     }
 
