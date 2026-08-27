@@ -37,3 +37,20 @@ contract PreconditionLocals {
         return precondition;
     }
 }
+
+/* A statement may begin with `precondition` followed immediately by `{` and
+   still be an ordinary call: `precondition{value: 1}()` passes call options
+   to a function pointer. The block production must not claim it. */
+contract PreconditionCallOptions {
+    event Paid(uint256 amount);
+
+    function pay() external payable {
+        emit Paid(msg.value);
+    }
+
+    function callWithOptions() external {
+        function() external payable precondition = this.pay;
+        precondition{value: 1}();
+        precondition{gas: 100000, value: 2}();
+    }
+}

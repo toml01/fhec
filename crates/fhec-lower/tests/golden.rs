@@ -676,25 +676,65 @@ fn precondition_sits_between_modifier_prelude_and_body() {
 }
 
 #[test]
+fn precondition_guards_a_constructor() {
+    // A constructor is a legal host (spec §2.7 legality rule 3): the
+    // materializers land after the guard there too.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   error Denied();\n\
+         \x20   constructor(bool ok, in euint32 seed) {\n\
+         \x20       precondition {\n\
+         \x20           if (!ok) revert Denied();\n\
+         \x20       }\n\
+         \x20       a = seed;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   error Denied();\n\
+         \x20   constructor(bool ok, externalEuint32 seed_input, \
+         bytes memory inputProof) {\n\
+         \x20       {\n\
+         \x20           if (!ok) revert Denied();\n\
+         \x20       }\n\
+         \x20       euint32 seed = FHE.asEuint32(seed_input, inputProof);\n\
+         \x20       a = seed;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
 fn precondition_refusals_produce_no_patches() {
     // A checker error refuses the whole unit: nothing is lowered.
-    let out = transpile_with(
-        &[(
-            "t.fsol",
-            "pragma solidity ^0.8.25;\n\
-             import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
-             contract C {\n\
-             \x20   euint32 a;\n\
-             \x20   function setA(in euint32 amount) external {\n\
-             \x20       precondition { amount; }\n\
-             \x20       a = amount;\n\
-             \x20   }\n\
-             }\n",
-        )],
-        AclMode::Insert,
-    );
+    let out = transpile_with(&[("t.fsol", REFUSED_PRECONDITION)], AclMode::Insert);
     assert_eq!(out.check_error_codes, ["FHE3014"]);
+    // The point of the test: a refused unit is not rewritten at all. Neither
+    // the marker nor the `in` parameter may be touched.
+    assert!(!out.any_patches, "a refused unit must produce no patches");
+    assert_eq!(out.files[0].1, REFUSED_PRECONDITION);
 }
+
+/// The source of [`precondition_refusals_produce_no_patches`], so the test can
+/// assert the output is byte-identical to it.
+const REFUSED_PRECONDITION: &str = "pragma solidity ^0.8.25;\n\
+                    import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+                    contract C {\n\
+                    \x20   euint32 a;\n\
+                    \x20   function setA(in euint32 amount) external {\n\
+                    \x20       precondition { amount; }\n\
+                    \x20       a = amount;\n\
+                    \x20   }\n\
+                    }\n";
 
 // ---------------------------------------------------------------------------
 // if → select (spec §5)
