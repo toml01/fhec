@@ -358,29 +358,16 @@ impl TargetProfile for CofheProfile {
         Ok(ty.shared_name().to_string())
     }
 
-    fn render_share(
-        &self,
-        ty: EType,
-        handle: &str,
-        recipient: &str,
-    ) -> Result<String, ProfileError> {
+    fn share_fn(&self, ty: EType) -> Result<String, ProfileError> {
         self.shared_ok(ty)?;
         // FHE.sol: `share{Suffix}(eT ctHash, address receiver)`.
-        Ok(format!(
-            "{}.share{}({handle}, {recipient})",
-            self.lib,
-            ty.suffix()
-        ))
+        Ok(format!("{}.share{}", self.lib, ty.suffix()))
     }
 
     fn render_receive_param(&self, ty: EType, wire: &str) -> Result<String, ProfileError> {
         self.shared_ok(ty)?;
         // FHE.sol: `receive{Suffix}Param(shared{Suffix} shared)`.
-        Ok(format!(
-            "{}.receive{}Param({wire})",
-            self.lib,
-            ty.suffix()
-        ))
+        Ok(format!("{}.receive{}Param({wire})", self.lib, ty.suffix()))
     }
 
     fn conversion_fn(&self, ty: EType) -> String {
@@ -452,9 +439,8 @@ mod tests {
             "sharedEuint64"
         );
         assert_eq!(
-            p.render_share(EType::Euint(EWidth::W64), "x", "msg.sender")
-                .unwrap(),
-            "FHE.shareEuint64(x, msg.sender)"
+            p.share_fn(EType::Euint(EWidth::W64)).unwrap(),
+            "FHE.shareEuint64"
         );
         assert_eq!(
             p.render_receive_param(EType::Euint(EWidth::W64), "x_shared")
@@ -468,7 +454,7 @@ mod tests {
         );
         for t in EType::ALL {
             assert!(p.shared_wire_type(t).is_ok(), "{t} has no shared boundary");
-            assert!(p.render_share(t, "h", "r").is_ok());
+            assert!(p.share_fn(t).is_ok());
             assert!(p.render_receive_param(t, "w").is_ok());
         }
     }
@@ -485,7 +471,7 @@ mod tests {
             p.shared_wire_type(gone),
             Err(ProfileError::NoSharedBoundary { ty: gone })
         );
-        assert!(p.render_share(gone, "h", "r").is_err());
+        assert!(p.share_fn(gone).is_err());
         assert!(p.render_receive_param(gone, "w").is_err());
         assert!(p.shared_wire_type(EType::Ebool).is_ok());
     }

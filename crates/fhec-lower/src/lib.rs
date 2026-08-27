@@ -205,9 +205,16 @@ pub fn lower<'ast>(
                 }
             }
 
-            // Sugar expansion is per-file (parameter lists, not bodies).
+            // Sugar and shared-boundary expansion are per-file (signatures,
+            // not bodies).
             if !failed {
                 if let Err(f) = pass_ops::expand_sugar(&ctx, file_idx, &mut file_plan) {
+                    push_failure(&diags, &f);
+                    failed = true;
+                }
+            }
+            if !failed {
+                if let Err(f) = pass_ops::expand_shared(&ctx, file_idx, &mut file_plan) {
                     push_failure(&diags, &f);
                     failed = true;
                 }

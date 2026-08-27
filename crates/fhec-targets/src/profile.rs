@@ -164,15 +164,16 @@ pub trait TargetProfile {
     /// three do.
     fn shared_wire_type(&self, ty: EType) -> Result<String, ProfileError>;
 
-    /// Renders the share call of the shared boundary (spec §2.8), e.g.
-    /// `"FHE.shareEuint32(handle, msg.sender)"`. See
+    /// The fully qualified share function of the shared boundary (spec §2.8),
+    /// e.g. `"FHE.shareEuint32"`. It takes the handle and the recipient
+    /// address, in that order.
+    ///
+    /// This is the callee alone, not a rendered call: the shared-return
+    /// lowering brackets the returned expression with two zero-width
+    /// insertions instead of replacing it, so that ordinary operator lowering
+    /// and the R2 grants keep working inside it. See
     /// [`TargetProfile::shared_wire_type`] for the error case.
-    fn render_share(
-        &self,
-        ty: EType,
-        handle: &str,
-        recipient: &str,
-    ) -> Result<String, ProfileError>;
+    fn share_fn(&self, ty: EType) -> Result<String, ProfileError>;
 
     /// Renders the parameter-receive call of the shared boundary (spec §2.8),
     /// e.g. `"FHE.receiveEuint32Param(amount_shared)"`. See

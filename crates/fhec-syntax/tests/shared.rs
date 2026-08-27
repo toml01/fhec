@@ -27,7 +27,10 @@ fn input_form_records_a_bare_marker() {
     assert_eq!(u.proof, None);
     assert_eq!(u.name.as_deref(), Some("amount"));
     assert_eq!(u.function.as_deref(), Some("f"));
-    assert_eq!(u.position, SharedPosition::Parameters(FunctionKind::Function));
+    assert_eq!(
+        u.position,
+        SharedPosition::Parameters(FunctionKind::Function)
+    );
 }
 
 #[test]
@@ -77,8 +80,14 @@ fn illegal_positions_still_parse_and_record() {
             "modifier m(in shared euint64 a) { _; }",
             SharedPosition::Parameters(FunctionKind::Modifier),
         ),
-        ("event E(shared(msg.sender) euint64 a);", SharedPosition::Event),
-        ("error Bad(shared(msg.sender) euint64 a);", SharedPosition::Error),
+        (
+            "event E(shared(msg.sender) euint64 a);",
+            SharedPosition::Event,
+        ),
+        (
+            "error Bad(shared(msg.sender) euint64 a);",
+            SharedPosition::Error,
+        ),
         ("shared(msg.sender) euint64 s;", SharedPosition::StateVar),
     ];
     for (member, position) in cases {

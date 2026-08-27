@@ -332,25 +332,7 @@ fn expand_function_sugar(
             "sugar site has a body but no body span (internal)",
         );
     };
-    let body_range = ctx.range(body_span);
-    // Insert right after the opening `{`, indented like the first body
-    // line (or the body's line + 4 when the body is empty)...
-    let brace = body_range.start;
-    debug_assert_eq!(&file_text[brace..brace + 1], "{");
-    let indent = body_indent(file_text, body_range.start, body_range.end);
-    // ...unless the function opens with a `precondition` block (spec §2.7):
-    // then the conversions go after that block's closing `}`, so the author's
-    // plaintext guard runs before proof verification. The indent is unchanged
-    // — the block is the body's first statement, so it sets that indent.
-    let at = match ctx.preconditions_by_fn.get(&first.function) {
-        Some(&i) => {
-            let site = &ctx.checked.precondition_sites[i];
-            let block = ctx.range(site.block_span);
-            debug_assert_eq!(&file_text[block.end - 1..block.end], "}");
-            block.end
-        }
-        None => brace + 1,
-    };
+    let (at, indent) = materialization_point(ctx, first.function, first.file, body_span);
 
     let statements: Vec<String> = if let [site] = sites {
         let input = format!("{}_input", site.name);
@@ -399,6 +381,197 @@ fn expand_function_sugar(
         )
         .declaration(),
     );
+    Ok(())
+}
+
+/// Where a function's generated encrypted-input materializers go, and the
+/// indentation they take (spec §2.3 *materialization point*, §2.7).
+///
+/// The point is right after the body's opening `{`, unless the body opens with
+/// a `precondition` block: then it moves after that block's closing `}`, so
+/// the author's plaintext guard runs before any generated conversion. The
+/// indent is unchanged either way — the block is the body's first statement,
+/// so it sets that indent.
+fn materialization_point(
+    ctx: &Ctx<'_, '_>,
+    function: FunctionId,
+    file: fhec_bind::FileId,
+    body_span: Span,
+) -> (usize, String) {
+    let file_text = ctx.text(file);
+    let body_range = ctx.range(body_span);
+    let brace = body_range.start;
+    debug_assert_eq!(&file_text[brace..brace + 1], "{");
+    let indent = body_indent(file_text, body_range.start, body_range.end);
+    let at = match ctx.preconditions_by_fn.get(&function) {
+        Some(&i) => {
+            let site = &ctx.checked.precondition_sites[i];
+            let block = ctx.range(site.block_span);
+            debug_assert_eq!(&file_text[block.end - 1..block.end], "}");
+            block.end
+        }
+        None => brace + 1,
+    };
+    (at, indent)
+}
+
+// ---------------------------------------------------------------------------
+// The shared boundary (spec §2.8)
+// ---------------------------------------------------------------------------
+
+/// The fixed generated wire-parameter suffix of a shared input. The checker
+/// guarantees it is collision-free (FHE1016).
+const WIRE_SUFFIX: &str = "_shared";
+
+/// Expands every shared-boundary site of one file (spec §2.8).
+///
+/// Two rewrites, both driven purely by checker-approved sites:
+///
+/// 1. **Shared inputs.** Each `in shared eT name` parameter becomes
+///    `sharedT name_shared`, and one `eT name = FHE.receiveTParam(name_shared);`
+///    per parameter — in source parameter order — is inserted at the
+///    materialization point. Unlike external inputs these do not batch: each
+///    receive stands alone, because a shared handle carries no input proof.
+///
+/// 2. **Shared returns.** The `returns (shared(msg.sender) eT)` declaration
+///    becomes `sharedT`, and every returned expression is bracketed with
+///    `FHE.shareT(` … `, msg.sender)`.
+///
+/// The return wrap is deliberately **two zero-width insertions at the
+/// expression's own boundaries**, never a replacement of the statement or of
+/// the expression. That is what makes it compose with everything else without
+/// claiming statement ownership:
+///
+/// - the expression appears exactly once in the output, so single evaluation
+///   holds by construction and no hoist is needed;
+/// - ordinary operator lowering (pass 1) still replaces the expression span or
+///   spans inside it — a replacement at `[start, end)` sorts *after* an
+///   insertion at `start` and *before* an insertion at `end`, so the wrap ends
+///   up around the lowered form;
+/// - an R2 `allowTransient` grant for an external call inside the expression
+///   is inserted before the whole statement and its argument hoists replace
+///   spans strictly inside the expression, so no grant is displaced or lost;
+/// - no statement is inserted or moved, so a `return` cannot be pushed out of
+///   the conditional it belongs to.
+///
+/// The checker additionally refuses a shared `return` that is a braceless
+/// branch body or that assigns inside its expression, which keeps the
+/// construct clear of the two known composition defects in the ACL pass.
+pub(crate) fn expand_shared(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan) -> Result<()> {
+    expand_shared_inputs(ctx, file_idx, plan)?;
+    expand_shared_returns(ctx, file_idx, plan)
+}
+
+fn expand_shared_inputs(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan) -> Result<()> {
+    let mut sites: Vec<&fhec_check::SharedInputSite> = ctx
+        .checked
+        .shared_input_sites
+        .iter()
+        .filter(|s| s.file.index() == file_idx)
+        .collect();
+    sites.sort_by_key(|s| ctx.range(s.param_span).start);
+
+    // Parameter lists never interleave, so sorting by parameter position makes
+    // each function's sites contiguous and keeps them in source order.
+    let mut groups: Vec<Vec<&fhec_check::SharedInputSite>> = Vec::new();
+    for site in sites {
+        match groups.last_mut() {
+            Some(group) if group[0].function == site.function => group.push(site),
+            _ => groups.push(vec![site]),
+        }
+    }
+
+    for group in groups {
+        let first = group[0];
+        let mut receives: Vec<String> = Vec::with_capacity(group.len());
+        for site in &group {
+            let wire = ctx
+                .profile
+                .shared_wire_type(site.ty)
+                .map_err(|e| internal(site.param_span, e))?;
+            let wire_name = format!("{}{WIRE_SUFFIX}", site.name);
+            plan.push(Patch::replace(
+                ctx.range(site.param_span),
+                format!("{wire} {wire_name}"),
+                Provenance::new("§2.8 shared-input-param", ctx.range(site.param_span)),
+            ));
+            let call = ctx
+                .profile
+                .render_receive_param(site.ty, &wire_name)
+                .map_err(|e| internal(site.param_span, e))?;
+            receives.push(format!(
+                "{} {} = {call};",
+                site.ty.solidity_name(),
+                site.name
+            ));
+        }
+
+        // A bodiless declaration rewrites its signature only (§2.3 rule 3).
+        if !first.has_body {
+            continue;
+        }
+        let Some(body_span) = first.body_span else {
+            return fail(
+                first.param_span,
+                "shared-input site has a body but no body span (internal)",
+            );
+        };
+        let (at, indent) = materialization_point(ctx, first.function, first.file, body_span);
+        let mut prelude = String::new();
+        for stmt in &receives {
+            prelude.push('\n');
+            prelude.push_str(&indent);
+            prelude.push_str(stmt);
+        }
+        // Tagged as a declaration for the same reason the §2.3 prelude is: a
+        // patch that reads one of these handles may anchor at this very offset.
+        plan.push(
+            Patch::insert(
+                at,
+                prelude,
+                Provenance::new("§2.8 shared-input-receive", ctx.range(first.param_span)),
+            )
+            .declaration(),
+        );
+    }
+    Ok(())
+}
+
+fn expand_shared_returns(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan) -> Result<()> {
+    for site in ctx
+        .checked
+        .shared_return_sites
+        .iter()
+        .filter(|s| s.file.index() == file_idx)
+    {
+        let wire = ctx
+            .profile
+            .shared_wire_type(site.ty)
+            .map_err(|e| internal(site.decl_span, e))?;
+        plan.push(Patch::replace(
+            ctx.range(site.decl_span),
+            wire,
+            Provenance::new("§2.8 shared-return-type", ctx.range(site.decl_span)),
+        ));
+
+        let share = ctx
+            .profile
+            .share_fn(site.ty)
+            .map_err(|e| internal(site.decl_span, e))?;
+        for expr_span in &site.return_exprs {
+            let range = ctx.range(*expr_span);
+            plan.push(Patch::insert(
+                range.start,
+                format!("{share}("),
+                Provenance::new("§2.8 shared-return-share", range),
+            ));
+            plan.push(Patch::insert(
+                range.end,
+                format!(", {})", site.recipient),
+                Provenance::new("§2.8 shared-return-share", range),
+            ));
+        }
+    }
     Ok(())
 }
 
