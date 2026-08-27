@@ -934,6 +934,53 @@ fn precondition_rejects_the_managed_encrypted_input() {
     );
 }
 
+/// The bound proof parameter is an ordinary `bytes` parameter: the author
+/// declares it, it exists on entry, and nothing is generated for it. Only the
+/// encrypted input itself is dialect-managed. A guard may therefore read the
+/// proof while the input stays refused (FHE3014).
+#[test]
+fn precondition_reads_a_bound_proof_but_not_the_bound_input() {
+    let bound = |pre: &str| {
+        format!(
+            "pragma solidity ^0.8.25;\n\
+             import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+             contract B {{\n\
+               euint32 enc;\n\
+               error NoProof();\n\
+               function g(in(proof) euint32 amount, bytes calldata proof) public {{\n\
+                 precondition {{\n{pre}\n}}\n\
+                 enc = amount;\n\
+               }}\n\
+             }}\n"
+        )
+    };
+
+    // The proof is readable: as a whole value, and through `.length`.
+    let ok = bound(
+        "if (proof.length == 0) revert NoProof();\n\
+         require(proof.length > 64, \"short proof\");\n\
+         proof;",
+    );
+    assert_eq!(error_codes(&ok), Vec::<String>::new());
+    with_checked(&[("t.fsol", &ok)], |c, _| {
+        assert_eq!(c.precondition_sites.len(), 1);
+        assert_eq!(c.sugar_sites.len(), 1);
+        assert_eq!(c.sugar_sites[0].proof.as_deref(), Some("proof"));
+    });
+
+    // The encrypted input it binds is still refused, in the same function.
+    let bad = bound("require(proof.length > 64, \"short proof\");\namount;");
+    assert_eq!(error_codes(&bad), ["FHE3014"]);
+    with_checked(&[("t.fsol", &bad)], |c, snip| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3014")
+            .expect("FHE3014");
+        assert_eq!(snip(d.span), "amount");
+    });
+}
+
 /// Both codes apply to `amount == enc`, and FHE3014 is the useful one: it
 /// names the input and says why it does not exist yet.
 #[test]
