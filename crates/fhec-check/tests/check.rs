@@ -674,6 +674,133 @@ fn sugar_error_cases() {
     // preserved), so no FHE1012 case exists for locals.
 }
 
+// ---- §2.3 explicit proof binder --------------------------------------------
+
+#[test]
+fn binder_resolves_a_same_list_bytes_parameter() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           function f(in(sig) euint32 x, bytes calldata sig, bytes calldata data) public {\n\
+             x; sig; data;\n\
+           }\n\
+           function g(in(p) ebool a, bytes memory p, in(p) eaddress b) public { a; b; p; }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.sugar_sites.len(), 3);
+        assert_eq!(c.sugar_sites[0].proof.as_deref(), Some("sig"));
+        assert_eq!(snip(c.sugar_sites[0].in_span), "in");
+        assert_eq!(snip(c.sugar_sites[0].param_span), "in(sig) euint32 x");
+        assert_eq!(c.sugar_sites[1].proof.as_deref(), Some("p"));
+        assert_eq!(c.sugar_sites[2].proof.as_deref(), Some("p"));
+    });
+}
+
+#[test]
+fn binder_does_not_reserve_the_appended_proof_name() {
+    // The bound form appends nothing, so an author parameter called
+    // `inputProof` is the normal case, not the FHE1011 collision.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           function f(in(inputProof) euint32 x, bytes memory inputProof) public { x; inputProof; }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.sugar_sites.len(), 1);
+        assert_eq!(c.sugar_sites[0].proof.as_deref(), Some("inputProof"));
+    });
+}
+
+#[test]
+fn binder_still_guards_the_generated_raw_input_name() {
+    // The binder introduces no new fixed generated name, but `<name>_input`
+    // is still generated, so a bound proof spelled that way collides.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           function f(in(x_input) euint32 x, bytes memory x_input) public { x; x_input; }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(codes, vec!["FHE1011"]);
+    });
+}
+
+#[test]
+fn binder_form_is_decided_per_function() {
+    // The two forms may not mix in one list, but two functions of one
+    // contract may each pick their own.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           function implicit(in euint32 x) public { x; }\n\
+           function explicit(in(sig) euint32 x, bytes calldata sig) public { x; sig; }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        let proofs: Vec<Option<&str>> = c.sugar_sites.iter().map(|s| s.proof.as_deref()).collect();
+        assert_eq!(proofs, vec![None, Some("sig")]);
+    });
+}
+
+#[test]
+fn binder_bodiless_declaration_states_a_site() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         interface I { function deposit(in(p) euint32 a, bytes calldata p) external; }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.sugar_sites.len(), 1);
+        assert!(!c.sugar_sites[0].has_body);
+        assert_eq!(c.sugar_sites[0].proof.as_deref(), Some("p"));
+    });
+}
+
+#[test]
+fn binder_error_cases_state_no_site() {
+    let head = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n";
+    // FHE1013: the binder names nothing in this list.
+    let cases: &[(&str, &str)] = &[
+        (
+            "contract C { function f(in(sig) euint32 x, bytes calldata other) public { x; other; } }",
+            "FHE1013",
+        ),
+        // FHE1013: named parameter is not `bytes`.
+        (
+            "contract C { function f(in(sig) euint32 x, uint256 sig) public { x; sig; } }",
+            "FHE1013",
+        ),
+        // FHE1013: `bytes` without a memory/calldata location.
+        (
+            "contract C { function f(in(sig) euint32 x, bytes storage sig) internal { x; sig; } }",
+            "FHE1013",
+        ),
+        // FHE1014: implicit and explicit mixed in one list.
+        (
+            "contract C { function f(in euint32 x, in(sig) euint32 y, bytes memory sig) public \
+             { x; y; sig; } }",
+            "FHE1014",
+        ),
+        // FHE1014: two binders naming different proofs.
+        (
+            "contract C { function f(in(a) euint32 x, in(b) euint32 y, bytes memory a, \
+             bytes memory b) public { x; y; a; b; } }",
+            "FHE1014",
+        ),
+    ];
+    for (body, code) in cases {
+        let src = format!("{head}{body}");
+        with_checked(&[("t.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec![*code], "{body}");
+            assert!(c.sugar_sites.is_empty(), "{body}: {:?}", c.sugar_sites);
+        });
+    }
+}
+
 // ---- §2.7 `precondition` blocks ---------------------------------------------
 
 /// A contract whose `g` carries an `in euint32` parameter, so a
