@@ -210,6 +210,55 @@ pub struct InSugarSite {
     pub file: FileId,
 }
 
+/// One `in shared eT name` parameter to expand (spec §2.8).
+///
+/// Only *legal* occurrences become sites: the checker has already established
+/// the position, the function kind, visibility and mutability, that the list
+/// mixes no external `in` inputs, that `<name>_shared` is free, and that the
+/// pinned profile has a shared boundary for `ty`.
+#[derive(Clone, Debug)]
+pub struct SharedInputSite {
+    /// Span of the whole parameter declaration (starts at `in`).
+    pub param_span: Span,
+    /// The declared encrypted type — the type of the materialized local.
+    pub ty: EType,
+    /// The parameter name. The wire parameter is `<name>_shared`.
+    pub name: String,
+    /// Whether the function has a body (bodiless: signature rewrite only).
+    pub has_body: bool,
+    /// Span of the function body block, when present.
+    pub body_span: Option<Span>,
+    /// The enclosing function.
+    pub function: FunctionId,
+    /// The file containing the site.
+    pub file: FileId,
+}
+
+/// One `returns (shared(msg.sender) eT)` return to wrap (spec §2.8).
+///
+/// One site covers the whole function: the returns-list rewrite plus every
+/// `return` statement of the body. The checker has established that the list
+/// holds exactly this one unnamed return, that the recipient is `msg.sender`,
+/// that the function is `public`/`external` and not `view`/`pure`, that every
+/// `return` is valued, is inside a braced block, and assigns nothing, and that
+/// every returned expression types as `ty`.
+#[derive(Clone, Debug)]
+pub struct SharedReturnSite {
+    /// Span of the whole return declaration, `shared(...)` through the type.
+    pub decl_span: Span,
+    /// The declared encrypted type.
+    pub ty: EType,
+    /// The recipient expression text to render (MVP: always `msg.sender`).
+    pub recipient: String,
+    /// Expression span of every `return expr;` in the body, in source order.
+    /// Empty for a bodiless declaration (signature rewrite only).
+    pub return_exprs: Vec<Span>,
+    /// The enclosing function.
+    pub function: FunctionId,
+    /// The file containing the site.
+    pub file: FileId,
+}
+
 /// The one legal `precondition { ... }` block of a function (spec §2.7).
 ///
 /// Only *legal* blocks become sites: the block is the first statement of a
@@ -346,6 +395,10 @@ pub struct CheckedUnit {
     pub incdec_sites: Vec<IncDecSite>,
     /// `in` parameter sugar expansions (spec §2.3).
     pub sugar_sites: Vec<InSugarSite>,
+    /// `in shared eT` parameter expansions (spec §2.8).
+    pub shared_input_sites: Vec<SharedInputSite>,
+    /// `returns (shared(...) eT)` wraps (spec §2.8), at most one per function.
+    pub shared_return_sites: Vec<SharedReturnSite>,
     /// Legal `precondition` blocks, at most one per function (spec §2.7).
     pub precondition_sites: Vec<PreconditionSite>,
     /// ACL facts (spec §8).
@@ -372,6 +425,8 @@ impl CheckedUnit {
             + self.compound_sites.len()
             + self.incdec_sites.len()
             + self.sugar_sites.len()
+            + self.shared_input_sites.len()
+            + self.shared_return_sites.len()
             + self.precondition_sites.len()
     }
 }

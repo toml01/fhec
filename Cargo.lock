@@ -1099,6 +1099,7 @@ version = "0.1.0"
 dependencies = [
  "fhec-bind",
  "fhec-ir",
+ "fhec-syntax",
  "fhec-targets",
  "solar-ast",
  "solar-data-structures",

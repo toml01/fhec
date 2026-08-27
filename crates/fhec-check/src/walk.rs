@@ -63,6 +63,11 @@ pub(crate) struct FnChecker<'a, 'ast> {
     pub(crate) is_view_or_pure: bool,
     pub(crate) is_view: bool,
     pub(crate) is_public_or_external: bool,
+    /// Whether the `returns` list carries a §2.8 shared-boundary marker. Such
+    /// a function states no R3 fact: a legal shared return grants through
+    /// `FHE.shareT(..., msg.sender)` instead of `allowTransient`, and an
+    /// illegal one refuses the unit, so R3 must never fire either way.
+    pub(crate) has_shared_return: bool,
 
     /// Slot arena for this function.
     pub(crate) slots: Vec<LocalSlot>,
@@ -119,6 +124,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 visibility,
                 Some(ast::Visibility::Public) | Some(ast::Visibility::External)
             ),
+            has_shared_return: crate::shared::declares_shared_return(f.ast),
             slots: Vec::new(),
             scopes: vec![FxHashMap::default()],
             pending: Vec::new(),
@@ -393,7 +399,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     let ty = self.type_expr(e);
                     self.flag_uninit_in(e.span, "as a return value");
                     if let Ty::Encrypted(t) = ty {
-                        if !self.in_branch() {
+                        if !self.in_branch() && !self.has_shared_return {
                             let fact = EncryptedReturn {
                                 stmt_span: s.span,
                                 expr_span: e.span,
