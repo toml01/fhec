@@ -527,17 +527,19 @@ impl<'ast> FnChecker<'_, 'ast> {
         }
     }
 
-    /// A write target. Only locals declared inside the block may be written:
-    /// the block's scope does not escape, so such a write cannot be observed
-    /// after it. That holds for the whole variable and, for a value type, for
-    /// one element or member of it alike — `arr[0] = 1` on a fresh block-local
-    /// is as invisible outside the block as `arr = ...` is.
+    /// A write target. Only a *whole* local declared inside the block may be
+    /// written: `a = ...` rebinds a name the block owns and nothing outside it
+    /// can observe that.
     ///
-    /// A *reference-typed* local is different: `uint256[] memory a = param;`
-    /// binds `a` to the parameter's data, so `a[0] = 1` mutates a value the
-    /// caller still sees. Such a write is refused unless the declaration
-    /// proves the local cannot alias anything outside the block. Everything
-    /// else escapes, and is reported by *why* it escapes.
+    /// A write *through* a block-local (`a[i] = ...`, `a.f = ...`) is always
+    /// refused. In Solidity a reference-typed local binds to existing data
+    /// instead of copying it, so such a write can mutate data the block does
+    /// not own — through the declaration (`uint256[] memory a = param;`),
+    /// through a later rebind (`a = param;`), through a tuple declaration, or
+    /// through a reference stored inside a container the block did allocate.
+    /// The checker does not guess an aliasing lattice (§1.3), so it refuses
+    /// every through-write instead of proving freshness case by case.
+    /// Everything else escapes, and is reported by *why* it escapes.
     fn pre_write(&mut self, lhs: &'ast ast::Expr<'ast>, span: Span) {
         // A tuple lvalue is a list of write targets; judge each on its own.
         if let ast::ExprKind::Tuple(els) = &lhs.peel_parens().kind {
@@ -550,8 +552,8 @@ impl<'ast> FnChecker<'_, 'ast> {
         }
         match self.write_target(lhs) {
             WriteTarget::BlockLocal => {
-                // Legal. The subscripts and members of the path are ordinary
-                // reads and still obey the whitelist.
+                // Legal. The name itself still obeys the whitelist (its
+                // declared type must be provably plaintext).
                 self.pre_walk_expr(lhs);
             }
             WriteTarget::Escaping(name) => self.pre_reject(
@@ -562,14 +564,13 @@ impl<'ast> FnChecker<'_, 'ast> {
                      plaintext only"
                 ),
             ),
-            WriteTarget::MayAlias(name) => self.pre_reject(
+            WriteTarget::ThroughLocal(name) => self.pre_reject(
                 span,
                 format!(
-                    "a `precondition` block must not write through `{name}`: it is a \
-                     reference-typed local whose initializer may alias data declared \
-                     outside the block, so the effect would escape a guard that is \
-                     plaintext only (declare it without an initializer, or initialize \
-                     it with `new` or a literal, to write through it)"
+                    "a `precondition` block must not write through `{name}`: an element or \
+                     member write reaches the data the local refers to, which the checker \
+                     cannot prove lives inside the block, so the effect could escape a \
+                     guard that is plaintext only (assign the local itself instead)"
                 ),
             ),
             WriteTarget::State => self.pre_reject(
@@ -592,8 +593,8 @@ impl<'ast> FnChecker<'_, 'ast> {
         let through_root = !matches!(lhs.peel_parens().kind, ast::ExprKind::Ident(_));
         match self.unit.resolve(root) {
             Some(Resolution::Local(v)) if self.declared_in_precondition(*v) => {
-                if through_root && self.may_alias_outside(*v) {
-                    WriteTarget::MayAlias(root.as_str().to_string())
+                if through_root {
+                    WriteTarget::ThroughLocal(root.as_str().to_string())
                 } else {
                     WriteTarget::BlockLocal
                 }
@@ -605,49 +606,6 @@ impl<'ast> FnChecker<'_, 'ast> {
                 WriteTarget::Escaping(root.as_str().to_string())
             }
             _ => WriteTarget::State,
-        }
-    }
-
-    /// Whether writing *through* block-local `v` could mutate data that lives
-    /// outside the block.
-    ///
-    /// Solidity reference types (arrays, mappings, structs, `bytes`, `string`,
-    /// in any data location) bind to existing data instead of copying it, so
-    /// `uint256[] memory a = param; a[0] = 1;` writes the caller's array. The
-    /// checker does not guess an aliasing lattice (§1.3): a reference-typed
-    /// local is assumed to alias unless its declaration proves it is fresh.
-    fn may_alias_outside(&self, v: fhec_bind::VarId) -> bool {
-        let decl = self.unit.var(v).decl;
-        // A scalar has no aliasable substructure.
-        if is_value_type(&decl.ty) {
-            return false;
-        }
-        match &decl.initializer {
-            // Freshly zero-valued: nothing to alias.
-            None => false,
-            Some(init) => !self.is_fresh_value(init),
-        }
-    }
-
-    /// Whether an initializer certainly produces newly allocated data.
-    fn is_fresh_value(&self, e: &'ast ast::Expr<'ast>) -> bool {
-        match &e.peel_parens().kind {
-            // A literal (including `[1, 2]` and `"abc"`) is materialized here.
-            ast::ExprKind::Lit(..) | ast::ExprKind::Array(_) => true,
-            // `new Thing`, and the `new uint256[](n)` call around it.
-            ast::ExprKind::New(_) => true,
-            ast::ExprKind::Call(callee, _) => match &callee.peel_parens().kind {
-                ast::ExprKind::New(_) => true,
-                // A struct literal (`S(1, 2)`, `S({a: 1})`) allocates a new
-                // struct; any other call may hand back a reference.
-                ast::ExprKind::Ident(id) => matches!(
-                    self.unit.resolve(*id),
-                    Some(Resolution::TypeName(td))
-                        if matches!(self.unit.type_decl(*td).kind, TypeDeclKind::Struct(_))
-                ),
-                _ => false,
-            },
-            _ => false,
         }
     }
 
@@ -724,9 +682,9 @@ impl<'ast> FnChecker<'_, 'ast> {
         let ok = match &callee.kind {
             // Elementary casts: `uint256(x)`, `address(0)`.
             ast::ExprKind::Type(_) => true,
-            // `new uint256[](n)`, `new bytes(n)`: a memory allocation, which
-            // is how a block-local proves it aliases nothing. A `new` on any
-            // other type deploys a contract and stays refused.
+            // `new uint256[](n)`, `new bytes(n)`: allocating memory is a pure
+            // plaintext operation. A `new` on any other type deploys a
+            // contract and stays refused.
             ast::ExprKind::New(ty) => is_memory_allocation(ty),
             ast::ExprKind::Ident(id) => match self.unit.resolve(*id) {
                 Some(Resolution::Function(fids)) => {
@@ -828,13 +786,14 @@ impl<'ast> FnChecker<'_, 'ast> {
 
 /// What an lvalue path ultimately writes to.
 enum WriteTarget {
-    /// A local declared inside the `precondition` block: the write is legal.
+    /// The whole of a local declared inside the `precondition` block: the
+    /// write only rebinds a name the block owns, so it is legal.
     BlockLocal,
     /// A parameter or named return: the write would outlive the block.
     Escaping(String),
-    /// A reference-typed local declared inside the block that may alias data
-    /// declared outside it: writing *through* it would escape.
-    MayAlias(String),
+    /// An element or member *of* a local declared inside the block: the local
+    /// may refer to data that lives outside it.
+    ThroughLocal(String),
     /// A state variable, or a target the checker cannot pin down.
     State,
 }
@@ -848,17 +807,6 @@ fn is_memory_allocation(ty: &ast::Type<'_>) -> bool {
         }
         _ => false,
     }
-}
-
-/// Whether a declared type is a Solidity *value* type: a whole copy, with no
-/// substructure another name can refer to. Reference types (arrays, mappings,
-/// structs, `bytes`, `string`) are not, in any data location.
-fn is_value_type(ty: &ast::Type<'_>) -> bool {
-    matches!(
-        &ty.kind,
-        ast::TypeKind::Elementary(e)
-            if !matches!(e, ast::ElementaryType::Bytes | ast::ElementaryType::String)
-    )
 }
 
 /// The first identifier anywhere in `e` for which `is_managed` holds.

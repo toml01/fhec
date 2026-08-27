@@ -864,12 +864,11 @@ fn precondition_rejects_parameter_writes() {
     assert_pre_codes("from = address(0);", &["FHE3015"]);
 }
 
-/// An element or member write reaches the same variable the whole-variable
-/// write would, so it must get the same verdict *and* the same reason.
+/// An element or member write to a variable declared *outside* the block
+/// reaches the same variable the whole-variable write would, so it must get
+/// the same verdict *and* the same reason.
 #[test]
 fn precondition_element_writes_follow_the_base_variable() {
-    // A block-local: the write cannot be observed outside the block (§2.7).
-    assert_pre_codes("uint256[2] memory a; a[0] = 1; a[1] += 2;", &[]);
     // A state array: still a state write, and the message must say so.
     assert_pre_codes("plainArr[0] = 1;", &["FHE3015"]);
     let src = pre_contract("plainArr[0] = 1;", "enc = amount;");
@@ -883,40 +882,81 @@ fn precondition_element_writes_follow_the_base_variable() {
     });
 }
 
-/// A reference-typed local can *alias* data declared outside the block, so a
-/// write through it is not invisible after all. Freshness must be provable.
+/// A Solidity reference type binds to existing data instead of copying it, so
+/// a write *through* a block-local can mutate data the block does not own. The
+/// checker does not prove freshness (§1.3): it refuses every through-write,
+/// however the local was declared.
 #[test]
-fn precondition_rejects_a_write_through_an_aliasing_local() {
-    // `a` is bound to the parameter's array: `a[0] = 1` mutates the caller's.
+fn precondition_rejects_every_write_through_a_local() {
+    // Round 2's case: `a` is bound to the parameter's array.
     assert_pre_codes("uint256[] memory a = list; a[0] = 1;", &["FHE3015"]);
     // A storage pointer to a state array is the same hazard.
     assert_pre_codes("uint256[2] storage a = plainArr; a[0] = 1;", &["FHE3015"]);
     // A struct member through an aliasing local.
     assert_pre_codes("Pair memory p = pairState; p.a = 1;", &["FHE3015"]);
-    let src = pre_contract("uint256[] memory a = list; a[0] = 1;", "enc = amount;");
+    // A local with no initializer, and one the initializer freshly allocates:
+    // both refused now, because a later rebind can make either alias.
+    assert_pre_codes("uint256[2] memory a; a[0] = 1;", &["FHE3015"]);
+    assert_pre_codes("Pair memory p; p.a = 1;", &["FHE3015"]);
+    assert_pre_codes(
+        "uint256[] memory a = new uint256[](3); a[0] = 1;",
+        &["FHE3015"],
+    );
+    assert_pre_codes(
+        "uint256[2] memory a = [uint256(1), 2]; a[0] = 3;",
+        &["FHE3015"],
+    );
+    assert_pre_codes("Pair memory p = Pair(1, 2); p.a = 3;", &["FHE3015"]);
+    let src = pre_contract("uint256[2] memory a; a[0] = 1;", "enc = amount;");
     with_checked(&[("t.fsol", &src)], |c, _| {
         let d = c
             .diagnostics
             .iter()
             .find(|d| d.code == "FHE3015")
             .expect("FHE3015");
-        assert!(d.message.contains("may alias"), "{}", d.message);
+        assert!(d.message.contains("write through `a`"), "{}", d.message);
     });
 }
 
-/// A local the declaration proves fresh has nothing to alias.
+/// Writing the local *itself* only rebinds the name, so it stays legal for a
+/// reference type too. Only the element or member write is refused.
 #[test]
-fn precondition_permits_a_write_through_a_fresh_local() {
-    // No initializer: freshly zero-valued.
-    assert_pre_codes("uint256[2] memory a; a[0] = 1;", &[]);
-    assert_pre_codes("Pair memory p; p.a = 1;", &[]);
-    // A fresh allocation.
-    assert_pre_codes("uint256[] memory a = new uint256[](3); a[0] = 1;", &[]);
-    // An inline array literal, and a struct literal.
-    assert_pre_codes("uint256[2] memory a = [uint256(1), 2]; a[0] = 3;", &[]);
-    assert_pre_codes("Pair memory p = Pair(1, 2); p.a = 3;", &[]);
-    // Rebinding the local itself is not a write *through* it.
+fn precondition_permits_rebinding_a_reference_typed_local() {
     assert_pre_codes("uint256[] memory a = list; a = list;", &[]);
+    assert_pre_codes("uint256[] memory a; a = list;", &[]);
+    assert_pre_codes("Pair memory p; p = pairState;", &[]);
+    assert_pre_codes("uint256[] memory a = new uint256[](3); a = list;", &[]);
+}
+
+/// The three escapes round 3 found. Each one made a local *look* fresh at its
+/// declaration while the data it reached lived outside the block.
+#[test]
+fn precondition_rejects_the_rebind_and_container_escapes() {
+    // 1. Declared without an initializer, then rebound to a named return.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        struct Pair { uint256 a; uint256 b; }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(in euint32 amount) public returns (Pair memory outPair) {\n\
+            precondition { Pair memory p; p = outPair; p.a = 1; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015"]);
+    // The same escape through a parameter, and through a state variable.
+    assert_pre_codes("uint256[] memory a; a = list; a[0] = 1;", &["FHE3015"]);
+    assert_pre_codes("Pair memory p; p = pairState; p.a = 1;", &["FHE3015"]);
+    // 2. A tuple declaration: the element carries no initializer of its own.
+    assert_pre_codes(
+        "(uint256[] memory a, uint256 n) = (list, 0); n; a[0] = 1;",
+        &["FHE3015"],
+    );
+    // 3. A freshly allocated outer container holding an aliasing reference.
+    assert_pre_codes(
+        "uint256[][] memory n = new uint256[][](1); n[0] = list; n[0][0] = 1;",
+        &["FHE3015", "FHE3015"],
+    );
 }
 
 /// The binder resolves a named return to `Resolution::Local`, but it is part

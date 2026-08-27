@@ -161,7 +161,67 @@
       "end_line": 110,
       "end_col": 25
     },
-    "message": "a `precondition` block must not write through `local`: it is a reference-typed local whose initializer may alias data declared outside the block, so the effect would escape a guard that is plaintext only (declare it without an initializer, or initialize it with `new` or a literal, to write through it)",
+    "message": "a `precondition` block must not write through `local`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 3326,
+      "end_byte": 3338,
+      "start_line": 122,
+      "start_col": 13,
+      "end_line": 122,
+      "end_col": 25
+    },
+    "message": "a `precondition` block must not write through `local`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 3688,
+      "end_byte": 3700,
+      "start_line": 133,
+      "start_col": 13,
+      "end_line": 133,
+      "end_col": 25
+    },
+    "message": "a `precondition` block must not write through `local`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 4036,
+      "end_byte": 4050,
+      "start_line": 143,
+      "start_col": 13,
+      "end_line": 143,
+      "end_col": 27
+    },
+    "message": "a `precondition` block must not write through `rows`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 4064,
+      "end_byte": 4078,
+      "start_line": 144,
+      "start_col": 13,
+      "end_line": 144,
+      "end_col": 27
+    },
+    "message": "a `precondition` block must not write through `rows`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
     "rule": "§2.7"
   }
 ]

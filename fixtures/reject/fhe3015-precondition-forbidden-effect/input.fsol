@@ -111,4 +111,38 @@ contract PreconditionEscapingWrites {
         }
         balance = amount;
     }
+
+    // The declaration proves nothing: a later plain assignment can rebind the
+    // local to data that lives outside the block. Rebinding is legal; the
+    // member write through the rebound local is not.
+    function rebindThenWrite(uint256[] memory list, in euint32 amount) public {
+        precondition {
+            uint256[] memory local;
+            local = list;
+            local[0] = 1;
+        }
+        balance = amount;
+    }
+
+    // A tuple declaration carries no initializer per element, so the element
+    // cannot look fresh either.
+    function tupleDeclThenWrite(uint256[] memory list, in euint32 amount) public {
+        precondition {
+            (uint256[] memory local, uint256 n) = (list, 0);
+            n;
+            local[0] = 1;
+        }
+        balance = amount;
+    }
+
+    // A freshly allocated outer container can still hold a reference to data
+    // declared outside the block.
+    function nestedContainerWrite(uint256[] memory list, in euint32 amount) public {
+        precondition {
+            uint256[][] memory rows = new uint256[][](1);
+            rows[0] = list;
+            rows[0][0] = 1;
+        }
+        balance = amount;
+    }
 }
