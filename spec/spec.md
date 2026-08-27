@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.3.0 |
+| **Version** | 0.4.0 |
 | **Status** | Draft |
 | **Date** | 2026-08-27 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -114,16 +114,25 @@ Input that does not parse under the dialect grammar is rejected with FHE1002. Un
 Grammar: in a function or constructor parameter list, the production
 
 ```
-parameter := 'in' encrypted-type identifier
+parameter := 'in' [ '(' identifier ')' ] encrypted-type identifier
 ```
 
 is added, where `encrypted-type` is one of the profile's encrypted value types (§1.5). `in` is a reserved Solidity keyword, so this production conflicts with no valid Solidity program.
 
+The two forms differ only in where the input proof comes from:
+
+- **implicit** — `in eT name`: the expansion appends one shared proof parameter at the end of the list;
+- **explicit binder** — `in(proof) eT name`: `proof` names a parameter the author already declared in the *same* parameter list, and nothing is appended.
+
+The binder exists because the appended parameter is always last, which some external ABIs do not allow: ERC-7984's `…AndCall` entry points fix the proof *before* the trailing `data` argument. The binder lets the author write that order and keep it.
+
 **Expansion.** For a function or constructor with k ≥ 1 sugared parameters (`eT` maps to external handle type `externalT` and conversion function `asT` per the profile — e.g. `euint32` → `externalEuint32` / `FHE.asEuint32`):
 
-1. Each parameter `in eT name` becomes the declaration `externalT name_input` in the same position (external handle types are value types; no data location).
-2. One shared parameter `bytes memory inputProof` is appended at the end of the parameter list — once per function, regardless of k. This matches the SDK convention (cofhe SDK 0.7.0): a function with encrypted inputs ends with one plain `bytes` parameter receiving the shared batch signature.
-3. Conversion statements are inserted at the *materialization point*, in parameter-list order. The materialization point is the start of the function body, before any existing statement — unless the body opens with a `precondition` block, which moves it after that block (§2.7).
+1. Each parameter `in eT name` or `in(proof) eT name` becomes the declaration `externalT name_input` in the same position (external handle types are value types; no data location).
+2. The *proof parameter* is determined once per function, regardless of k:
+   - implicit form: one shared parameter `bytes memory inputProof` is appended at the end of the parameter list. This matches the SDK convention (cofhe SDK 0.7.0): a function with encrypted inputs ends with one plain `bytes` parameter receiving the shared batch signature.
+   - explicit binder: the bound parameter is the proof parameter. It keeps its declared position, name, and data location byte-for-byte, and **no** parameter is appended, so the bound form adds nothing to the ABI.
+3. Conversion statements are inserted at the *materialization point*, in parameter-list order, and read the proof parameter fixed by (2). The materialization point is the start of the function body, before any existing statement — unless the body opens with a `precondition` block, which moves it after that block (§2.7).
    - k = 1: `eT name = FHE.asT(name_input, inputProof);`
    - k > 1: a single batch verification. One signature covers the whole batch (cofhe-contracts#78), so per-parameter `FHE.asT(hash, proof)` calls — which each rebuild a one-element batch digest — would fail verification. The expansion builds one `UnsignedEncryptedInput[]` in parameter order (security zone 0, matching FHE.sol's own batch helpers), verifies it once through `Impl.verifyBatchInputs(inputs, inputProof)`, and wraps each returned `bytes32` handle into its value type:
 
@@ -134,11 +143,18 @@ is added, where `encrypted-type` is one of the profile's encrypted value types (
      eT name = eT.wrap(__fhe_hashes_1[i]); // per parameter
      ```
 
-     The array temporaries are named per §2.4 (hints `inputs`, `hashes`).
+     The array temporaries are named per §2.4 (hints `inputs`, `hashes`). In the bound form `inputProof` above is the bound parameter's own name.
 
-**⚠ Draft decision (data location):** the appended proof parameter uses `memory`. `calldata` is not used in v1.
+**Binding.** The proof binder is resolved by name, never guessed. For a parameter list that uses the explicit form:
 
-**⚠ Draft decision (generated names):** the raw-input parameter is named `<name>_input`, and the shared proof parameter is named `inputProof`. If `<name>_input` or `inputProof` is already declared anywhere in the function's scope (parameters, locals, contract members referenced unqualified), the transpiler MUST reject with FHE1011 rather than rename silently.
+1. The bound identifier MUST name **exactly one** parameter of the **same** parameter list, declared `bytes memory` or `bytes calldata`. A binder that names nothing in that list, names a parameter of another type or data location, or names something that is not a parameter of that list at all (a state variable, a constant, a name from an enclosing scope) is FHE1013. The transpiler MUST NOT fall back to searching a wider scope, and MUST NOT infer the proof from a parameter's type or position.
+2. Every `in` parameter of **one** parameter list MUST agree: either all use the implicit form, or all bind the **same** identifier. Mixing the two forms in one list, or binding two different identifiers, is FHE1014. Several inputs bound to one proof still verify as **one atomic batch**, in encrypted-parameter source order — the position of the bound parameter within the list does not affect that order.
+
+The bound parameter is an ordinary author-declared parameter everywhere else: it is a plaintext `bytes` value the body may read, and the transpiler neither renames it nor moves it.
+
+**⚠ Draft decision (data location):** the *appended* proof parameter uses `memory`. `calldata` is not used in v1. A *bound* proof keeps whichever of `memory` or `calldata` the author declared.
+
+**⚠ Draft decision (generated names):** the raw-input parameter is named `<name>_input`, and, in the implicit form, the appended proof parameter is named `inputProof`. If `<name>_input` is already declared anywhere in the function's scope (parameters, locals, contract members referenced unqualified), the transpiler MUST reject with FHE1011 rather than rename silently; the same applies to `inputProof` in the implicit form. The explicit binder introduces **no** new fixed generated name — it reuses the author's own parameter name verbatim — so `inputProof` is not reserved in a bound function and a parameter of that name is the ordinary case there.
 
 **Restrictions.**
 
@@ -193,7 +209,7 @@ Without the marker, the materializers stay at body entry (§2.3) and the order i
 
 1. It is the **first statement** of the body (after `{`, ignoring trivia).
 2. There is **at most one** in the function. A second block anywhere in the body — including nested inside the first — is illegal.
-3. The host is a `function` or `constructor` whose parameter list declares **at least one dialect-managed encrypted input** (today: an `in eT` parameter, §2.3). Without one there is nothing to guard.
+3. The host is a `function` or `constructor` whose parameter list declares **at least one dialect-managed encrypted input** (today: an `in eT` or `in(proof) eT` parameter, §2.3). Without one there is nothing to guard.
 
 The parser accepts the block in every statement position; positional legality is a checker rule, so a misplaced block yields FHE1017 rather than a parse error.
 
@@ -493,6 +509,8 @@ Assigned in this version:
 | FHE1010 | error | in-sugar-non-encrypted-type |
 | FHE1011 | error | in-sugar-name-collision (§2.3) |
 | FHE1012 | error | in-sugar-bad-position (§2.3) |
+| FHE1013 | error | in-sugar-proof-binding-invalid (§2.3) |
+| FHE1014 | error | in-sugar-proof-binding-inconsistent (§2.3) |
 | FHE1017 | error | precondition-bad-position (§2.7) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
@@ -601,3 +619,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.1.4 (2026-08-22)** — §1.4 defines the self-check diagnostic-suppression rule (re-run diagnostics below error severity are suppressed).
 - **0.2.0 (2026-08-22)** — cofhe-contracts 0.2.0 input model: §1.5 replaces the removed `InEuintX` input structs with the `externalE*` handle types; §2.3 lowers the sugar to an in-place `externalT name_input` parameter plus one shared trailing `bytes memory inputProof` parameter per function, converts one input via the two-argument `FHE.asT(hash, proof)` and several inputs via a single `Impl.verifyBatchInputs` batch (one signature covers the whole batch); FHE1011 additionally guards the `inputProof` name.
 - **0.3.0 (2026-08-27)** — second grammar extension: §2.7 adds the contextual `precondition` block, which moves a function's generated encrypted-input materializers after an author-written plaintext guard; §2.3 renames its insertion point to the *materialization point* and drops the "single v1 grammar extension" claim from its title; §2.1 lists both extensions; new codes FHE1017 (position), FHE3014 (managed input named in the block), FHE3015 (forbidden effect).
+- **0.4.0 (2026-08-27)** — §2.3 adds the explicit proof binder `in(proof) eT name`: the input verifies against an author-declared `bytes memory|calldata` parameter of the same list, which keeps its position, name, and data location, and nothing is appended to the parameter list, so an ERC-7984 `…AndCall` order (proof before `data`) is expressible. The implicit `in eT name` form and its trailing `bytes memory inputProof` are unchanged. New codes FHE1013 (binder does not name a same-list `bytes` parameter) and FHE1014 (one parameter list mixes the two forms or binds two different proofs).
