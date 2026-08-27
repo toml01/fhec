@@ -378,24 +378,19 @@ impl<'ast> FnChecker<'_, 'ast> {
         // FHE3014, which is more specific than "encrypted expression".
         if let Ident(id) = &e.kind {
             if self.is_managed_input(*id) {
-                self.out.diagnostics.push(
-                    Diagnostic::error(
-                        codes::ENCRYPTED_INPUT_IN_PRECONDITION,
-                        e.span,
-                        format!(
-                            "`{}` is a dialect-managed encrypted input; it does not exist \
-                             yet inside a `precondition` block, because the block runs \
-                             before the generated conversion",
-                            id.as_str()
-                        ),
-                    )
-                    .with_rule(RULE),
-                );
+                self.reject_managed_input(*id, e.span);
                 return;
             }
         }
 
         if self.out.types.get(e.span).is_some_and(|t| t.is_encrypted()) {
+            // The whole expression is encrypted, so the walk stops here. If a
+            // managed input hides inside it (`amount == enc`), name *that*:
+            // FHE3014 says what to do, FHE3015 only says "not here".
+            if let Some(id) = managed_input_in(e, &|id| self.is_managed_input(id)) {
+                self.reject_managed_input(id, id.span);
+                return;
+            }
             self.pre_reject(
                 e.span,
                 "an encrypted value cannot appear in a `precondition` block: the block is a \
@@ -469,6 +464,23 @@ impl<'ast> FnChecker<'_, 'ast> {
                  effect-free plaintext code the checker can verify may appear here",
             ),
         }
+    }
+
+    /// Reports FHE3014 for a dialect-managed input named inside the block.
+    fn reject_managed_input(&mut self, id: solar_interface::Ident, span: Span) {
+        self.out.diagnostics.push(
+            Diagnostic::error(
+                codes::ENCRYPTED_INPUT_IN_PRECONDITION,
+                span,
+                format!(
+                    "`{}` is a dialect-managed encrypted input; it does not exist yet \
+                     inside a `precondition` block, because the block runs before the \
+                     generated conversion",
+                    id.as_str()
+                ),
+            )
+            .with_rule(RULE),
+        );
     }
 
     /// Whether `id` names a parameter carrying a dialect input marker.
@@ -773,6 +785,40 @@ fn is_value_type(ty: &ast::Type<'_>) -> bool {
         ast::TypeKind::Elementary(e)
             if !matches!(e, ast::ElementaryType::Bytes | ast::ElementaryType::String)
     )
+}
+
+/// The first identifier anywhere in `e` for which `is_managed` holds.
+///
+/// The walk is a plain pre-order over every sub-expression: the point is to
+/// find the input wherever the author put it, not to model the expression.
+fn managed_input_in(
+    e: &ast::Expr<'_>,
+    is_managed: &dyn Fn(solar_interface::Ident) -> bool,
+) -> Option<solar_interface::Ident> {
+    use ast::ExprKind::*;
+    let find = |x: &ast::Expr<'_>| managed_input_in(x, is_managed);
+    match &e.kind {
+        Ident(id) => is_managed(*id).then_some(*id),
+        Lit(..) | Type(_) | TypeCall(_) | New(_) | Err(_) => None,
+        Member(obj, _) | Delete(obj) | Unary(_, obj) => find(obj),
+        Index(base, kind) => find(base).or_else(|| match kind {
+            ast::IndexKind::Index(i) => i.as_deref().and_then(find),
+            ast::IndexKind::Range(a, b) => a
+                .as_deref()
+                .and_then(find)
+                .or_else(|| b.as_deref().and_then(find)),
+        }),
+        Binary(l, _, r) | Assign(l, _, r) => find(l).or_else(|| find(r)),
+        Ternary(c, a, b) => find(c).or_else(|| find(a)).or_else(|| find(b)),
+        Tuple(els) => els
+            .iter()
+            .filter_map(|el| el.as_ref().unspan())
+            .find_map(|el| find(el)),
+        Array(els) => els.iter().find_map(|el| find(el)),
+        Payable(args) => args.exprs().find_map(find),
+        Call(callee, args) => find(callee).or_else(|| args.exprs().find_map(find)),
+        CallOptions(inner, opts) => find(inner).or_else(|| opts.iter().find_map(|o| find(o.value))),
+    }
 }
 
 /// The root identifier of an lvalue, when it has one.

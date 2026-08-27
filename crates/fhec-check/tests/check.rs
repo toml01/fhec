@@ -780,6 +780,24 @@ fn precondition_rejects_the_managed_encrypted_input() {
     );
 }
 
+/// Both codes apply to `amount == enc`, and FHE3014 is the useful one: it
+/// names the input and says why it does not exist yet.
+#[test]
+fn precondition_prefers_fhe3014_for_a_nested_managed_input() {
+    assert_pre_codes("if (amount == enc) revert Bad(from);", &["FHE3014"]);
+    assert_pre_codes("enc.add(amount);", &["FHE3014"]);
+    let src = pre_contract("if (amount == enc) revert Bad(from);", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3014")
+            .expect("FHE3014");
+        // The span points at the input itself, not at the comparison.
+        assert_eq!(snip(d.span), "amount");
+    });
+}
+
 #[test]
 fn precondition_rejects_encrypted_expressions() {
     // Encrypted state read.

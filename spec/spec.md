@@ -207,7 +207,7 @@ The parser accepts the block in every statement position; positional legality is
 - plaintext conversions (`uint256(x)`, `address(0)`, an in-unit contract or type conversion);
 - calls to functions of **this compilation unit** that resolve statically to declarations that are `view` or `pure` **and** whose declared return types the transpiler can prove are plaintext. Solidity only lets an override tighten mutability, so a `view` declaration bounds every override.
 
-Naming a dialect-managed encrypted input inside the block is FHE3014: the block runs before that input's conversion, so the value does not exist yet.
+Naming a dialect-managed encrypted input inside the block is FHE3014: the block runs before that input's conversion, so the value does not exist yet. FHE3014 wins wherever the input appears, including nested inside a larger expression that is refused anyway (`amount == enc`): it is the more specific of the two diagnostics, and it names the input.
 
 Everything else is FHE3015:
 
