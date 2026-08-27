@@ -122,6 +122,21 @@ fn explain_covers_the_precondition_codes() {
 }
 
 #[test]
+fn explain_covers_the_proof_binder_codes() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (code, name) in [
+        ("FHE1013", "in-sugar-proof-binding-invalid"),
+        ("FHE1014", "in-sugar-proof-binding-inconsistent"),
+    ] {
+        let out = fhec(tmp.path(), &["explain", code]);
+        assert_eq!(out.status.code(), Some(0), "{code}");
+        let text = stdout(&out);
+        assert!(text.contains(name), "{code}: {text}");
+        assert!(text.contains("§2.3"), "{code}: {text}");
+    }
+}
+
+#[test]
 fn invalid_acl_mode_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let out = fhec(tmp.path(), &["check", "--acl", "bogus"]);
