@@ -204,7 +204,7 @@ The parser accepts the block in every statement position; positional legality is
 - nested blocks and plaintext `if`;
 - `require` / `assert` / `revert`, and the pure builtins `keccak256`, `sha256`, `ripemd160`, `ecrecover`, `addmod`, `mulmod`;
 - `new` **memory allocations** (`new uint256[](n)`, `new bytes(n)`). A `new` on any other type deploys a contract and is refused;
-- plaintext conversions (`uint256(x)`, `address(0)`, an in-unit contract or type conversion);
+- plaintext conversions: `uint256(x)`, `address(0)`, `payable(x)`, and an in-unit contract or type conversion, whether the type name is plain (`Money(x)`, `Money.wrap(x)`) or qualified (`Lib.Money(x)`, `Lib.Money.unwrap(x)`). A qualified type name is a conversion, not a member call: no user code runs;
 - calls to functions of **this compilation unit** that resolve statically to declarations that are `view` or `pure` **and** whose declared return types the transpiler can prove are plaintext. Solidity only lets an override tighten mutability, so a `view` declaration bounds every override.
 
 Naming a dialect-managed encrypted input inside the block is FHE3014: the block runs before that input's conversion, so the value does not exist yet. FHE3014 wins wherever the input appears, including nested inside a larger expression that is refused anyway (`amount == enc`): it is the more specific of the two diagnostics, and it names the input.
@@ -215,7 +215,7 @@ Everything else is FHE3015:
 - **escaping writes**: a write whose base variable is declared outside the block and outlives it — a parameter, a **named return**, or a local of an enclosing scope — and a write *through* a reference-typed block-local that the declaration does not prove fresh. The diagnostic MUST name the variable and say the effect would escape the block;
 - every **encrypted-typed expression** — encrypted operations, encrypted control flow, encrypted state reads, and `view` calls that return encrypted values;
 - `emit`;
-- calls the transpiler cannot classify: imported, unresolved, ambiguous, member (`Lib.f()`, `token.f()`), state-changing, or with a return type it cannot prove plaintext — **even when the source declares them `view` or `pure`**;
+- calls the transpiler cannot classify: imported, unresolved, ambiguous, member (`Lib.f()`, `token.f()` — a qualified *type* conversion is not one of these), state-changing, or with a return type it cannot prove plaintext — **even when the source declares them `view` or `pure`**;
 - `return`, loops, `break` / `continue`, `try`, inline assembly, and any other statement form not listed above.
 
 The permitted list is a whitelist. A construct the transpiler does not recognize is refused, never assumed harmless (§1.3).

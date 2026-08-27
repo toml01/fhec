@@ -458,7 +458,14 @@ impl<'ast> FnChecker<'_, 'ast> {
                 e.span,
                 "`delete` is not permitted in a `precondition` block: it is a state write",
             ),
-            CallOptions(..) | New(_) | Payable(_) => self.pre_reject(
+            // `payable(x)` is a built-in conversion to `address payable`, not
+            // a call: it reads its operand and produces a plaintext address.
+            Payable(args) => {
+                for a in args.exprs() {
+                    self.pre_walk_expr(a);
+                }
+            }
+            CallOptions(..) | New(_) => self.pre_reject(
                 e.span,
                 "this expression is not permitted in a `precondition` block: only \
                  effect-free plaintext code the checker can verify may appear here",
@@ -644,6 +651,69 @@ impl<'ast> FnChecker<'_, 'ast> {
         }
     }
 
+    /// Whether `obj.name` in callee position is an in-unit type conversion
+    /// (`Lib.Money(x)`) or a UDVT `wrap`/`unwrap` (`Money.wrap(x)`,
+    /// `Lib.Money.unwrap(x)`), rather than a member *call*.
+    fn plaintext_type_member(
+        &self,
+        obj: &'ast ast::Expr<'ast>,
+        name: solar_interface::Ident,
+    ) -> bool {
+        // `Lib.Money(x)`: the whole callee is a qualified type name.
+        if self.qualified_type(obj, name).is_some() {
+            return true;
+        }
+        // `Money.wrap(x)`: the object is the UDVT, the member is the
+        // primitive. A *trusted* encrypted or external-input type name is not
+        // one of these: those are profile calls, judged elsewhere.
+        if !matches!(name.as_str(), "wrap" | "unwrap") {
+            return false;
+        }
+        let td = match &obj.peel_parens().kind {
+            ast::ExprKind::Ident(id) => match self.unit.resolve(*id) {
+                Some(Resolution::TypeName(td))
+                    if matches!(
+                        crate::decl::custom_ty(
+                            self.unit,
+                            self.trust,
+                            id.as_str(),
+                            &Resolution::TypeName(*td),
+                        ),
+                        Ty::Plain(crate::ty::PlainTy::Opaque)
+                    ) =>
+                {
+                    *td
+                }
+                _ => return false,
+            },
+            ast::ExprKind::Member(inner, member) => match self.qualified_type(inner, *member) {
+                Some(td) => td,
+                None => return false,
+            },
+            _ => return false,
+        };
+        matches!(self.unit.type_decl(td).kind, TypeDeclKind::Udvt(_))
+    }
+
+    /// The in-unit type declaration a `Contract.Name` path names, if any.
+    fn qualified_type(
+        &self,
+        obj: &'ast ast::Expr<'ast>,
+        name: solar_interface::Ident,
+    ) -> Option<fhec_bind::TypeDeclId> {
+        let ast::ExprKind::Ident(id) = &obj.peel_parens().kind else {
+            return None;
+        };
+        let Some(Resolution::Contract(cid)) = self.unit.resolve(*id) else {
+            return None;
+        };
+        let cid = *cid;
+        self.unit
+            .type_decls()
+            .find(|(_, t)| t.contract == Some(cid) && t.name.as_str() == name.as_str())
+            .map(|(id, _)| id)
+    }
+
     fn pre_call(
         &mut self,
         e: &'ast ast::Expr<'ast>,
@@ -686,6 +756,10 @@ impl<'ast> FnChecker<'_, 'ast> {
                 Some(Resolution::Contract(_) | Resolution::TypeName(_)) => true,
                 _ => false,
             },
+            // A member callee is a call — except when it names an in-unit
+            // *type*: `Lib.Money(x)` converts, and `Money.wrap(x)` is the
+            // UDVT primitive. Neither runs user code.
+            ast::ExprKind::Member(obj, name) => self.plaintext_type_member(obj, *name),
             _ => false,
         };
         if !ok {

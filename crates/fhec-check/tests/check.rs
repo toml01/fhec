@@ -947,6 +947,61 @@ fn precondition_rejects_named_return_writes() {
     });
 }
 
+/// The whitelist covers "an in-unit contract or type conversion" (§2.7).
+/// `payable(x)` is a Solidity primitive, and `Lib.Money(x)` / `Money.wrap(x)`
+/// name a type, not a function: none of them runs user code.
+#[test]
+fn precondition_permits_plaintext_conversions() {
+    assert_pre_codes("payable(from);", &[]);
+    assert_pre_codes(
+        "if (payable(from) == payable(address(0))) revert Bad(from);",
+        &[],
+    );
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        library Lib {\n\
+          type Money is uint256;\n\
+          struct Pair { uint256 a; uint256 b; }\n\
+        }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          error Bad();\n\
+          function g(uint256 n, in euint32 amount) public {\n\
+            precondition {\n\
+              uint256 back = Lib.Money.unwrap(Lib.Money.wrap(n));\n\
+              Lib.Pair(back, 1);\n\
+              if (back == 0) revert Bad();\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), Vec::<String>::new());
+}
+
+/// The conservative default holds for everything that is not recognizably a
+/// plaintext conversion.
+#[test]
+fn precondition_still_rejects_member_and_unresolved_calls() {
+    // A member call on a state variable of an in-unit contract type.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        interface IThing { function ok() external view returns (bool); }\n\
+        library Lib { function pure_(uint256 x) internal pure returns (uint256) { return x; } }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          IThing thing;\n\
+          error Bad();\n\
+          function g(uint256 n, in euint32 amount) public {\n\
+            precondition {\n\
+              if (!thing.ok()) revert Bad();\n\
+              Lib.pure_(n);\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015", "FHE3015"]);
+}
+
 #[test]
 fn precondition_rejects_state_changing_and_member_calls() {
     assert_pre_codes("bump();", &["FHE3015"]);
