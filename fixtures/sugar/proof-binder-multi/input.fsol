@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// Several encrypted inputs bind one proof. The batch follows encrypted
+// parameter source order, not the position of the bound proof parameter.
+contract SugarProofBinderMulti {
+    ebool eb;
+    eaddress ea;
+    euint128 ev;
+
+    function setup(
+        in(proof) ebool flag,
+        bytes memory proof,
+        in(proof) eaddress owner_,
+        in(proof) euint128 value,
+        uint256 tag
+    ) public {
+        eb = flag;
+        ea = owner_;
+        ev = value;
+        tag;
+    }
+}
