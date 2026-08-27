@@ -563,6 +563,37 @@ fn sugar_binder_batches_in_encrypted_parameter_order() {
     );
 }
 
+#[test]
+fn sugar_binder_expands_a_constructor_parameter_list() {
+    // A constructor is a parameter list like any other (spec §2.3), and the
+    // binder may name a proof declared *before* the input it verifies.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   constructor(bytes memory sig, in(sig) euint32 seed, uint256 tag) {\n\
+         \x20       a = seed;\n\
+         \x20       tag;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   constructor(bytes memory sig, externalEuint32 seed_input, uint256 tag) {\n\
+         \x20       euint32 seed = FHE.asEuint32(seed_input, sig);\n\
+         \x20       a = seed;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       tag;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // `precondition` blocks (spec §2.7)
 // ---------------------------------------------------------------------------

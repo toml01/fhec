@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// The bound proof is declared first, before every input that verifies against
+// it. The narrow encrypted widths bind a proof like any other profile type.
+contract SugarProofBinderFirst {
+    euint8 small;
+    euint16 mid;
+
+    function setOne(bytes calldata proof, in(proof) euint8 v) public {
+        small = v;
+    }
+
+    function setBoth(
+        bytes memory proof,
+        in(proof) euint8 a,
+        in(proof) euint16 b
+    ) public {
+        small = a;
+        mid = b;
+    }
+}
