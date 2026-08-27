@@ -157,6 +157,10 @@ pub struct CofheProfile {
     pragma_range: &'static str,
     import_lines: &'static [&'static str],
     ops: &'static [OpEntry],
+    /// Encrypted types this version gives a shared boundary (spec §2.8):
+    /// a `sharedT` wire type, `shareT`, and `receiveTParam`. Data, not a
+    /// hard-coded "always", so a future profile version is a table delta.
+    shared_boundary: &'static [EType],
 }
 
 impl CofheProfile {
@@ -168,11 +172,24 @@ impl CofheProfile {
             pragma_range: ">=0.8.25 <0.9.0",
             import_lines: &["import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";"],
             ops: COFHE_0_2_OPS,
+            // FHE.sol 0.2.x declares `type sharedT is bytes32` plus
+            // `shareT(T, address)` and `receiveTParam(sharedT)` for every one
+            // of the seven profile types.
+            shared_boundary: &EType::ALL,
         }
     }
 
     fn lookup(&self, op: FheOp) -> Option<&OpEntry> {
         self.ops.iter().find(|e| e.op == op)
+    }
+
+    /// The one capability predicate behind all three shared-boundary methods.
+    fn shared_ok(&self, ty: EType) -> Result<(), ProfileError> {
+        if self.shared_boundary.contains(&ty) {
+            Ok(())
+        } else {
+            Err(ProfileError::NoSharedBoundary { ty })
+        }
     }
 
     /// `euint32` → `asEuint32`, `ebool` → `asEbool`, etc.
@@ -336,6 +353,36 @@ impl TargetProfile for CofheProfile {
         "bytes memory inputProof".to_string()
     }
 
+    fn shared_wire_type(&self, ty: EType) -> Result<String, ProfileError> {
+        self.shared_ok(ty)?;
+        Ok(ty.shared_name().to_string())
+    }
+
+    fn render_share(
+        &self,
+        ty: EType,
+        handle: &str,
+        recipient: &str,
+    ) -> Result<String, ProfileError> {
+        self.shared_ok(ty)?;
+        // FHE.sol: `share{Suffix}(eT ctHash, address receiver)`.
+        Ok(format!(
+            "{}.share{}({handle}, {recipient})",
+            self.lib,
+            ty.suffix()
+        ))
+    }
+
+    fn render_receive_param(&self, ty: EType, wire: &str) -> Result<String, ProfileError> {
+        self.shared_ok(ty)?;
+        // FHE.sol: `receive{Suffix}Param(shared{Suffix} shared)`.
+        Ok(format!(
+            "{}.receive{}Param({wire})",
+            self.lib,
+            ty.suffix()
+        ))
+    }
+
     fn conversion_fn(&self, ty: EType) -> String {
         format!("{}.{}", self.lib, Self::cast_fn_name(ty))
     }
@@ -392,6 +439,55 @@ mod tests {
             "asEuint128"
         );
         assert_eq!(CofheProfile::cast_fn_name(EType::Eaddress), "asEaddress");
+    }
+
+    /// Transcribed from FHE.sol 0.2.x lines 25–31 and 3457–3690: every profile
+    /// type has a wire type, a `share`, and a `receive…Param`, all spelled
+    /// from the same suffix.
+    #[test]
+    fn shared_boundary_spellings() {
+        let p = CofheProfile::v0_2();
+        assert_eq!(
+            p.shared_wire_type(EType::Euint(EWidth::W64)).unwrap(),
+            "sharedEuint64"
+        );
+        assert_eq!(
+            p.render_share(EType::Euint(EWidth::W64), "x", "msg.sender")
+                .unwrap(),
+            "FHE.shareEuint64(x, msg.sender)"
+        );
+        assert_eq!(
+            p.render_receive_param(EType::Euint(EWidth::W64), "x_shared")
+                .unwrap(),
+            "FHE.receiveEuint64Param(x_shared)"
+        );
+        assert_eq!(p.shared_wire_type(EType::Ebool).unwrap(), "sharedEbool");
+        assert_eq!(
+            p.shared_wire_type(EType::Eaddress).unwrap(),
+            "sharedEaddress"
+        );
+        for t in EType::ALL {
+            assert!(p.shared_wire_type(t).is_ok(), "{t} has no shared boundary");
+            assert!(p.render_share(t, "h", "r").is_ok());
+            assert!(p.render_receive_param(t, "w").is_ok());
+        }
+    }
+
+    /// A profile version without a boundary for a type reports the gap that
+    /// the checker turns into FHE5001, rather than rendering a call that does
+    /// not exist.
+    #[test]
+    fn missing_shared_boundary_is_a_profile_gap() {
+        let mut p = CofheProfile::v0_2();
+        p.shared_boundary = &[EType::Ebool];
+        let gone = EType::Euint(EWidth::W64);
+        assert_eq!(
+            p.shared_wire_type(gone),
+            Err(ProfileError::NoSharedBoundary { ty: gone })
+        );
+        assert!(p.render_share(gone, "h", "r").is_err());
+        assert!(p.render_receive_param(gone, "w").is_err());
+        assert!(p.shared_wire_type(EType::Ebool).is_ok());
     }
 
     #[test]

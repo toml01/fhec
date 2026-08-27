@@ -115,6 +115,22 @@ impl EType {
         }
     }
 
+    /// The matching shared-boundary wire type name (`"sharedEuint32"`,
+    /// spec §2.8). A shared handle crosses the ABI boundary as this value
+    /// type; `FHE.share<T>` produces one and `FHE.receive<T>Param` consumes
+    /// one.
+    pub fn shared_name(self) -> &'static str {
+        match self {
+            EType::Ebool => "sharedEbool",
+            EType::Euint(EWidth::W8) => "sharedEuint8",
+            EType::Euint(EWidth::W16) => "sharedEuint16",
+            EType::Euint(EWidth::W32) => "sharedEuint32",
+            EType::Euint(EWidth::W64) => "sharedEuint64",
+            EType::Euint(EWidth::W128) => "sharedEuint128",
+            EType::Eaddress => "sharedEaddress",
+        }
+    }
+
     /// The plaintext Solidity counterpart (`"uint32"` for `euint32`), i.e.
     /// the type a trivial encrypt conceptually starts from (spec §3.3).
     pub fn plaintext_type(self) -> &'static str {
@@ -182,14 +198,27 @@ mod tests {
         assert_eq!(EType::Euint(EWidth::W32).solidity_name(), "euint32");
         assert_eq!(EType::Euint(EWidth::W32).suffix(), "Euint32");
         assert_eq!(EType::Euint(EWidth::W32).external_name(), "externalEuint32");
+        assert_eq!(EType::Euint(EWidth::W32).shared_name(), "sharedEuint32");
         assert_eq!(EType::Euint(EWidth::W32).plaintext_type(), "uint32");
         assert_eq!(EType::Ebool.suffix(), "Ebool");
         assert_eq!(EType::Ebool.external_name(), "externalEbool");
+        assert_eq!(EType::Ebool.shared_name(), "sharedEbool");
         assert_eq!(EType::Ebool.plaintext_type(), "bool");
         assert_eq!(EType::Eaddress.suffix(), "Eaddress");
         assert_eq!(EType::Eaddress.external_name(), "externalEaddress");
+        assert_eq!(EType::Eaddress.shared_name(), "sharedEaddress");
         assert_eq!(EType::Eaddress.plaintext_type(), "address");
         assert_eq!(EType::Eaddress.to_string(), "eaddress");
+    }
+
+    /// The three library name families are derived from one suffix, so they
+    /// must stay in lock-step across every profile type.
+    #[test]
+    fn shared_names_follow_the_suffix() {
+        for t in EType::ALL {
+            assert_eq!(t.shared_name(), format!("shared{}", t.suffix()));
+            assert_eq!(t.external_name(), format!("external{}", t.suffix()));
+        }
     }
 
     #[test]

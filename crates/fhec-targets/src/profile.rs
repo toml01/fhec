@@ -40,6 +40,14 @@ pub enum ProfileError {
         /// Provided count.
         got: usize,
     },
+    /// The pinned profile version has no shared boundary (spec §2.8) for this
+    /// encrypted type: no wire type, no `share`, or no `receive…Param`. Like
+    /// [`ProfileError::Unsupported`] this is a profile *gap*, so the checker
+    /// maps it to FHE5001.
+    NoSharedBoundary {
+        /// The encrypted type without a shared boundary.
+        ty: EType,
+    },
 }
 
 impl fmt::Display for ProfileError {
@@ -59,6 +67,13 @@ impl fmt::Display for ProfileError {
                 write!(
                     f,
                     "operation `{op}` expects {expected} operand(s), got {got}"
+                )
+            }
+            ProfileError::NoSharedBoundary { ty } => {
+                write!(
+                    f,
+                    "this profile version has no shared boundary for `{ty}` \
+                     (no shared wire type, `share`, or `receive…Param`)"
                 )
             }
         }
@@ -138,6 +153,31 @@ pub trait TargetProfile {
     /// The declaration text of the shared input-proof parameter appended to
     /// a function with `in` sugar (spec §2.3), e.g. `"bytes memory inputProof"`.
     fn input_proof_param(&self) -> String;
+
+    /// The shared-boundary wire type of an encrypted type (spec §2.8), e.g.
+    /// `"sharedEuint32"` — the type an `in shared` parameter and a
+    /// `shared(...)` return carry across the ABI.
+    ///
+    /// [`ProfileError::NoSharedBoundary`] when the pinned version has no
+    /// shared boundary for `ty` (→ FHE5001). The three shared-boundary
+    /// methods share one capability predicate: when one returns `Ok`, all
+    /// three do.
+    fn shared_wire_type(&self, ty: EType) -> Result<String, ProfileError>;
+
+    /// Renders the share call of the shared boundary (spec §2.8), e.g.
+    /// `"FHE.shareEuint32(handle, msg.sender)"`. See
+    /// [`TargetProfile::shared_wire_type`] for the error case.
+    fn render_share(
+        &self,
+        ty: EType,
+        handle: &str,
+        recipient: &str,
+    ) -> Result<String, ProfileError>;
+
+    /// Renders the parameter-receive call of the shared boundary (spec §2.8),
+    /// e.g. `"FHE.receiveEuint32Param(amount_shared)"`. See
+    /// [`TargetProfile::shared_wire_type`] for the error case.
+    fn render_receive_param(&self, ty: EType, wire: &str) -> Result<String, ProfileError>;
 
     /// The fully qualified conversion function used both for external-input
     /// conversion and trivial encryption (e.g. `"FHE.asEuint32"`).
