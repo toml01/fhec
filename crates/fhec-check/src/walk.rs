@@ -2,7 +2,7 @@
 //! assignment (spec §6), and rewrite-site/ACL-fact collection — one
 //! source-ordered walk. Expression typing lives in [`crate::exprs`].
 
-use fhec_bind::{BoundUnit, ContractId, FileId, FunctionId, Resolution, VarOwner};
+use fhec_bind::{BoundUnit, Builtin, ContractId, FileId, FunctionId, Resolution, VarOwner};
 use fhec_ir::EType;
 use fhec_targets::TargetProfile;
 use solar_ast as ast;
@@ -104,6 +104,11 @@ pub(crate) struct FnChecker<'a, 'ast> {
     /// so it never claims a path terminates unless a `return`/`revert` sits
     /// directly on it.
     pub(crate) terminated: bool,
+    /// Stack of open loops; each frame holds the definite-assignment
+    /// snapshot captured at every `break` reached inside that loop (spec
+    /// §6: a `break` exits the loop with whatever was assigned up to that
+    /// point, not with the state at the end of the loop body).
+    pub(crate) loop_breaks: Vec<Vec<Vec<AState>>>,
 }
 
 impl<'a, 'ast> FnChecker<'a, 'ast> {
@@ -151,6 +156,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             pre_span: None,
             named_returns: Vec::new(),
             terminated: false,
+            loop_breaks: Vec::new(),
         }
     }
 
@@ -177,6 +183,31 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 }
             }
         }
+        // A modifier attached to this function that can `return;` before its
+        // `_;` placeholder skips the function body entirely on that path:
+        // whatever the body would have assigned never runs. Detected
+        // conservatively and unconditionally (regardless of what the body
+        // itself does below) — issue #82's hazard class again, just crossing
+        // a modifier boundary instead of a callee boundary.
+        if !self.named_returns.is_empty() && self.has_risky_modifier() {
+            for &(slot, decl_span) in &self.named_returns.clone() {
+                if !self.flagged.contains(&(slot, decl_span)) {
+                    self.flagged.push((slot, decl_span));
+                    self.out.diagnostics.push(
+                        Diagnostic::error(
+                            codes::POSSIBLY_UNINITIALIZED,
+                            decl_span,
+                            "a modifier attached to this function may `return` before \
+                             its `_;` placeholder, skipping the function body on that \
+                             path; this encrypted named return would then cross the call \
+                             boundary unassigned, the same CoFHE default-ciphertext \
+                             hazard as an unassigned encrypted variable",
+                        )
+                        .with_rule("§6"),
+                    );
+                }
+            }
+        }
         let Some(body) = &f.ast.body else { return };
         self.walk_block(body);
         // Implicit return at the closing brace: unreachable only if the
@@ -184,6 +215,28 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
         if !self.terminated {
             self.check_named_returns_unassigned();
         }
+    }
+
+    /// Whether any modifier invoked by this function may `return;` before
+    /// its `_;` placeholder runs, on some path (see [`modifier_may_skip_body`]).
+    /// An unresolved or overloaded modifier name is checked for every
+    /// candidate — existentially risky is enough to flag (spec §1.3: when in
+    /// doubt, reject).
+    fn has_risky_modifier(&self) -> bool {
+        let f = self.unit.function(self.fid);
+        f.ast.header.modifiers.iter().any(|m| {
+            let Some(seg) = m.name.segments().first() else {
+                return false;
+            };
+            let Some(Resolution::Function(fids)) = self.unit.resolve_span(seg.span) else {
+                return false;
+            };
+            fids.iter().any(|&fid| {
+                let mf = self.unit.function(fid);
+                mf.ast.kind == ast::FunctionKind::Modifier
+                    && mf.ast.body.as_ref().is_some_and(modifier_may_skip_body)
+            })
+        })
     }
 
     // ---- slot machinery ------------------------------------------------
@@ -225,6 +278,24 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
     fn join_into(&mut self, snap: &[AState]) {
         for (i, st) in snap.iter().enumerate() {
             self.slots[i].state = AState::join(self.slots[i].state, *st);
+        }
+    }
+
+    /// Restores `self.slots` to the join (meet) of every given exit-state
+    /// candidate — the states definite-assignment sees at a point every
+    /// candidate can reach. An arm/clause/loop-exit that cannot actually
+    /// reach the join point (it terminates via `return`/`revert`, or a loop
+    /// never runs zero times) must be excluded from `candidates` by the
+    /// caller; its state must not pollute the join. Empty `candidates` means
+    /// nothing reaches this point — state is moot, and the caller is
+    /// expected to also mark `self.terminated`.
+    fn join_all(&mut self, candidates: &[&[AState]]) {
+        let mut iter = candidates.iter();
+        if let Some(first) = iter.next() {
+            self.restore(first);
+            for c in iter {
+                self.join_into(c);
+            }
         }
     }
 
@@ -341,6 +412,12 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
     pub(crate) fn walk_block(&mut self, block: &'ast ast::Block<'ast>) {
         self.scopes.push(FxHashMap::default());
         for s in block.stmts.iter() {
+            // Once a statement in this block has unconditionally terminated
+            // (`return`/`revert`/`break`/`continue`), everything after it is
+            // unreachable dead code and must not be walked as if it runs.
+            if self.terminated {
+                break;
+            }
             self.walk_stmt(s);
         }
         self.scopes.pop();
@@ -348,6 +425,30 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
 
     fn in_branch(&self) -> bool {
         self.branch_depth > 0
+    }
+
+    /// Whether `e` is a call to the builtin `revert(...)`/`revert()` or
+    /// `selfdestruct(...)` — both unconditionally halt execution, unlike
+    /// `require`/`assert`, which only halt when their condition is false.
+    /// The `revert Error(...);` *statement* form (spec-distinct from this
+    /// call form) is handled separately, in the `Revert` statement arm.
+    /// Mirrors the callee resolution in `exprs::call`, but only needs the
+    /// name, not a type.
+    fn expr_is_unconditional_halt(&self, e: &'ast ast::Expr<'ast>) -> bool {
+        let ast::ExprKind::Call(c, _) = &e.peel_parens().kind else {
+            return false;
+        };
+        let mut callee = c.peel_parens();
+        while let ast::ExprKind::CallOptions(inner, _) = &callee.kind {
+            callee = inner.peel_parens();
+        }
+        let ast::ExprKind::Ident(id) = &callee.kind else {
+            return false;
+        };
+        matches!(
+            self.unit.resolve(*id),
+            Some(Resolution::Builtin(Builtin("revert" | "selfdestruct")))
+        )
     }
 
     pub(crate) fn walk_stmt(&mut self, s: &'ast ast::Stmt<'ast>) {
@@ -368,7 +469,26 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             // A `precondition` block is a plaintext guard with its own,
             // stricter rules (spec §2.7); its scope does not escape.
             Precondition(b) => self.check_precondition_block(b),
-            Break | Continue => {
+            Break => {
+                if self.in_branch() {
+                    self.error(
+                        codes::BREAK_CONTINUE_IN_BRANCH,
+                        s.span,
+                        "`break`/`continue` cannot appear inside an encrypted branch: \
+                         both branches always execute (restructure the loop body)",
+                    );
+                } else {
+                    // Exits the loop right here, with whatever is assigned
+                    // up to this point — not with the state at the end of
+                    // the loop body (spec §6).
+                    let snap = self.snapshot();
+                    if let Some(top) = self.loop_breaks.last_mut() {
+                        top.push(snap);
+                    }
+                }
+                self.terminated = true;
+            }
+            Continue => {
                 if self.in_branch() {
                     self.error(
                         codes::BREAK_CONTINUE_IN_BRANCH,
@@ -377,10 +497,20 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                          both branches always execute (restructure the loop body)",
                     );
                 }
+                // Jumps back to the loop's condition check: nothing after it
+                // in this block runs this iteration. It is not itself a
+                // loop-exit (see `Break`), so it contributes no candidate.
+                self.terminated = true;
             }
             Placeholder => {}
             Expr(e) => {
                 self.type_root_expr(e);
+                // `revert(...)`/`selfdestruct(...)` as a builtin *call*
+                // (spec-distinct from the `revert Error(...);` statement
+                // form below) unconditionally halts execution too.
+                if self.expr_is_unconditional_halt(e) {
+                    self.terminated = true;
+                }
             }
             If(cond, then, els) => self.if_stmt(s, cond, then, els.as_deref()),
             While(cond, body) => {
@@ -394,14 +524,30 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 }
                 let ty = self.type_expr(cond);
                 self.reject_encrypted_loop(&ty, cond.span);
+                // Zero-trip candidate: the condition can be false on entry,
+                // so the body (and any `break` inside it) may never run.
                 let snap = self.snapshot();
                 let pre_terminated = self.terminated;
+                self.loop_breaks.push(Vec::new());
                 self.walk_stmt(body);
-                self.join_into(&snap);
-                // Whether the loop body always returns is undecidable here
-                // (it depends on the trip count); assume it does not, so
-                // code after the loop stays checked (§1.3: when in doubt,
-                // check rather than silently trust).
+                let body_terminated = self.terminated;
+                let body_states = self.snapshot();
+                let breaks = self.loop_breaks.pop().unwrap_or_default();
+                let mut candidates: Vec<&[AState]> = vec![&snap];
+                // A body that always terminates (return/revert/break/
+                // continue on every path) never falls through to re-check
+                // the condition, so its end state does not reach after the
+                // loop; each `break` point is its own, separate candidate.
+                if !body_terminated {
+                    candidates.push(&body_states);
+                }
+                for b in &breaks {
+                    candidates.push(b);
+                }
+                self.join_all(&candidates);
+                // The zero-trip candidate is always present, so the loop's
+                // own control flow never terminates the function on its own
+                // (§1.3: when in doubt, keep checking code after the loop).
                 self.terminated = pre_terminated;
             }
             DoWhile(body, cond) => {
@@ -414,13 +560,32 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     );
                 }
                 let pre_terminated = self.terminated;
+                self.loop_breaks.push(Vec::new());
                 self.walk_stmt(body);
+                let body_terminated = self.terminated;
+                let body_states = self.snapshot();
+                let breaks = self.loop_breaks.pop().unwrap_or_default();
                 self.pending.clear();
                 self.current_stmt_span = s.span;
                 let ty = self.type_expr(cond);
                 self.reject_encrypted_loop(&ty, cond.span);
-                // Same rationale as `while` above.
-                self.terminated = pre_terminated;
+
+                // Unlike `while`/`for`, a `do` body always runs at least
+                // once: there is no zero-trip candidate. The only ways out
+                // are falling through the body normally (if it doesn't
+                // always terminate first) and each `break` point.
+                let mut candidates: Vec<&[AState]> = Vec::new();
+                if !body_terminated {
+                    candidates.push(&body_states);
+                }
+                for b in &breaks {
+                    candidates.push(b);
+                }
+                // If nothing reaches the loop's own exit (every avenue
+                // through the body terminates, and no `break` escaped it),
+                // the `do`/`while` itself always terminates the function.
+                self.terminated = pre_terminated || candidates.is_empty();
+                self.join_all(&candidates);
             }
             For {
                 init,
@@ -445,14 +610,34 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     let ty = self.type_expr(cond);
                     self.reject_encrypted_loop(&ty, cond.span);
                 }
-                if let Some(next) = next {
-                    let ty = self.type_expr(next);
-                    self.reject_encrypted_loop(&ty, next.span);
-                }
+                // Zero-trip candidate: `init` and one (possibly failing)
+                // `cond` check ran, but neither the body nor `next` did.
+                // Captured before typing `next`, which — in real Solidity
+                // semantics — only ever runs after a body iteration, never
+                // on a `cond` check that fails immediately.
                 let snap = self.snapshot();
                 let pre_terminated = self.terminated;
+                self.loop_breaks.push(Vec::new());
                 self.walk_stmt(body);
-                self.join_into(&snap);
+                let body_terminated = self.terminated;
+                // `next` runs after a body iteration that falls through to
+                // it; a `break`/`return`/`continue` inside the body skips it.
+                if !body_terminated {
+                    if let Some(next) = next {
+                        let ty = self.type_expr(next);
+                        self.reject_encrypted_loop(&ty, next.span);
+                    }
+                }
+                let body_states = self.snapshot();
+                let breaks = self.loop_breaks.pop().unwrap_or_default();
+                let mut candidates: Vec<&[AState]> = vec![&snap];
+                if !body_terminated {
+                    candidates.push(&body_states);
+                }
+                for b in &breaks {
+                    candidates.push(b);
+                }
+                self.join_all(&candidates);
                 // Same rationale as `while` above.
                 self.terminated = pre_terminated;
                 self.scopes.pop();
@@ -527,6 +712,11 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                         "inline assembly cannot appear inside an encrypted branch",
                     );
                 }
+                // The Yul block itself is not walked, so an assignment to a
+                // named return inside inline assembly is invisible to this
+                // analysis: the slot stays (possibly wrongly) `Unassigned`.
+                // Safe-direction (over-strict, not a miss) — documented
+                // limitation, not a soundness gap.
             }
             Try(t) => {
                 if self.in_branch() {
@@ -550,17 +740,20 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     }
                     self.walk_block(&clause.block);
                     self.scopes.pop();
-                    outs.push(self.snapshot());
+                    // A clause that always returns/reverts never reaches the
+                    // point after the `try`; its (possibly unassigned) state
+                    // must not pollute the join for the clauses that do.
+                    if !self.terminated {
+                        outs.push(self.snapshot());
+                    }
                 }
-                // After a try: conservative join over every clause. Whether
-                // every clause always returns is undecidable in general
-                // (it can depend on the call's runtime outcome), so assume
-                // it does not: same rationale as loops above.
-                self.restore(&snap);
-                self.terminated = pre_terminated;
-                for o in &outs {
-                    self.join_into(o);
-                }
+                // Join only the clauses that can actually reach here — not
+                // the pre-`try` state: an uncaught revert from the call
+                // itself doesn't return named values at all, so that state
+                // is never a valid join candidate either.
+                self.join_all(&outs.iter().map(Vec::as_slice).collect::<Vec<_>>());
+                // If every clause terminates, the `try` as a whole does too.
+                self.terminated = pre_terminated || outs.is_empty();
             }
         }
         self.pending.clear();
@@ -770,8 +963,19 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     else_terminated = self.terminated;
                 }
                 let else_states = self.snapshot();
-                self.restore(&then_states);
-                self.join_into(&else_states);
+                // Only an arm that can actually reach the join point
+                // contributes its assignment state there; a terminated arm's
+                // state (possibly unassigned) must not pollute the join past
+                // its own `return`/`revert`. A missing `else` behaves like an
+                // empty, non-terminating arm (falls through unchanged).
+                let mut candidates: Vec<&[AState]> = Vec::new();
+                if !then_terminated {
+                    candidates.push(&then_states);
+                }
+                if !else_terminated {
+                    candidates.push(&else_states);
+                }
+                self.join_all(&candidates);
                 // The merge point is reachable unless it was already
                 // unreachable coming in, or both branches terminate (a
                 // missing `else` counts as a branch that falls through).
@@ -808,4 +1012,69 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
         let v = self.unit.var(vid);
         Some((declared_ty(self.unit, self.trust, &v.decl.ty), v.owner))
     }
+}
+
+/// Conservatively determines whether a modifier's body might reach a bare
+/// `return;` on some path before its `_;` placeholder runs. Such a path
+/// skips the guarded function's body entirely (issue #82's hazard class
+/// again: an encrypted named return the body would otherwise assign is left
+/// untouched, and crosses the call boundary unassigned).
+///
+/// This is a standalone, deliberately simple reachability scan — not the
+/// full [`AState`] definite-assignment machinery — since a modifier body
+/// only needs one bit of information: can a `return` happen before the
+/// placeholder is guaranteed to have run. Loops and `try` are treated
+/// pessimistically (a `return` anywhere inside is risky; the placeholder is
+/// never counted as *definite* from inside one, since they may run zero
+/// times or not reach every clause), which only ever widens what gets
+/// flagged, never narrows it (spec §1.3).
+pub(crate) fn modifier_may_skip_body(block: &ast::Block<'_>) -> bool {
+    /// Returns `(definitely_reaches_placeholder, may_return_before_it)` for
+    /// one statement, given whether the placeholder is already guaranteed to
+    /// have run on entry (`definite_in`).
+    fn scan_stmt(s: &ast::Stmt<'_>, definite_in: bool) -> (bool, bool) {
+        use ast::StmtKind::*;
+        match &s.kind {
+            Placeholder => (true, false),
+            Return(_) => (definite_in, !definite_in),
+            Block(b) | UncheckedBlock(b) => scan_block(b, definite_in),
+            If(_, then, els) => {
+                let (dt, rt) = scan_stmt(then, definite_in);
+                let (de, re) = match els {
+                    Some(e) => scan_stmt(e, definite_in),
+                    None => (false, false),
+                };
+                (dt && de, rt || re)
+            }
+            While(_, body) | DoWhile(body, _) => {
+                let (_, risky) = scan_stmt(body, definite_in);
+                (false, risky)
+            }
+            For { body, .. } => {
+                let (_, risky) = scan_stmt(body, definite_in);
+                (false, risky)
+            }
+            Try(t) => {
+                let risky = t
+                    .clauses
+                    .iter()
+                    .any(|c| scan_block(&c.block, definite_in).1);
+                (false, risky)
+            }
+            _ => (false, false),
+        }
+    }
+
+    fn scan_block(block: &ast::Block<'_>, definite_in: bool) -> (bool, bool) {
+        let mut definite = definite_in;
+        let mut risky = false;
+        for s in block.stmts.iter() {
+            let (d, r) = scan_stmt(s, definite);
+            risky |= r;
+            definite |= d;
+        }
+        (definite, risky)
+    }
+
+    scan_block(block, false).1
 }

@@ -591,6 +591,169 @@ fn plain_named_return_left_unassigned_is_not_flagged() {
     });
 }
 
+// ---- external-review follow-up: terminated-arm join precision ----------
+
+#[test]
+fn if_arm_that_returns_does_not_pollute_the_join_with_else() {
+    // `then` always returns; only `else` can reach the closing brace, and
+    // it assigns `res` — no false FHE2007.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool c, euint64 a) internal returns (euint64 res) {\n\
+             if (c) { return a; } else { res = a; }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn if_arm_that_reverts_does_not_pollute_the_join_with_then() {
+    // `else` always reverts; only `then` can reach the closing brace, and
+    // it assigns `res` — no false FHE2007.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         error Err();\n\
+         library L {\n\
+           function f(bool c, euint64 a) internal returns (euint64 res) {\n\
+             if (c) { res = a; } else { revert Err(); }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn a_function_that_only_reverts_has_no_reachable_exit_and_stays_clean() {
+    // The closing brace is never reached (the only statement always
+    // reverts), so the named return is never actually exposed unassigned.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f() internal returns (euint64 r) {\n\
+             revert();\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn try_catch_where_every_clause_assigns_stays_clean() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function ext(euint64 a) internal returns (euint64) { return a; }\n\
+           function f(euint64 a, euint64 b) internal returns (euint64 res) {\n\
+             try L.ext(a) returns (euint64 v) {\n\
+               res = v;\n\
+             } catch {\n\
+               res = b;\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn do_while_break_before_assignment_still_flags_the_named_return() {
+    // The `break` exits before `r = a;` ever runs; the statement after the
+    // `break` is unreachable, so `r` is never actually assigned.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(euint64 a) internal returns (euint64 r) {\n\
+             do { break; r = a; } while (false);\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "euint64 r");
+    });
+}
+
+#[test]
+fn for_loop_zero_trip_does_not_count_the_increment_as_having_run() {
+    // The condition starts (and stays) `false`, so the body — and the
+    // increment `r = a`, which only runs after a body iteration — never
+    // execute even once.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(euint64 a) internal returns (euint64 r) {\n\
+             for (; false; r = a) {}\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "euint64 r");
+    });
+}
+
+#[test]
+fn modifier_with_early_return_before_placeholder_still_flags_the_guarded_function() {
+    // The function body itself assigns `res` on every path, but the
+    // modifier can `return;` before `_;` runs, skipping the body entirely
+    // on that path — a real, unassigned-crossing-the-boundary hazard the
+    // body-only analysis cannot see.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           modifier guarded(bool ok) {\n\
+             if (!ok) { return; }\n\
+             _;\n\
+           }\n\
+           function f(bool ok, euint64 a) public guarded(ok) returns (euint64 res) {\n\
+             res = a;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "euint64 res");
+    });
+}
+
+#[test]
+fn modifier_whose_placeholder_always_runs_first_stays_clean() {
+    // The placeholder is unconditionally first, so the function body always
+    // runs; a `return;` after it doesn't skip anything.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           modifier guarded(bool ok) {\n\
+             _;\n\
+             if (!ok) { return; }\n\
+           }\n\
+           function f(bool ok, euint64 a) public guarded(ok) returns (euint64 res) {\n\
+             res = a;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
 #[test]
 fn encrypted_branch_write_needs_pre_value() {
     // The merge reads the pre-value, which is possibly uninitialized.
