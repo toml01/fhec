@@ -6,10 +6,11 @@ import {
   TASK_COMPILE_SOLIDITY_RUN_SOLC,
   TASK_COMPILE_SOLIDITY_RUN_SOLCJS,
 } from "hardhat/builtin-tasks/task-names";
-import { extendConfig, subtask, task } from "hardhat/config";
+import { extendConfig, extendEnvironment, subtask, task } from "hardhat/config";
 import { HardhatPluginError } from "hardhat/plugins";
 import type { HardhatConfig, HardhatUserConfig } from "hardhat/types";
 
+import { wrapArtifacts } from "./artifacts";
 import { runFhecBuild } from "./build";
 import {
   formatOverrideWarning,
@@ -37,6 +38,8 @@ export {
   formatOverrideWarning,
 } from "./overrides";
 export type { OverrideNotice } from "./overrides";
+export { translateFsolFqn } from "./fqn";
+export { wrapArtifacts } from "./artifacts";
 
 extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) => {
   const user = userConfig.fhec ?? {};
@@ -83,6 +86,13 @@ extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) =>
   }
 
   config.fhec = resolved;
+});
+
+extendEnvironment((hre) => {
+  if (!hre.config.fhec.enabled) {
+    return;
+  }
+  (hre as { artifacts: typeof hre.artifacts }).artifacts = wrapArtifacts(hre);
 });
 
 task(TASK_COMPILE, async (args, hre, runSuper) => {

@@ -96,6 +96,55 @@ function artifactExists(dir, contractFile, contractName) {
   return candidates.some((p) => fs.existsSync(p));
 }
 
+function writeReadArtifactTaskProject(dir) {
+  fs.mkdirSync(path.join(dir, "contracts", "Nested"), { recursive: true });
+  linkLocalHardhat(dir);
+  fs.writeFileSync(
+    path.join(dir, "hardhat.config.js"),
+    `'use strict';
+const { task } = require("hardhat/config");
+require(${JSON.stringify(pluginEntry)});
+task("fhec-test-read-artifact", async (args, hre) => {
+  const artifact = await hre.artifacts.readArtifact("contracts/Nested/D.fsol:D");
+  console.log(
+    "FHEC_TEST_RESULT:" +
+      JSON.stringify({ contractName: artifact.contractName, sourceName: artifact.sourceName }),
+  );
+});
+module.exports = {
+  solidity: {
+    version: "0.8.28",
+    settings: { evmVersion: "cancun" },
+  },
+};
+`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "fhec.toml"),
+    `[project]
+src = "contracts"
+out = "generated"
+`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "contracts", "Nested", "D.fsol"),
+    "pragma solidity ^0.8.25; contract D { uint public x; }\n",
+  );
+}
+
+function runTask(dir, binary, taskName) {
+  return spawnSync(process.execPath, [hardhatCli(), taskName], {
+    cwd: dir,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      FHEC_BINARY_PATH: binary,
+      HARDHAT_DISABLE_TELEMETRY: "true",
+    },
+    timeout: 180_000,
+  });
+}
+
 test(
   "hardhat compile transpiles a no-FHE .fsol and writes artifacts",
   { skip: skipReason, timeout: 180_000 },
@@ -114,6 +163,36 @@ test(
       );
       assert.ok(fs.existsSync(path.join(dir, "generated", "C.sol")), "expected generated/C.sol");
       assert.ok(artifactExists(dir, "C.sol", "C"), "expected Hardhat artifact for C");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "hre.artifacts.readArtifact resolves a .fsol FQN end-to-end",
+  { skip: skipReason, timeout: 180_000 },
+  () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-fqn-"));
+    try {
+      writeReadArtifactTaskProject(dir);
+      const compileResult = runCompile(dir, nativeBinary);
+      assert.equal(
+        compileResult.status,
+        0,
+        `compile failed\nstdout:\n${compileResult.stdout}\nstderr:\n${compileResult.stderr}`,
+      );
+      const taskResult = runTask(dir, nativeBinary, "fhec-test-read-artifact");
+      assert.equal(
+        taskResult.status,
+        0,
+        `task failed\nstdout:\n${taskResult.stdout}\nstderr:\n${taskResult.stderr}`,
+      );
+      const match = taskResult.stdout.match(/FHEC_TEST_RESULT:(.+)/);
+      assert.ok(match, `expected FHEC_TEST_RESULT marker in stdout:\n${taskResult.stdout}`);
+      const parsed = JSON.parse(match[1]);
+      assert.equal(parsed.contractName, "D");
+      assert.equal(parsed.sourceName, "generated/Nested/D.sol");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

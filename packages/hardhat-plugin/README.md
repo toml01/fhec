@@ -76,11 +76,36 @@ If no `fhec.toml` is present at compile time, the plugin throws and tells
 you to run `fhec init` (or set `fhec.enabled: false`).
 
 Hardhat then names artifacts `<out>/Path/File.sol:Name` (default
-`generated/...`), not `contracts/Path/File.sol:Name`. Update
-`getContractFactory`, `deployments.deploy({ contract })`, and
-`verify:verify` to that form. `solidity.overrides` keys that still use the
-source path are rewritten to the `<out>/` form at plugin load, with a
-warning. Test and deploy scripts are not rewritten.
+`generated/...`), not `contracts/Path/File.sol:Name`. `solidity.overrides`
+keys that still use the source path are rewritten to the `<out>/` form at
+plugin load, with a warning. Test and deploy scripts are not rewritten —
+name the `.fsol` file instead, as below.
+
+## Naming a `.fsol` file directly
+
+You can name the `.fsol` file you actually edit — the one under `src`, not
+`out` — in a fully-qualified name, and it resolves to the generated
+artifact:
+
+```ts
+await ethers.getContractFactory(
+  "contracts/ERC20Confidential/ERC20ConfidentialLib.fsol:ERC20ConfidentialLib",
+);
+```
+
+This works for `hre.artifacts.readArtifact` / `readArtifactSync` /
+`artifactExists` / `getBuildInfo` / `getBuildInfoSync` /
+`formArtifactPathFromFullyQualifiedName`. The lookup uses
+`generated/.fhec/manifest.json`, so it only works once you have run
+`hardhat compile` at least once (the manifest is written there); before
+that, or for a path the manifest does not know about, the name you gave is
+passed straight through to Hardhat unchanged — you get Hardhat's normal
+"contract not found" error, not a silent miss.
+
+A plain pass-through `.sol` file (one with no dialect features, copied
+byte-identical into `out`) is not translated by this alias: it already
+keeps its own name, so name it with the `<out>/` prefix directly, as
+before.
 
 ## Config keys
 
