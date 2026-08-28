@@ -16,7 +16,12 @@ const LIBRARY_METHODS: ReadonlySet<string> = new Set([
   "deployContract",
 ]);
 
-const WRAPPED = Symbol.for("@fhec/hardhat-plugin.wrapEthers");
+/**
+ * Outer proxies created by {@link wrapEthers}. Used instead of an `in` check
+ * on the wrapped object: `hre.ethers` is a `lazyObject` Proxy whose `has`
+ * trap forces construction.
+ */
+const wrappedEthers = new WeakSet<object>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -90,68 +95,88 @@ export function translateFactoryOptionsArg(
   return { ...value, libraries };
 }
 
+/**
+ * Index of the `signerOrOptions` slot for each wrapped method, matching
+ * `@nomicfoundation/hardhat-ethers` 3.x:
+ * - `getContractFactory(name, signerOrOptions?)` — not the ABI+bytecode form
+ * - `getContractFactoryFromArtifact(artifact, signerOrOptions?)`
+ * - `deployContract(name, args?, signerOrOptions?)` — options are arg 1 unless
+ *   arg 1 is the constructor-args array, in which case they are arg 2
+ */
+function factoryOptionsArgIndex(method: string, args: unknown[]): number | undefined {
+  switch (method) {
+    case "getContractFactory":
+      return typeof args[0] === "string" ? 1 : undefined;
+    case "getContractFactoryFromArtifact":
+      return 1;
+    case "deployContract":
+      return Array.isArray(args[1]) ? 2 : 1;
+    default:
+      return undefined;
+  }
+}
+
+function translateMethodArgs(hre: HardhatRuntimeEnvironment, method: string, args: unknown[]): unknown[] {
+  const index = factoryOptionsArgIndex(method, args);
+  if (index === undefined || index >= args.length) {
+    return args;
+  }
+  const translated = translateFactoryOptionsArg(hre, args[index]);
+  if (translated === args[index]) {
+    return args;
+  }
+  const next = args.slice();
+  next[index] = translated;
+  return next;
+}
+
 function wrapEthers(hre: HardhatRuntimeEnvironment, ethers: object): object {
-  if (WRAPPED in ethers) {
+  if (wrappedEthers.has(ethers)) {
     return ethers;
   }
-  return new Proxy(ethers, {
+  const proxy = new Proxy(ethers, {
     get(target, prop, receiver) {
-      if (prop === WRAPPED) {
-        return true;
-      }
       if (typeof prop === "string" && LIBRARY_METHODS.has(prop)) {
         const fn = Reflect.get(target, prop, receiver);
         if (typeof fn === "function") {
-          return (...args: unknown[]) =>
-            fn.call(
-              target,
-              ...args.map((arg) => translateFactoryOptionsArg(hre, arg)),
-            );
+          return (...args: unknown[]) => fn.apply(target, translateMethodArgs(hre, prop, args));
         }
       }
-      const value = Reflect.get(target, prop, receiver);
-      return typeof value === "function" ? value.bind(target) : value;
-    },
-    has(target, prop) {
-      return prop === WRAPPED || Reflect.has(target, prop);
+      return Reflect.get(target, prop, receiver);
     },
   });
+  wrappedEthers.add(proxy);
+  return proxy;
 }
 
 type HreWithEthers = HardhatRuntimeEnvironment & { ethers?: unknown };
 
-/**
- * Wraps `hre.ethers` so `getContractFactory`, `getContractFactoryFromArtifact`,
- * and `deployContract` translate `.fsol` keys in their `libraries` map before
- * `hardhat-ethers` validates them against `linkReferences`.
- *
- * This intercepts assignment of `hre.ethers`, not a task definition, so it
- * does not depend on whether `@fhec/hardhat-plugin` or `@nomicfoundation/hardhat-ethers`
- * is `require`d first: `extendEnvironment` callbacks run after every plugin has
- * registered, but they still run in require order, and `hardhat-ethers` assigns
- * `hre.ethers` from its own callback. A getter/setter on the property catches
- * that assignment either before or after this function runs. If hardhat-ethers
- * is not installed, the property stays unset until something assigns it.
- */
-export function installLibrariesTranslation(hre: HardhatRuntimeEnvironment): void {
-  if (!hre.config.fhec.enabled) {
-    return;
+function wrapIfObject(hre: HardhatRuntimeEnvironment, value: unknown): unknown {
+  if (value === undefined || value === null || typeof value !== "object") {
+    return value;
   }
+  return wrapEthers(hre, value);
+}
 
-  const env = hre as HreWithEthers;
+function readOwnEthers(env: HreWithEthers): unknown {
   const descriptor = Object.getOwnPropertyDescriptor(env, "ethers");
-  let current: unknown = env.ethers;
-
-  const wrapIfObject = (value: unknown): unknown => {
-    if (value === undefined || value === null || typeof value !== "object") {
-      return value;
-    }
-    return wrapEthers(hre, value);
-  };
-
-  if (current !== undefined) {
-    current = wrapIfObject(current);
+  if (descriptor === undefined) {
+    return undefined;
   }
+  if (descriptor.get !== undefined) {
+    return descriptor.get.call(env);
+  }
+  return descriptor.value;
+}
+
+/**
+ * Replaces `hre.ethers` with a getter/setter that wraps the current value and
+ * any later assignment. Caller must only invoke this when the property already
+ * exists, or in unit tests that simulate a later `hre.ethers = …` assignment.
+ */
+function installEthersAccessor(hre: HardhatRuntimeEnvironment, env: HreWithEthers): void {
+  const descriptor = Object.getOwnPropertyDescriptor(env, "ethers");
+  let current: unknown = wrapIfObject(hre, readOwnEthers(env));
 
   Object.defineProperty(env, "ethers", {
     configurable: true,
@@ -160,7 +185,73 @@ export function installLibrariesTranslation(hre: HardhatRuntimeEnvironment): voi
       return current;
     },
     set(value: unknown) {
-      current = wrapIfObject(value);
+      current = wrapIfObject(hre, value);
     },
   });
+}
+
+/**
+ * If hardhat-ethers has not assigned `hre.ethers` yet, push a follow-up
+ * extender so we wrap that assignment after remaining plugins run — without
+ * pre-defining `ethers` (which would make `'ethers' in hre` true).
+ *
+ * `extendEnvironment` throws when there is no Hardhat context (unit tests).
+ */
+function scheduleWrapAfterRemainingExtenders(hre: HardhatRuntimeEnvironment): boolean {
+  try {
+    // Same array the Environment constructor is iterating: a push during
+    // forEach runs after the remaining plugins, including hardhat-ethers.
+    const { extendEnvironment } = require("hardhat/config") as {
+      extendEnvironment: (extender: (later: HardhatRuntimeEnvironment) => void) => void;
+    };
+    extendEnvironment((later) => {
+      if (later !== hre) {
+        return;
+      }
+      if (!Object.prototype.hasOwnProperty.call(later, "ethers")) {
+        return;
+      }
+      installEthersAccessor(hre, later as HreWithEthers);
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wraps `hre.ethers` so `getContractFactory`, `getContractFactoryFromArtifact`,
+ * and `deployContract` translate `.fsol` keys in their `libraries` map before
+ * `hardhat-ethers` validates them against `linkReferences`.
+ *
+ * Only those three methods are wrapped. The rest of the ethers namespace
+ * (`Contract`, `Interface`, `Wallet`, …) is forwarded unchanged: binding
+ * constructors breaks statics (`Interface.from`, `Wallet.createRandom`) and
+ * identity (`hre.ethers.Contract === hre.ethers.Contract`).
+ *
+ * `hardhat-ethers` assigns `hre.ethers = lazyObject(...)`. This intercepts
+ * that assignment rather than a task, so require order does not matter:
+ * if the lazy object is already present it is wrapped immediately; if a
+ * later extender will assign it, a follow-up extender wraps that value.
+ * If hardhat-ethers is not installed, `ethers` is never defined, so
+ * `'ethers' in hre` stays false.
+ */
+export function installLibrariesTranslation(hre: HardhatRuntimeEnvironment): void {
+  if (!hre.config.fhec.enabled) {
+    return;
+  }
+
+  const env = hre as HreWithEthers;
+  if (Object.prototype.hasOwnProperty.call(env, "ethers")) {
+    installEthersAccessor(hre, env);
+    return;
+  }
+
+  if (scheduleWrapAfterRemainingExtenders(hre)) {
+    return;
+  }
+
+  // No Hardhat context (unit tests): install the accessor so a later
+  // `hre.ethers = …` assignment is still wrapped.
+  installEthersAccessor(hre, env);
 }
