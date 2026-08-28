@@ -254,20 +254,12 @@ pub(crate) fn expand_sugar(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePl
         ));
     }
 
-    // Explicit cast sugar (spec §2.9): only the callee identifier is
-    // rewritten; the argument list is left byte-identical.
-    for site in ctx
-        .checked
-        .cast_sugar_sites
-        .iter()
-        .filter(|s| s.file.index() == file_idx)
-    {
-        plan.push(Patch::replace(
-            ctx.range(site.callee_span),
-            ctx.profile.conversion_fn(site.ty),
-            Provenance::new("§2.9 cast-sugar", ctx.range(site.callee_span)),
-        ));
-    }
+    // Explicit cast sugar (spec §2.9) is rewritten by the shared recursive
+    // renderer (`Renderer::render_expr`, indexed via `ctx.cast_sugar_by_span`)
+    // reached through `patch_expr`'s per-statement call, alongside operator
+    // and ternary sites — not a bespoke flat patch here — so a cast-sugar
+    // call nested inside another rewritten construct composes instead of
+    // colliding (spec §2.5).
 
     let mut sites: Vec<&fhec_check::InSugarSite> = ctx
         .checked

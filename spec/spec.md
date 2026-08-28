@@ -310,7 +310,7 @@ Restrictions 6, 7, and 9 are conservative refusals, not statements about what is
 
 Unlike §2.3, §2.7, and §2.8, this section adds **no new grammar production** to the forked parser. `eT(x)` already parses as an ordinary call expression whose callee is a plain identifier — the same shape as any user-defined type cast (`uint32(x)`) or function call. The sugar is a pure naming convention resolved at check time by ordinary name resolution: the callee identifier must denote an encrypted value type of the pinned profile, and it must not be shadowed by an in-scope declaration of another kind (a local, parameter, contract, or user type named `euint32` takes priority, exactly as plain Solidity name resolution already requires). Nothing about this construct is ambiguous with valid Solidity, since `eT` is never itself a valid Solidity type name outside the dialect's trusted profile bindings.
 
-**Expansion.** The call is rewritten in place: the callee identifier `eT` becomes `FHE.as<T>`, and the argument list is left byte-identical — only the callee text is replaced.
+**Expansion.** The call is rewritten in place: the callee identifier `eT` becomes `FHE.as<T>`, and the argument list is left byte-identical — only the callee text is replaced. When `eT(x)` sits inside another rewritten construct — an operand of an operator or compound assignment (§4), an arm of a ternary, or an encrypted-branch rendering (§5.2) — it renders inline as part of that construct's own patch, per the nested-sites invariant of §2.5; it never produces a second, overlapping patch of its own.
 
 **Restrictions.**
 
