@@ -12,15 +12,18 @@
 //!
 //! Dedupe (spec §8.6): an equivalent existing call suppresses the insertion —
 //! same ACL function, syntactically identical argument after parenthesis
-//! stripping; method syntax counts as library syntax. R1 scans forward from
-//! the trigger to the next write of the same location or the end of the
-//! block; R2/R3 insert *before* their trigger, so their window scans backward
-//! from the trigger to the start of the block (a §8.6 refinement — the
-//! spec's forward window is written for R1).
+//! stripping; method syntax counts as library syntax. An author-written
+//! `allowPublic` or `allowGlobal` on a copied local also subsumes only R1's
+//! `allowThis`. R1 scans forward from the trigger to the next write of the
+//! same location or the end of the block; R2/R3 insert *before* their trigger,
+//! so their window scans backward from the trigger to the start of the block
+//! (a §8.6 refinement — the spec's forward window is written for R1).
 
 use std::cell::RefCell;
 
-use fhec_check::{EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, Severity, SlotKind};
+use fhec_check::{
+    EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, PlainTy, Severity, SlotKind, Ty,
+};
 use fhec_emit::{TempHint, TempNamer};
 use fhec_ir::{EType, FheOp, FilePlan, Patch, Provenance};
 use solar_ast as ast;
@@ -162,20 +165,35 @@ fn rule_r1(
     // files, so it counts (spec §8.6).
     let local = assigned_local(ctx, w.function, w.stmt_span, &lvalue);
     let local_window = local
-        .as_deref()
-        .map(|l| local_grant_window(ctx, w.function, w.stmt_span, l))
+        .as_ref()
+        .map(|(name, var)| local_grant_window(ctx, w.function, w.stmt_span, name, *var))
         .unwrap_or_default();
     let mut missing: Vec<FheOp> = Vec::new();
     for &op in ops {
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
-        let granted = window
+        let equivalent_grant = window
             .iter()
             .any(|s| acl_call_matches(ctx, s, &name, &lvalue, None))
-            || local.as_deref().is_some_and(|l| {
+            || local.as_ref().is_some_and(|(l, _)| {
                 local_window
                     .iter()
                     .any(|s| acl_call_matches(ctx, s, &name, l, None))
             });
+        // An explicit broad grant on the local copied into the slot makes the
+        // handle readable by this contract already, so R1 need not append its
+        // `allowThis`. This is deliberately not applied to `allowSender`:
+        // §8.1 treats that as the separate, owner-proven grant, and §8.6 only
+        // extends this broad-grant subsumption to the unconditional contract
+        // grant.
+        let broad_local_grant = op == FheOp::AllowThis
+            && local.as_ref().is_some_and(|(l, _)| {
+                local_window.iter().any(|s| {
+                    ["allowPublic", "allowGlobal"]
+                        .into_iter()
+                        .any(|name| acl_call_matches(ctx, s, name, l, None))
+                })
+            });
+        let granted = equivalent_grant || broad_local_grant;
         if !granted {
             missing.push(op);
         }
@@ -811,7 +829,7 @@ fn forward_window<'ast>(
     };
     let mut out = Vec::new();
     for s in stmts.iter().skip(idx + 1) {
-        if writes_to(ctx, s, lvalue) {
+        if writes_to(ctx, s, WriteTarget::Text(lvalue)) {
             break;
         }
         out.push(s);
@@ -900,12 +918,19 @@ fn search_stmt<'ast>(
 /// `local` already covers `slot` once the handle is stored there. The
 /// idiomatic shape is compute into a local, grant on the local, then store
 /// (spec §8.6).
+///
+/// The RHS must *resolve* to a local variable or parameter — not merely be
+/// identifier-shaped text. A state variable, a free function reference, or
+/// any other bare identifier is rejected: the write-barrier this feeds
+/// ([`local_grant_window`]) only sees sibling statements in the same block,
+/// so it cannot prove a state variable (or anything reachable through a call)
+/// still holds the value an earlier grant covered (spec §1.3).
 fn assigned_local<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,
     stmt_span: Span,
     lvalue: &str,
-) -> Option<String> {
+) -> Option<(String, fhec_bind::VarId)> {
     let (stmts, idx) = enclosing_block(ctx, function, stmt_span)?;
     let ast::StmtKind::Expr(e) = &stmts[idx].kind else {
         return None;
@@ -916,8 +941,15 @@ fn assigned_local<'ast>(
     if strip_parens(&ctx.snippet(lhs.span)) != lvalue {
         return None;
     }
+    let ast::ExprKind::Ident(ident) = &rhs.peel_parens().kind else {
+        return None;
+    };
+    let var = match ctx.unit.resolve(*ident) {
+        Some(fhec_bind::Resolution::Local(v)) | Some(fhec_bind::Resolution::Param(v)) => *v,
+        _ => return None,
+    };
     let text = strip_parens(&ctx.snippet(rhs.span)).to_string();
-    is_ident_text(&text).then_some(text)
+    Some((text, var))
 }
 
 /// Whether a statement declares a variable named `name`.
@@ -940,11 +972,20 @@ fn local_grant_window<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,
     trigger: Span,
-    local: &str,
+    local_name: &str,
+    local_var: fhec_bind::VarId,
 ) -> Vec<&'ast ast::Stmt<'ast>> {
     let mut out = Vec::new();
     for s in backward_window(ctx, function, trigger) {
-        if writes_to(ctx, s, local) || declares(s, local) {
+        if writes_to(
+            ctx,
+            s,
+            WriteTarget::Var {
+                name: local_name,
+                id: local_var,
+            },
+        ) || declares(s, local_name)
+        {
             break;
         }
         out.push(s);
@@ -952,26 +993,127 @@ fn local_grant_window<'ast>(
     out
 }
 
-/// Whether a statement is an assignment to (or inc/dec of) `lvalue`.
-fn writes_to<'ast>(ctx: &Ctx<'_, 'ast>, stmt: &'ast ast::Stmt<'ast>, lvalue: &str) -> bool {
-    let ast::StmtKind::Expr(e) = &stmt.kind else {
-        return false;
-    };
-    match &e.kind {
-        ast::ExprKind::Assign(lhs, _, _) => strip_parens(&ctx.snippet(lhs.span)) == lvalue,
-        ast::ExprKind::Unary(op, x)
-            if matches!(
-                op.kind,
-                ast::UnOpKind::PreInc
-                    | ast::UnOpKind::PreDec
-                    | ast::UnOpKind::PostInc
-                    | ast::UnOpKind::PostDec
-            ) =>
-        {
-            strip_parens(&ctx.snippet(x.span)) == lvalue
+/// What [`writes_to`] compares a candidate lvalue against.
+#[derive(Clone, Copy)]
+enum WriteTarget<'a> {
+    /// An arbitrary source-text lvalue path (a state variable, a mapping or
+    /// array element, a struct field, ...). Compared by snippet text only —
+    /// there is no single resolved identity for a structural path.
+    Text(&'a str),
+    /// A resolved local variable or parameter. Compared by [`VarId`]
+    /// identity once a candidate resolves to one, which is immune to
+    /// comments/whitespace and to two differently-spelled spans that name
+    /// the same variable.
+    ///
+    /// [`VarId`]: fhec_bind::VarId
+    Var { name: &'a str, id: fhec_bind::VarId },
+}
+
+impl WriteTarget<'_> {
+    fn text(&self) -> &str {
+        match self {
+            WriteTarget::Text(s) => s,
+            WriteTarget::Var { name, .. } => name,
         }
-        _ => false,
     }
+}
+
+/// Whether a statement can assign to, delete, or inc/dec `target` anywhere
+/// in its subtree.
+///
+/// This is deliberately conservative: assembly and parser-recovery nodes are
+/// barriers because proving that they leave the tracked value untouched would
+/// require semantics this pass does not model (spec §1.3).
+fn writes_to<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+    target: WriteTarget<'_>,
+) -> bool {
+    use solar_ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Search<'a, 'ctx, 'ast> {
+        ctx: &'a Ctx<'ctx, 'ast>,
+        target: WriteTarget<'a>,
+    }
+
+    impl<'ast> Search<'_, '_, 'ast> {
+        fn lvalue_matches(&self, lhs: &'ast ast::Expr<'ast>) -> bool {
+            if strip_parens(&self.ctx.snippet(lhs.span)) == self.target.text() {
+                return true;
+            }
+            match &lhs.peel_parens().kind {
+                ast::ExprKind::Tuple(items) => items.iter().any(|item| {
+                    item.as_ref()
+                        .unspan()
+                        .is_some_and(|item| self.lvalue_matches(item))
+                }),
+                // A bare identifier: when tracking a resolved local/param,
+                // resolve the candidate too and compare identity rather than
+                // text — a comment or extra parenthesization must not hide a
+                // real write (spec §1.3). When tracking arbitrary text (a
+                // state variable, a mapping/array/struct path), the fast
+                // text-compare above is the only available identity, so a
+                // mismatch here means a genuinely different lvalue.
+                ast::ExprKind::Ident(ident) => match self.target {
+                    WriteTarget::Var { id, .. } => matches!(
+                        self.ctx.unit.resolve(*ident),
+                        Some(fhec_bind::Resolution::Local(v))
+                            | Some(fhec_bind::Resolution::Param(v))
+                            if *v == id
+                    ),
+                    WriteTarget::Text(_) => false,
+                },
+                // Every valid non-tuple Solidity lvalue has one of these
+                // shapes. A different shape is a recovery/unsupported case,
+                // where stopping is the only sound answer.
+                ast::ExprKind::Member(_, _) | ast::ExprKind::Index(_, _) => false,
+                _ => true,
+            }
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Search<'_, '_, 'ast> {
+        type BreakValue = ();
+
+        fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<()> {
+            if matches!(
+                stmt.kind,
+                ast::StmtKind::Assembly(_) | ast::StmtKind::Placeholder
+            ) {
+                return ControlFlow::Break(());
+            }
+            self.walk_stmt(stmt)
+        }
+
+        fn visit_expr(&mut self, e: &'ast ast::Expr<'ast>) -> ControlFlow<()> {
+            let writes = match &e.kind {
+                ast::ExprKind::Assign(lhs, _, _) | ast::ExprKind::Delete(lhs) => {
+                    self.lvalue_matches(lhs)
+                }
+                ast::ExprKind::Unary(op, target)
+                    if matches!(
+                        op.kind,
+                        ast::UnOpKind::PreInc
+                            | ast::UnOpKind::PreDec
+                            | ast::UnOpKind::PostInc
+                            | ast::UnOpKind::PostDec
+                    ) =>
+                {
+                    self.lvalue_matches(target)
+                }
+                ast::ExprKind::Err(_) => true,
+                _ => false,
+            };
+            if writes {
+                ControlFlow::Break(())
+            } else {
+                self.walk_expr(e)
+            }
+        }
+    }
+
+    Search { ctx, target }.visit_stmt(stmt).is_break()
 }
 
 /// Strips one `address(...)` wrapper, then parentheses.
@@ -1012,10 +1154,19 @@ fn acl_call_matches_normalized<'ast>(
         .collect();
     let base_text = strip_parens(&ctx.snippet(base.span)).to_string();
     let account_matches = |t: &str| strip_address_cast(t) == account_key;
-    // Library syntax: FHE.name(handle, account).
-    let lib = arg_texts.len() == 2 && arg_texts[0] == arg0 && account_matches(&arg_texts[1]);
+    // Library syntax: FHE.name(handle, account). The checker only records
+    // `FheLib` after its resolution-based profile-library trust check.
+    let lib = matches!(
+        ctx.checked.types.get(base.span),
+        Some(Ty::Plain(PlainTy::FheLib))
+    ) && arg_texts.len() == 2
+        && arg_texts[0] == arg0
+        && account_matches(&arg_texts[1]);
     // Method syntax: handle.name(account).
-    let method_syn = base_text == arg0 && arg_texts.len() == 1 && account_matches(&arg_texts[0]);
+    let method_syn = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(_)))
+        && base_text == arg0
+        && arg_texts.len() == 1
+        && account_matches(&arg_texts[0]);
     lib || method_syn
 }
 
@@ -1093,8 +1244,12 @@ fn acl_call_matches<'ast>(
         .collect();
     let base_text = strip_parens(&ctx.snippet(base.span)).to_string();
 
-    // Library syntax: FHE.name(handle[, account]) — the base is the library.
-    let lib_match = match (arg_texts.first(), arg1) {
+    // Library syntax: FHE.name(handle[, account]) — the base must have
+    // passed the checker's resolution-based profile-library trust rule.
+    let lib_match = matches!(
+        ctx.checked.types.get(base.span),
+        Some(Ty::Plain(PlainTy::FheLib))
+    ) && match (arg_texts.first(), arg1) {
         (Some(a0), None) => a0 == arg0 && arg_texts.len() == 1,
         (Some(a0), Some(a1)) => {
             a0 == arg0 && arg_texts.get(1).map(String::as_str) == Some(a1) && arg_texts.len() == 2
@@ -1102,7 +1257,8 @@ fn acl_call_matches<'ast>(
         (None, _) => false,
     };
     // Method syntax: handle.name([account]) — the base is the handle.
-    let method_match = base_text == arg0
+    let method_match = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(_)))
+        && base_text == arg0
         && match arg1 {
             None => arg_texts.is_empty(),
             Some(a1) => arg_texts.len() == 1 && arg_texts[0] == a1,

@@ -2187,6 +2187,123 @@ fn r1_dedupe_accepts_a_grant_on_the_stored_local() {
 }
 
 #[test]
+fn r1_dedupe_broad_grant_on_stored_local_suppresses_only_allow_this() {
+    // Spec §8.6: public/global access on the local handle covers R1's
+    // unconditional contract grant after it is stored. It does not replace
+    // the separate, owner-proven `allowSender` grant (spec §8.1).
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       balances[msg.sender] = ptr;"
+        ));
+        let expected = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       balances[msg.sender] = ptr;\n\
+             \x20       FHE.allowSender(balances[msg.sender]);"
+        ));
+        golden(&src, &expected);
+    }
+}
+
+#[test]
+fn r1_broad_grant_window_stops_at_writes_in_nested_statements() {
+    // A sibling statement is a barrier when any nested path can replace the
+    // granted handle. The later store may copy that replacement at runtime.
+    let cases = [
+        ("allowPublic", "        if (p != 0) { ptr = b; }"),
+        ("allowGlobal", "        if (p == 0) {} else { ptr = b; }"),
+        ("allowPublic", "        { { ptr = b; } }"),
+        ("allowGlobal", "        while (p != 0) { ptr = b; break; }"),
+        ("allowPublic", "        do { ptr = b; } while (false);"),
+        (
+            "allowGlobal",
+            "        for (uint256 i = 0; i < 1; ++i) { ptr = b; }",
+        ),
+    ];
+    for (grant, barrier) in cases {
+        let input = format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             {barrier}\n\
+             \x20       a = ptr;"
+        );
+        let expected = format!("{input}\n        FHE.allowThis(a);");
+        golden_body(&input, &expected);
+    }
+}
+
+#[test]
+fn r1_broad_grant_window_stops_at_tuple_component_write() {
+    for grant in ["allowPublic", "allowGlobal"] {
+        let input = format!(
+            "        euint32 ptr = a;\n\
+             \x20       euint32 other = b;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       (ptr, other) = (other, ptr);\n\
+             \x20       a = ptr;"
+        );
+        let expected = format!("{input}\n        FHE.allowThis(a);");
+        golden_body(&input, &expected);
+    }
+}
+
+#[test]
+fn r1_broad_grant_requires_a_trusted_fhe_library_base() {
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = format!(
+            "pragma solidity ^0.8.25;\n\
+             import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+             \n\
+             library FakeAcl {{\n\
+             \x20   function {grant}(euint32) internal {{}}\n\
+             }}\n\
+             \n\
+             contract C {{\n\
+             \x20   euint32 a;\n\
+             \x20   function f() public {{\n\
+             \x20       euint32 ptr = a;\n\
+             \x20       FakeAcl.{grant}(ptr);\n\
+             \x20       a = ptr;\n\
+             \x20   }}\n\
+             }}\n"
+        );
+        let expected = src.replace(
+            "        a = ptr;\n",
+            "        a = ptr;\n        FHE.allowThis(a);\n",
+        );
+        golden(&src, &expected);
+    }
+}
+
+#[test]
+fn r1_dedupe_accepts_broad_grant_method_syntax() {
+    // CoFHE 0.2.0 exposes both calls through global encrypted-type bindings.
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       ptr.{grant}();\n\
+             \x20       a = ptr;"
+        ));
+        golden(&src, &src);
+    }
+}
+
+#[test]
+fn r1_broad_grant_leaves_existing_sender_grant_alone() {
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       FHE.allowSender(ptr);\n\
+             \x20       balances[msg.sender] = ptr;"
+        ));
+        golden(&src, &src);
+    }
+}
+
+#[test]
 fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
     let src = contract(
         "        euint32 ptr = a;\n\
@@ -2206,6 +2323,62 @@ fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
     );
     let out = transpile(&[("t.fsol", &src)]);
     assert_eq!(out.files[0].1, expected);
+}
+
+#[test]
+fn r1_broad_grant_window_stops_at_a_comment_decorated_reassignment() {
+    // A write hidden behind a comment inside otherwise-redundant parens must
+    // still stop the window: the write-barrier compares resolved identity,
+    // not raw snippet text, so a comment cannot hide a real reassignment
+    // that lands after the broad grant (spec §1.3).
+    let src = contract(
+        "        euint32 ptr = a;\n\
+         \x20       FHE.allowPublic(ptr);\n\
+         \x20       (/*reassigned*/ ptr) = b;\n\
+         \x20       balances[msg.sender] = ptr;",
+    );
+    let expected = contract(
+        "        euint32 ptr = a;\n\
+         \x20       FHE.allowPublic(ptr);\n\
+         \x20       (/*reassigned*/ ptr) = b;\n\
+         \x20       balances[msg.sender] = ptr;\n\
+         \x20       FHE.allowThis(balances[msg.sender]);\n\
+         \x20       FHE.allowSender(balances[msg.sender]);",
+    );
+    let out = transpile(&[("t.fsol", &src)]);
+    assert_eq!(out.files[0].1, expected);
+}
+
+#[test]
+fn r1_broad_grant_on_a_state_variable_does_not_survive_an_opaque_call() {
+    // A broad grant on a STATE variable (not a local/param) must never
+    // suppress R1's `allowThis`: `assigned_local` requires the copied RHS to
+    // resolve to a local or parameter, so a bare state-variable name is
+    // rejected even though it is identifier-shaped text. This window only
+    // sees sibling statements in the same block, so it cannot prove a call
+    // like `helper()` left `a` untouched (spec §1.3) — the call does not
+    // need to actually reassign `a`; the analysis must be conservative
+    // regardless.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   mapping(address => euint32) balances;\n\
+               \x20   function helper() internal {}\n\
+               \x20   function f() public {\n\
+               \x20       FHE.allowPublic(a);\n\
+               \x20       helper();\n\
+               \x20       balances[msg.sender] = a;\n\
+               \x20   }\n\
+               }\n";
+    let expected = src.replace(
+        "        balances[msg.sender] = a;\n",
+        "        balances[msg.sender] = a;\n        \
+         FHE.allowThis(balances[msg.sender]);\n        \
+         FHE.allowSender(balances[msg.sender]);\n",
+    );
+    golden(src, &expected);
 }
 
 #[test]
