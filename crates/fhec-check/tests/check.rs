@@ -1184,6 +1184,36 @@ fn precondition_rejects_imported_and_unresolved_calls() {
     assert_eq!(error_codes(src), ["FHE3015"]);
 }
 
+/// `msg.sender` is permitted in a `precondition` block (§2.7) even when the
+/// contract inherits from a base the binder cannot see completely (an
+/// external or unresolved import) — the ordinary shape of a real contract.
+/// Regression: the binder resolves `msg` through
+/// `Resolution::Unresolved(UnresolvedReason::IncompleteInheritance)` in that
+/// case, and `pre_ident` used to judge only the direct resolution, refusing
+/// `msg` as "outside this compilation unit" (FHE3015) in every inheriting
+/// contract — precisely the case the feature exists for.
+#[test]
+fn precondition_permits_msg_sender_with_an_unresolved_base() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import {Base} from \"@some/pkg/Base.sol\";\n\
+        contract P is Base {\n\
+          euint32 enc;\n\
+          mapping(address => bool) operators;\n\
+          error Bad(address who);\n\
+          function isOperator(address who, address spender) public view returns (bool) {\n\
+            return operators[who] && operators[spender];\n\
+          }\n\
+          function g(address from, in euint32 amount) public {\n\
+            precondition {\n\
+              if (!isOperator(from, msg.sender)) revert Bad(from);\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), Vec::<String>::new());
+}
+
 #[test]
 fn precondition_rejects_unsupported_statement_forms() {
     assert_pre_codes("emit Ping(1);", &["FHE3015"]);

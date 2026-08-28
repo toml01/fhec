@@ -22,7 +22,7 @@
 //!    whitelist on purpose: an unrecognized form is refused, never assumed
 //!    harmless (spec §1.3).
 
-use fhec_bind::{BoundUnit, Resolution, TypeDeclKind};
+use fhec_bind::{BoundUnit, Resolution, TypeDeclKind, UnresolvedReason};
 use solar_ast as ast;
 use solar_data_structures::map::FxHashMap;
 use solar_interface::Span;
@@ -504,8 +504,20 @@ impl<'ast> FnChecker<'_, 'ast> {
     }
 
     fn pre_ident(&mut self, id: solar_interface::Ident, span: Span) {
+        self.pre_ident_resolution(self.unit.resolve(id).cloned(), id, span);
+    }
+
+    /// The body of [`Self::pre_ident`], factored out so an
+    /// [`UnresolvedReason::IncompleteInheritance`] fallback can be judged by
+    /// the same rule as a direct resolution.
+    fn pre_ident_resolution(
+        &mut self,
+        res: Option<Resolution>,
+        id: solar_interface::Ident,
+        span: Span,
+    ) {
         use Resolution::*;
-        match self.unit.resolve(id).cloned() {
+        match res {
             // A value read. The recorded type of the expression is not
             // enough: a declared type the positive fragment does not cover
             // (`NS.euint32`, a qualified custom type) types as `Unknown`,
@@ -532,6 +544,16 @@ impl<'ast> FnChecker<'_, 'ast> {
             }
             // The names used as call/cast callees, and event/error paths.
             Some(Function(_) | Contract(_) | TypeName(_) | Builtin(_) | Event(_) | Error(_)) => {}
+            // A base contract the binder cannot see completely (an external
+            // or unresolved import) MAY declare a member shadowing this
+            // name — but treating that as possible would refuse `msg`,
+            // `block`, and `tx` in every inheriting contract, which is the
+            // ordinary case for a real contract. Judge the file-scope
+            // fallback by the same rule instead, mirroring `trust.rs`'s
+            // identical call for the profile FHE library name.
+            Some(Unresolved(UnresolvedReason::IncompleteInheritance { fallback, .. })) => {
+                self.pre_ident_resolution(Some(*fallback), id, span);
+            }
             _ => self.pre_reject(
                 span,
                 format!(
