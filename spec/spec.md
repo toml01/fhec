@@ -543,6 +543,8 @@ FHE.allowTransient(a, address(<callee>));
 
 The second argument of `allowTransient` is an `address`; contract-typed callee expressions do not convert implicitly, so the transpiler MUST wrap the callee in an explicit `address(...)` cast.
 
+R2 MUST claim ownership of the statement it rewrote, and only then: pass 1 skips any statement R2 owns, so claiming a statement R2 did not rewrite leaves that statement's other operators unlowered, and claiming nothing while rewriting an argument makes the two passes patch the same bytes (FHE9001). When a rewritten argument sits inside a larger operator, ternary or cast site, R2 MUST render that whole site with the argument substituted, because pass 1 will not re-enter the statement.
+
 **⚠ Draft decision (callee hoisting):** when the callee expression is not a plain identifier, `this`-derived constant, or literal, it MUST be hoisted to a temp `__fhe_callee_n` **of the callee's declared type** and that temp used in both the `allowTransient` call (wrapped in `address(...)`) and the call itself, preserving single evaluation. When the declared type cannot be derived, the transpiler MUST refuse the file with FHE4003 rather than guess.
 
 When the callee expression's type is `Unknown` to the checker, no R2 fact exists and no grant is inserted (conservative under-grant: the call reverts on the ACL check instead of leaking access). The transpiler SHOULD surface this as a note in a future revision.

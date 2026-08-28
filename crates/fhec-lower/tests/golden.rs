@@ -1752,3 +1752,118 @@ fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
     let out = transpile(&[("t.fsol", &src)]);
     assert_eq!(out.files[0].1, expected);
 }
+
+#[test]
+fn r2_dedupe_path_owns_the_statement_it_rewrote() {
+    // Spec §8.2: the fully-deduplicated path still rewrites the operator
+    // argument, so pass 1 must not render the same expression again — the
+    // two patches would overlap (FHE9001).
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function deposit(euint32 x) external;\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   euint32 b;\n\
+               \x20   IVault vault;\n\
+               \x20   function f() public {\n\
+               \x20       FHE.allowTransient(a + b, address(vault));\n\
+               \x20       vault.deposit(a + b);\n\
+               \x20   }\n\
+               }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function deposit(euint32 x) external;\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   euint32 b;\n\
+               \x20   IVault vault;\n\
+               \x20   function f() public {\n\
+               \x20       FHE.allowTransient(FHE.add(a, b), address(vault));\n\
+               \x20       vault.deposit(FHE.add(a, b));\n\
+               \x20   }\n\
+               }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r2_leaves_the_statement_to_pass_one_when_it_rewrote_nothing() {
+    // A plain-identifier argument needs no rewrite, so the other operator of
+    // the statement must still be lowered.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function ping(euint32 x) external returns (bytes32);\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   euint32 b;\n\
+               \x20   IVault vault;\n\
+               \x20   function f() internal returns (euint32 out) {\n\
+               \x20       out = euint32.wrap(vault.ping(a)) + b;\n\
+               \x20   }\n\
+               }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function ping(euint32 x) external returns (bytes32);\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   euint32 b;\n\
+               \x20   IVault vault;\n\
+               \x20   function f() internal returns (euint32 out) {\n\
+               \x20       FHE.allowTransient(a, address(vault));\n\
+               \x20       out = FHE.add(euint32.wrap(vault.ping(a)), b);\n\
+               \x20   }\n\
+               }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r2_renders_a_site_that_straddles_a_hoisted_argument() {
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function ping(euint32 x) external returns (bytes32);\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   euint32 b;\n\
+               \x20   IVault vault;\n\
+               \x20   function f() internal returns (euint32 out) {\n\
+               \x20       out = euint32.wrap(vault.ping(a + b)) + a;\n\
+               \x20   }\n\
+               }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function ping(euint32 x) external returns (bytes32);\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   euint32 b;\n\
+               \x20   IVault vault;\n\
+               \x20   function f() internal returns (euint32 out) {\n\
+               \x20       euint32 __fhe_val_0 = FHE.add(a, b);\n\
+               \x20       FHE.allowTransient(__fhe_val_0, address(vault));\n\
+               \x20       out = FHE.add(euint32.wrap(vault.ping(__fhe_val_0)), a);\n\
+               \x20   }\n\
+               }\n";
+    golden(src, expected);
+}
