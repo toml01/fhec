@@ -99,6 +99,30 @@ impl Trust {
         }
     }
 
+    /// Unwraps a chain of `Unresolved(IncompleteInheritance)` fallbacks down
+    /// to what they ultimately resolve to.
+    ///
+    /// `resolution_trusted` already sees past this wrapper on its own (it
+    /// recurses into `fallback` itself) for the `External`/`MaybeExternal`
+    /// paths. But every check here that pattern-matches a *specific*
+    /// resolution variant instead — rule 4's `Contract`, the in-unit-corpus
+    /// file check, the UDVT bypass — needs to see past it too, or it
+    /// silently loses that check whenever an unseen base sits between the
+    /// identifier and the profile import that would otherwise prove it
+    /// trusted: an in-unit `import "./FHE.sol"` combined with an unrelated
+    /// unseen base (spec §1.3) is an ordinary, common shape, not an edge
+    /// case — the binder cannot resolve the fallback itself precisely
+    /// because an unseen base *could* shadow it, so every caller that wants
+    /// to recognize a specific trusted shape underneath must unwrap first.
+    fn unwrap_fallback(res: &Resolution) -> &Resolution {
+        match res {
+            Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
+                fallback, ..
+            }) => Self::unwrap_fallback(fallback),
+            _ => res,
+        }
+    }
+
     /// Whether `res` (for an identifier written `FHE`) is the profile FHE
     /// library.
     pub(crate) fn is_fhe_library(
@@ -116,8 +140,10 @@ impl Trust {
         // Rule 4: an in-unit `library FHE` whose member surface strongly
         // identifies it as the profile library (it declares both `select`
         // and `allowThis`) — the conformance-corpus case where FHE.sol is
-        // part of the compilation unit.
-        if let Resolution::Contract(id) = res {
+        // part of the compilation unit. Unwrap first: an unseen base can
+        // put this behind an incomplete-inheritance fallback even when the
+        // in-unit import is unambiguous.
+        if let Resolution::Contract(id) = Self::unwrap_fallback(res) {
             let c = unit.contract(*id);
             return Self::looks_like_fhe_library(unit, c);
         }
@@ -146,6 +172,17 @@ impl Trust {
     /// symbols, spec §2.3) are declared by the same trusted profile module,
     /// even though they have no distinctive member surface of their own to
     /// recognize structurally the way rule 4 recognizes `library FHE`.
+    ///
+    /// Known limitation: real cofhe-contracts actually splits `Utils` and
+    /// `UnsignedEncryptedInput` into a separate `ICofhe.sol` file from
+    /// `FHE.sol`. This same-file heuristic does not follow that split — an
+    /// in-unit-vendored profile that mirrors the real package layout across
+    /// two files could still see a spurious FHE1022 on those two names. Not
+    /// confirmed as reachable through the discovery/import paths this
+    /// codebase actually exercises (`specifier_trusted`'s module-prefix
+    /// check already covers `ICofhe.sol` for the plain-import/external
+    /// paths); documented here rather than hardened, pending a concrete
+    /// repro.
     fn file_is_profile_module(&self, unit: &BoundUnit<'_>, file: FileId) -> bool {
         unit.contracts()
             .any(|(_, c)| c.file == file && Self::looks_like_fhe_library(unit, c))
@@ -168,13 +205,10 @@ impl Trust {
         unit: &BoundUnit<'_>,
         res: &Resolution,
     ) -> bool {
-        match res {
+        match Self::unwrap_fallback(res) {
             Resolution::Contract(id) => self.file_is_profile_module(unit, unit.contract(*id).file),
             Resolution::TypeName(id) => self.file_is_profile_module(unit, unit.type_decl(*id).file),
-            Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
-                fallback, ..
-            }) => self.is_trusted_profile_declaration(unit, fallback),
-            _ => self.resolution_trusted(res),
+            unwrapped => self.resolution_trusted(unwrapped),
         }
     }
 
@@ -186,12 +220,12 @@ impl Trust {
         res: &Resolution,
     ) -> Option<EType> {
         let ety = etype_by_name(name)?;
-        match res {
+        match Self::unwrap_fallback(res) {
             Resolution::TypeName(id) => match &unit.type_decl(*id).kind {
                 TypeDeclKind::Udvt(u) => udvt_is_bytes32(u).then_some(ety),
                 _ => None,
             },
-            _ => self.resolution_trusted(res).then_some(ety),
+            unwrapped => self.resolution_trusted(unwrapped).then_some(ety),
         }
     }
 
@@ -204,13 +238,13 @@ impl Trust {
         res: &Resolution,
     ) -> Option<EType> {
         let ety = EType::ALL.into_iter().find(|t| t.external_name() == name)?;
-        match res {
+        match Self::unwrap_fallback(res) {
             // The corpus case: FHE.sol in unit declares the UDVTs.
             Resolution::TypeName(id) => match &unit.type_decl(*id).kind {
                 TypeDeclKind::Udvt(u) => udvt_is_bytes32(u).then_some(ety),
                 _ => None,
             },
-            _ => self.resolution_trusted(res).then_some(ety),
+            unwrapped => self.resolution_trusted(unwrapped).then_some(ety),
         }
     }
 }

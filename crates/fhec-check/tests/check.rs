@@ -2939,3 +2939,58 @@ fn fhe1022_bodiless_multi_in_declaration_is_not_scanned() {
     "#;
     assert!(codes_for_source(src).is_empty());
 }
+
+/// Round-4 regression: an in-unit `import "./FHE.sol"` combined with an
+/// unrelated unseen/external base — issue #47's shape, and an ordinary,
+/// common pattern (e.g. a token contract that both vendors the profile
+/// library in-unit and inherits an external OpenZeppelin base) — must not
+/// spuriously refuse. Every resolution the checker sees is wrapped in
+/// `Unresolved(IncompleteInheritance)` because of the unseen base, so this
+/// exercises the unwrap fix in `is_fhe_library` (a plain `a + b` operator,
+/// which needs `FHE` trusted) and in `encrypted_type`/
+/// `external_input_type`/`is_trusted_profile_declaration` (multi-param `in`
+/// sugar, which needs `euint32`, `Impl`, `Utils`, and
+/// `UnsignedEncryptedInput` all trusted) at once.
+#[test]
+fn fhe1022_in_unit_import_with_an_unseen_base_stays_trusted() {
+    let fhe_sol = r#"
+        pragma solidity ^0.8.25;
+        type euint32 is bytes32;
+        type ebool is bytes32;
+        type eaddress is bytes32;
+        type externalEbool is bytes32;
+        type externalEaddress is bytes32;
+        library FHE {
+            function add(euint32 x, euint32 y) internal pure returns (euint32) { return x; }
+            function select(ebool c, ebool a, ebool b) internal pure returns (ebool) { return a; }
+            function allowThis(ebool v) internal pure {}
+        }
+        library Impl {
+            function verifyBatchInputs(uint256[] memory, bytes memory) internal pure returns (bytes32[] memory r) {}
+        }
+        library Utils {
+            uint8 constant EBOOL_TFHE = 0;
+            uint8 constant EADDRESS_TFHE = 1;
+        }
+        struct UnsignedEncryptedInput { uint256 data; uint8 securityZone; uint8 utype; }
+    "#;
+    let victim = r#"
+        pragma solidity ^0.8.25;
+        import "./FHE.sol";
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract Victim is UnseenBase {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+            function g(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    with_checked(&[("FHE.sol", fhe_sol), ("Victim.fsol", victim)], |c, _| {
+        let mut v: Vec<String> = c.diagnostics.iter().map(|d| d.code.to_string()).collect();
+        v.sort();
+        assert!(v.is_empty(), "{v:?}");
+    });
+}

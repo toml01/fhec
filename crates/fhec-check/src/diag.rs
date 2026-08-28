@@ -110,10 +110,11 @@ pub mod codes {
     /// scope, in the source or in the expansion (spec §2.3, §2.8).
     pub const SUGAR_SYMBOL_NOT_IMPORTED: &str = "FHE1021";
     /// A declaration shadows, or an unconfirmed import/unseen base could
-    /// retarget, an identifier a generated call must use (`FHE`, or —
-    /// for the batched `in`-sugar materializer — `Impl`/`Utils`/
-    /// `UnsignedEncryptedInput`), so the transpiler cannot write it without
-    /// risking a silent retarget (spec §1.3).
+    /// retarget, an identifier a generated call must use (`FHE`, or — for
+    /// the batched `in`-sugar materializer — `Impl`/`Utils`/
+    /// `UnsignedEncryptedInput`, plus the specific `externalT`/`eT`
+    /// wrap/unwrap type names its parameters name), so the transpiler
+    /// cannot write it without risking a silent retarget (spec §1.3).
     pub const FHE_LIBRARY_IDENTIFIER_SHADOWED: &str = "FHE1022";
     /// encrypted-meets-unknown (§3.2).
     pub const ENCRYPTED_MEETS_UNKNOWN: &str = "FHE2001";
