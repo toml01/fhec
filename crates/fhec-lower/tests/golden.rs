@@ -510,6 +510,78 @@ fn sugar_expands_param_and_conversion() {
 }
 
 #[test]
+fn sugar_appends_proof_on_its_own_line_in_a_multiline_param_list() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint64 a;\n\
+         \x20   function transfer(\n\
+         \x20       address to,\n\
+         \x20       in euint64 amount\n\
+         \x20   ) external {\n\
+         \x20       a = amount;\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint64 a;\n\
+         \x20   function transfer(\n\
+         \x20       address to,\n\
+         \x20       externalEuint64 amount_input,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) external {\n\
+         \x20       euint64 amount = FHE.asEuint64(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_appends_proof_after_the_last_param_of_a_multiline_list() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function transfer(\n\
+         \x20       in euint32 amount,\n\
+         \x20       address to\n\
+         \x20   ) external {\n\
+         \x20       a = amount;\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function transfer(\n\
+         \x20       externalEuint32 amount_input,\n\
+         \x20       address to,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) external {\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
 fn sugar_binder_uses_the_bound_proof_and_appends_nothing() {
     golden(
         "pragma solidity ^0.8.25;\n\

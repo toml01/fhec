@@ -323,17 +323,32 @@ fn expand_function_sugar(
         ));
     }
 
-    // 2. The implicit form appends one shared proof parameter before the
-    //    list's closing `)`. The explicit binder names a parameter the author
-    //    already declared, which keeps its position, name, and data location,
-    //    so nothing is appended and the ABI gains no extra proof.
+    // 2. The implicit form appends one shared proof parameter at the end of
+    //    the list. A single-line list keeps `, bytes memory inputProof`
+    //    immediately before `)`. A multiline list (any newline inside the
+    //    parens) attaches the comma to the last existing parameter and puts
+    //    the new one on its own line at that parameter's indentation, so `)`
+    //    stays on its original line. The explicit binder names a parameter
+    //    the author already declared, which keeps its position, name, and
+    //    data location, so nothing is appended and the ABI gains no extra
+    //    proof.
     let file_text = ctx.text(first.file);
     if first.proof.is_none() {
         let params_range = ctx.range(first.params_span);
         debug_assert_eq!(&file_text[params_range.end - 1..params_range.end], ")");
+        let proof_param = ctx.profile.input_proof_param();
+        let list = &file_text[params_range.start..params_range.end];
+        let (at, inserted) = if list.contains('\n') {
+            let at = trailing_ws_start(file_text, params_range.start, params_range.end - 1);
+            let indent = ctx.line_indent(first.file, at.saturating_sub(1));
+            let nl = if list.contains("\r\n") { "\r\n" } else { "\n" };
+            (at, format!(",{nl}{indent}{proof_param}"))
+        } else {
+            (params_range.end - 1, format!(", {proof_param}"))
+        };
         plan.push(Patch::insert(
-            params_range.end - 1,
-            format!(", {}", ctx.profile.input_proof_param()),
+            at,
+            inserted,
             Provenance::new("§2.3 in-sugar-proof-param", ctx.range(first.params_span)),
         ));
     }
@@ -597,6 +612,24 @@ fn expand_shared_returns(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan
         }
     }
     Ok(())
+}
+
+/// Byte offset of the first trailing ASCII whitespace before `close`, or
+/// `close` itself when the bytes immediately before it are not whitespace.
+///
+/// Used to attach a comma to the last existing parameter of a multiline
+/// list: the insert sits after that parameter (and after any trailing
+/// comment text) so the original newline and closing `)` stay put.
+fn trailing_ws_start(text: &str, open: usize, close: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = close;
+    while i > open {
+        match bytes[i - 1] {
+            b' ' | b'\t' | b'\n' | b'\r' => i -= 1,
+            _ => break,
+        }
+    }
+    i
 }
 
 /// The indentation for a statement inserted at the start of a body block.
