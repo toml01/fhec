@@ -567,6 +567,8 @@ R2 MUST claim ownership of the statement it rewrote, and only then: pass 1 skips
 
 When the callee expression's type is `Unknown` to the checker, no R2 fact exists and no grant is inserted (conservative under-grant: the call reverts on the ACL check instead of leaking access). The transpiler SHOULD surface this as a note in a future revision.
 
+R2 does **not** apply within a `view` or `pure` function (§8.4): `allowTransient` makes a real external call, which neither may make. A `pure` function cannot reach this rule at all — it cannot make an external call in the first place, so no R2 site exists in one to begin with. A `view` function CAN legally call another `view`/`pure` external function, so this exception's reachable case is `view`: for that shape the transpiler MUST NOT insert `allowTransient` (doing so would make the generated code invalid Solidity) and instead emits warning FHE4002 (the callee must have been granted access elsewhere).
+
 ### §8.3 R3 — encrypted returns
 
 In a non-`view`, non-`pure` `public`/`external` function returning an encrypted value, the return expression MUST be hoisted to a temp `__fhe_ret_n` and
@@ -583,7 +585,7 @@ R3 does **not** apply to a `public`/`external`, state-changing function declared
 
 ### §8.4 View and pure functions
 
-ACL operations cannot execute in `view` or `pure` context — `allowTransient` makes an external call, and neither a `view` nor a `pure` function may make one. A `view` or `pure` function returning an encrypted value gets NO insertion and warning FHE4002 (the caller must have been granted access elsewhere; the getter itself cannot grant it).
+ACL operations cannot execute in `view` or `pure` context — `allowTransient` makes an external call, and neither a `view` nor a `pure` function may make one. A `view` or `pure` function returning an encrypted value (R3), or a `view` function passing an encrypted value as an argument to an external call (R2 — `pure` cannot reach this case; it cannot make an external call at all), gets NO insertion and warning FHE4002 (the caller/callee must have been granted access elsewhere; the function itself cannot grant it).
 
 ### §8.5 The never-auto-allow rule
 
@@ -672,7 +674,7 @@ Assigned in this version:
 | FHE3021 | error | encrypted-loop-condition |
 | FHE3022 | error | ebool-in-plaintext-bool-context |
 | FHE4001 | warning | non-sender-keyed-encrypted-write (§8.1) |
-| FHE4002 | warning | view-return-without-acl (§8.4) |
+| FHE4002 | warning | view-or-pure-without-acl (§8.4) |
 | FHE4003 | error | acl-callee-type-underivable (§8.2) |
 | FHE4004 | error | acl-position-illegal (§8) |
 | FHE4010 | note | suggest-allow-after-write (`--acl=suggest`) |

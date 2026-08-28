@@ -471,6 +471,67 @@ fn r2_complex_arg_hoists() {
     );
 }
 
+#[test]
+fn r2_view_warns_only() {
+    // Issue #96: a `view` function CAN legally call another `view`/`pure`
+    // external function, but `FHE.allowTransient` is itself not `view` (it
+    // makes a real external call), so inserting it here would make the
+    // generated code invalid Solidity. R2 must warn (FHE4002) instead of
+    // guessing a grant, exactly like R3 already does for a `view` return.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface IPeek {\n\
+         \x20   function peek(euint32 a) external view returns (euint32);\n\
+         }\n\
+         \n\
+         contract C {\n\
+         \x20   IPeek other;\n\
+         \x20   function f(euint32 a) public view returns (euint32) {\n\
+         \x20       return other.peek(a);\n\
+         \x20   }\n\
+         }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(!out.any_patches);
+    assert!(out
+        .lower_diag_codes
+        .iter()
+        .any(|d| d.starts_with("FHE4002")));
+    assert_eq!(out.files[0].1, src);
+}
+
+#[test]
+fn r2_pure_warns_only_though_unreachable_through_solc() {
+    // A `pure` function cannot make any external call at all — that is a
+    // plain-Solidity restriction independent of FHE, so an input shaped
+    // like this can never pass the real solc gate, `pure` or not (issue
+    // #96). fhec's own checker does not re-derive whole-program mutability
+    // legality (it defers that to solc), so an `EncryptedArgCall` fact is
+    // still built here. This test pins that the shared `is_view_or_pure`
+    // guard treats `pure` exactly like `view` — warn, no insertion — rather
+    // than leaving `pure` unguarded because its site is otherwise
+    // unreachable through a real build.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface IPeek {\n\
+         \x20   function peek(euint32 a) external view returns (euint32);\n\
+         }\n\
+         \n\
+         contract C {\n\
+         \x20   function f(euint32 a, IPeek other) public pure returns (euint32) {\n\
+         \x20       return other.peek(a);\n\
+         \x20   }\n\
+         }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(!out.any_patches);
+    assert!(out
+        .lower_diag_codes
+        .iter()
+        .any(|d| d.starts_with("FHE4002")));
+    assert_eq!(out.files[0].1, src);
+}
+
 fn r3_contract(header: &str, body: &str) -> String {
     format!(
         "pragma solidity ^0.8.25;\n\
