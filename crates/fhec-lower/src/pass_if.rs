@@ -11,6 +11,11 @@
 //! 6. merge per location, in first-write order:
 //!    `L = FHE.select(cond, thenVal-or-pre, elseVal-or-pre);`.
 //!
+//! When both arms exist, each is a single assignment of the same identifier,
+//! and the condition and both right-hand sides are free of side effects, step
+//! 6 MAY render as `L = FHE.select(cond, thenRhs, elseRhs)` with no
+//! temporaries. Other shapes keep the algorithm above.
+//!
 //! Nested encrypted `if`s recurse (innermost renders first as part of its
 //! enclosing branch walk, spec §5.3); conjunction composes through the merges
 //! alone — no condition conjunction is ever synthesized.
@@ -28,14 +33,14 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use fhec_bind::{Resolution, VarId};
-use fhec_check::{Severity, Ty};
+use fhec_check::{PlainTy, Severity, Ty};
 use fhec_emit::{TempHint, TempNamer};
 use fhec_ir::{EType, FheOp};
 use solar_ast as ast;
 use solar_interface::Span;
 
 use crate::ctx::{strip_parens, Ctx};
-use crate::expr::{fail, fail_coded, LowerFailure, Renderer, Result};
+use crate::expr::{call_arg_exprs, fail, fail_coded, LowerFailure, Renderer, Result};
 
 /// The identity of an index key inside a location path.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -221,6 +226,10 @@ fn render_frame<'ast>(
     let i1 = format!("{base_indent}    ");
     let i2 = format!("{base_indent}        ");
 
+    if let Some(text) = try_direct_select(ictx, stmt, outer, base_indent)? {
+        return Ok(text);
+    }
+
     // Step 2: hoist the condition, evaluated once in the enclosing env.
     let cond_text = render_expr_in(ictx, outer, cond)?;
     let cond_temp = ictx.namer.borrow_mut().fresh(TempHint::Cond);
@@ -339,50 +348,8 @@ fn render_frame<'ast>(
         };
         let is_direct = target == loc.display;
         merge_lines.push(format!("{target} = {select};"));
-        let acl_lines = &mut merge_lines;
-
         if loc.is_storage && is_direct {
-            if loc.addr_key_not_sender {
-                ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
-                    code: "FHE4001",
-                    severity: Severity::Warning,
-                    span: loc.first_write,
-                    message: format!(
-                        "encrypted write to `{}` is keyed by an address that is not `msg.sender`; \
-                         the transaction sender gains read access to a ciphertext filed under \
-                         another address",
-                        loc.display
-                    ),
-                    fixits: Vec::new(),
-                    rule: Some("§8.1"),
-                });
-            }
-            if ictx.acl_insert {
-                for op in [FheOp::AllowThis, FheOp::AllowSender] {
-                    let call = ctx
-                        .profile
-                        .render_call(op, &[loc.ty], &[&loc.display])
-                        .map_err(|e| LowerFailure {
-                            span: stmt.span,
-                            message: format!("profile refused an ACL call: {e} (internal)"),
-                            code: None,
-                        })?;
-                    acl_lines.push(format!("{call};"));
-                }
-            } else {
-                ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
-                    code: "FHE4010",
-                    severity: Severity::Note,
-                    span: loc.first_write,
-                    message: format!(
-                        "ACL suggestion: after the merged write, add \
-                         `FHE.allowThis({0}); FHE.allowSender({0});`",
-                        loc.display
-                    ),
-                    fixits: Vec::new(),
-                    rule: Some("§8.1"),
-                });
-            }
+            append_storage_acl(ictx, loc, stmt.span, &mut merge_lines)?;
         }
     }
 
@@ -425,6 +392,278 @@ fn render_frame<'ast>(
     }
     out.push_str(&format!("{base_indent}}}"));
     Ok(out)
+}
+
+/// Direct `L = FHE.select(cond, thenRhs, elseRhs)` when each arm is one
+/// assignment of the same identifier and the operands have no side effects.
+///
+/// Indexed / field lvalues, a missing else, extra statements, nested `if`s,
+/// and effectful operands keep the general SSA-lite rendering.
+fn try_direct_select<'ast>(
+    ictx: &IfCtx<'_, '_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+    outer: Option<&RefCell<Env<'_>>>,
+    base_indent: &str,
+) -> Result<Option<String>> {
+    let ast::StmtKind::If(cond, then_s, else_s) = &stmt.kind else {
+        return Ok(None);
+    };
+    let Some(else_s) = else_s.as_deref() else {
+        return Ok(None);
+    };
+    let i1 = format!("{base_indent}    ");
+    let Some((then_e, then_lhs, then_rhs)) = single_plain_assign(then_s) else {
+        return Ok(None);
+    };
+    let Some((else_e, else_lhs, else_rhs)) = single_plain_assign(else_s) else {
+        return Ok(None);
+    };
+    if !expr_is_select_safe(ictx, cond)
+        || !expr_is_select_safe(ictx, then_rhs)
+        || !expr_is_select_safe(ictx, else_rhs)
+    {
+        return Ok(None);
+    }
+
+    let mut keys = KeyTable { rows: Vec::new() };
+    let then_canon = classify(ictx, then_lhs, &mut keys, false)?;
+    let else_canon = classify(ictx, else_lhs, &mut keys, false)?;
+    let (key, display, is_storage, addr_key_not_sender) = match (then_canon, else_canon) {
+        (
+            Canon::Path(then_key, then_disp, then_storage, then_addr),
+            Canon::Path(else_key, else_disp, else_storage, else_addr),
+        ) if then_key == else_key
+            && then_key.segs.is_empty()
+            && then_disp == else_disp
+            && then_storage == else_storage
+            && then_addr == else_addr =>
+        {
+            (then_key, then_disp, then_storage, then_addr)
+        }
+        _ => return Ok(None),
+    };
+    if !keys.rows.is_empty() {
+        return Ok(None);
+    }
+
+    let then_ty = write_type(ictx, then_s, then_e, then_lhs)?;
+    let else_ty = write_type(ictx, else_s, else_e, else_lhs)?;
+    if then_ty != else_ty {
+        return Ok(None);
+    }
+
+    let cond_text = render_expr_in(ictx, outer, cond)?;
+    let then_text = render_expr_in(ictx, outer, then_rhs)?;
+    let else_text = render_expr_in(ictx, outer, else_rhs)?;
+    let select = ictx
+        .ctx
+        .profile
+        .render_call(
+            FheOp::Select,
+            &[EType::Ebool, then_ty, else_ty],
+            &[&cond_text, &then_text, &else_text],
+        )
+        .map_err(|e| LowerFailure {
+            span: stmt.span,
+            message: format!("profile refused a checked select: {e} (internal)"),
+            code: None,
+        })?;
+
+    let loc = Loc {
+        key,
+        display,
+        ty: then_ty,
+        is_storage,
+        addr_key_not_sender,
+        first_write: then_lhs.span,
+    };
+    let target = match outer {
+        Some(o) => {
+            let mut o = o.borrow_mut();
+            if o.has(&loc.key) {
+                let t = ictx.namer.borrow_mut().fresh(o.hint);
+                o.decls.push((loc.ty, t.clone()));
+                o.versions.insert(loc.key.clone(), t.clone());
+                t
+            } else {
+                loc.display.clone()
+            }
+        }
+        None => loc.display.clone(),
+    };
+    let is_direct = target == loc.display;
+    let mut lines = vec![format!("{target} = {select};")];
+    if loc.is_storage && is_direct {
+        append_storage_acl(ictx, &loc, stmt.span, &mut lines)?;
+    }
+    if lines.len() == 1 {
+        return Ok(Some(lines.pop().expect("one merge line")));
+    }
+    let mut out = String::from("{\n");
+    for l in &lines {
+        out.push_str(&format!("{i1}{l}\n"));
+    }
+    out.push_str(&format!("{base_indent}}}"));
+    Ok(Some(out))
+}
+
+/// One plain `L = R;` statement, possibly wrapped in a single-statement block.
+fn single_plain_assign<'ast>(
+    stmt: &'ast ast::Stmt<'ast>,
+) -> Option<(
+    &'ast ast::Expr<'ast>,
+    &'ast ast::Expr<'ast>,
+    &'ast ast::Expr<'ast>,
+)> {
+    match &stmt.kind {
+        ast::StmtKind::Block(b) => {
+            let mut it = b.iter();
+            let only = it.next()?;
+            if it.next().is_some() {
+                return None;
+            }
+            single_plain_assign(only)
+        }
+        ast::StmtKind::Expr(e) => match &e.kind {
+            ast::ExprKind::Assign(lhs, None, rhs) => Some((e, lhs, rhs)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether `e` is safe to splice as a `FHE.select` operand (spec §5.5).
+fn expr_is_select_safe<'ast>(ictx: &IfCtx<'_, '_, 'ast>, e: &'ast ast::Expr<'ast>) -> bool {
+    use ast::ExprKind::*;
+    match &e.kind {
+        Assign(..) | Delete(_) | New(_) | CallOptions(..) | Payable(_) | TypeCall(_) => false,
+        Unary(op, x) => !op.kind.has_side_effects() && expr_is_select_safe(ictx, x),
+        Call(callee, args) => {
+            call_callee_is_select_safe(ictx, e, callee)
+                && call_arg_exprs(args)
+                    .into_iter()
+                    .all(|a| expr_is_select_safe(ictx, a))
+        }
+        Binary(l, _, r) => expr_is_select_safe(ictx, l) && expr_is_select_safe(ictx, r),
+        Ternary(c, a, b) => {
+            expr_is_select_safe(ictx, c)
+                && expr_is_select_safe(ictx, a)
+                && expr_is_select_safe(ictx, b)
+        }
+        Tuple(els) => els.iter().all(|el| {
+            el.as_deref()
+                .unspan()
+                .is_none_or(|inner| expr_is_select_safe(ictx, inner))
+        }),
+        Array(els) => els.iter().all(|el| expr_is_select_safe(ictx, el)),
+        Index(base, kind) => {
+            expr_is_select_safe(ictx, base)
+                && match kind {
+                    ast::IndexKind::Index(i) => {
+                        i.as_deref().is_none_or(|k| expr_is_select_safe(ictx, k))
+                    }
+                    ast::IndexKind::Range(a, b) => {
+                        a.as_deref().is_none_or(|e| expr_is_select_safe(ictx, e))
+                            && b.as_deref().is_none_or(|e| expr_is_select_safe(ictx, e))
+                    }
+                }
+        }
+        Member(obj, _) => expr_is_select_safe(ictx, obj),
+        Lit(..) | Ident(_) | Type(_) | Err(_) => true,
+    }
+}
+
+fn call_callee_is_select_safe<'ast>(
+    ictx: &IfCtx<'_, '_, 'ast>,
+    call: &'ast ast::Expr<'ast>,
+    callee: &'ast ast::Expr<'ast>,
+) -> bool {
+    if ictx.ctx.cast_sugar_by_span.contains_key(&call.span) {
+        return true;
+    }
+    let callee_p = callee.peel_parens();
+    match &callee_p.kind {
+        ast::ExprKind::Member(obj, mname) => match ictx.ctx.checked.types.get(obj.span) {
+            Some(Ty::Plain(PlainTy::FheLib)) => true,
+            Some(Ty::Encrypted(_)) => true,
+            Some(Ty::Plain(PlainTy::EncTypeRef(_))) => {
+                matches!(mname.as_str(), "wrap" | "unwrap")
+            }
+            _ => false,
+        },
+        ast::ExprKind::Ident(id) => match ictx.ctx.unit.resolve(*id) {
+            Some(Resolution::Builtin(b)) => matches!(
+                b.0,
+                "keccak256"
+                    | "sha256"
+                    | "ripemd160"
+                    | "ecrecover"
+                    | "addmod"
+                    | "mulmod"
+                    | "gasleft"
+                    | "blockhash"
+                    | "blobhash"
+            ),
+            Some(Resolution::Contract(_) | Resolution::TypeName(_)) => true,
+            _ => matches!(
+                ictx.ctx.checked.types.get(callee_p.span),
+                Some(Ty::Plain(PlainTy::EncTypeRef(_) | PlainTy::FheFn(_)))
+            ),
+        },
+        ast::ExprKind::Type(_) => true,
+        _ => false,
+    }
+}
+
+fn append_storage_acl(
+    ictx: &IfCtx<'_, '_, '_>,
+    loc: &Loc,
+    stmt_span: Span,
+    lines: &mut Vec<String>,
+) -> Result<()> {
+    if loc.addr_key_not_sender {
+        ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4001",
+            severity: Severity::Warning,
+            span: loc.first_write,
+            message: format!(
+                "encrypted write to `{}` is keyed by an address that is not `msg.sender`; \
+                 the transaction sender gains read access to a ciphertext filed under \
+                 another address",
+                loc.display
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.1"),
+        });
+    }
+    if ictx.acl_insert {
+        for op in [FheOp::AllowThis, FheOp::AllowSender] {
+            let call = ictx
+                .ctx
+                .profile
+                .render_call(op, &[loc.ty], &[&loc.display])
+                .map_err(|e| LowerFailure {
+                    span: stmt_span,
+                    message: format!("profile refused an ACL call: {e} (internal)"),
+                    code: None,
+                })?;
+            lines.push(format!("{call};"));
+        }
+    } else {
+        ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4010",
+            severity: Severity::Note,
+            span: loc.first_write,
+            message: format!(
+                "ACL suggestion: after the merged write, add \
+                 `FHE.allowThis({0}); FHE.allowSender({0});`",
+                loc.display
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.1"),
+        });
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -449,6 +449,8 @@ Naive per-assignment select-rewriting is unsound: because both branches execute,
 
 Merge writes MUST be emitted in a deterministic order (**⚠ Draft decision:** order of first write occurrence in source).
 
+When the write set is a single identifier `L`, an `else` is present, each arm is exactly one assignment to `L` (a bare assignment or a block whose only statement is that assignment), and the condition and both right-hand sides are free of side effects under §5.5, a conforming transpiler MAY render the statement as `L = FHE.select(<cond>, <thenRhs>, <elseRhs>);` with no condition, pre-value, or branch temporaries. This is an equivalent rendering of the algorithm above: both operands of `select` evaluate, in source order, against the pre-if state. The general form is REQUIRED when any of those conditions fail (several merged locations, several writes in one arm, nested encrypted `if`s, a missing `else`, an indexed or field lvalue, or a side-effecting operand).
+
 Variables **declared inside a branch** are branch-local: they are not part of the write set, need no pre-value, and are not merged; the transpiler MUST keep them scoped to the rendered branch body (e.g. by emitting each branch body in its own sub-block). Statement forms inside encrypted branches that this specification does not enumerate (e.g. tuple declarations) MUST be rejected with FHE3013 rather than lowered by guesswork.
 
 ### §5.3 Nesting
@@ -745,3 +747,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.6.0 (2026-08-28)** — §2.9 adds explicit cast sugar: `eT(x)` is sugar for `FHE.as<T>(x)`, rewriting only the callee identifier and leaving the argument byte-identical, so the argument gets exactly the type-checking an author-written `FHE.as<T>(x)` call already receives. This is the first grammar-adjacent extension that adds zero new parser grammar: unlike §2.3, §2.7, and §2.8, it reuses the existing call-expression grammar and resolves purely through name resolution. New code FHE1018 (a call with an argument count other than one).
 - **0.6.1 (2026-08-28)** — FHE1007: the load stage warns when `project.include` matches no source files under `project.src`. Non-error FHE6000 diagnostics from files outside `project.src` are suppressed by default; `--all-solc-warnings` restores them. Errors from any file are still forwarded.
 - **0.6.2 (2026-08-28)** — FHE1003 carries a `safe: true` fix-it when swapping the dialect extension of a relative import names a discovered unit file.
+- **0.6.3 (2026-08-28)** — §5.2 permits rendering an `if`/`else` whose arms are each a single assignment of the same identifier as one `FHE.select` with no condition or branch temporaries, when the operands are free of side effects.

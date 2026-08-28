@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract TrySub {
+    function trySub(euint64 a, euint64 b) internal returns (ebool success, euint64 res) {
+        if (!FHE.isInitialized(b)) return (ebool(true), a);
+        euint64 difference = a - b;
+        success = difference <= a;
+
+        if (success) {
+            res = difference;
+        } else {
+            res = euint64(0);
+        }
+    }
+}
