@@ -148,6 +148,64 @@ fn unnamed_returns_are_collected_and_their_types_are_resolved() {
     });
 }
 
+/// Issue #92: a struct declared *inside* a library must resolve from that
+/// library's own signature-level positions — a function parameter/return
+/// type, and another struct's field type — exactly like a file-scope
+/// struct. Before the fix, `walk_bodies`'s signature-level pass only gave
+/// `VarOwner::State` variables their owning contract's scope; a
+/// library-nested type used as a `Param`/`Return`/`StructField` type
+/// resolved at file scope only, so it silently came back `Unresolved` and
+/// the checker treated the declared type as `Unknown`. That is the root
+/// cause of R1 stating no ACL fact at all for a storage-pointer write
+/// through a library-nested struct's field.
+#[test]
+fn library_nested_struct_type_resolves_at_signature_level() {
+    let src = r"
+        pragma solidity ^0.8.25;
+        library L {
+            struct Inner { uint256 x; }
+            struct Outer { Inner inner; }
+            function f(Outer storage o) public {}
+        }
+    ";
+    with_bound(&[("t.sol", src)], |bound, _| {
+        let (_, function) = bound
+            .functions()
+            .find(|(_, f)| f.name_str.as_deref() == Some("f"))
+            .expect("function is collected");
+        assert_eq!(function.params.len(), 1);
+        let param = bound.var(function.params[0]);
+        assert!(
+            matches!(param.owner, VarOwner::Param(_)),
+            "{:?}",
+            param.owner
+        );
+        let param_res = bound.resolve_span(param.decl.ty.span);
+        assert!(
+            matches!(param_res, Some(Resolution::TypeName(_))),
+            "{param_res:?}"
+        );
+
+        // `Outer`'s own field `inner: Inner` — another type nested in the
+        // same library — must resolve the same way.
+        let (_, outer) = bound
+            .type_decls()
+            .find(|(_, t)| t.name.as_str() == "Outer")
+            .expect("Outer is collected");
+        let TypeDeclKind::Struct(s) = &outer.kind else {
+            panic!("Outer is a struct");
+        };
+        let field = s.fields.iter().next().expect("Outer has a field");
+        let field_res = bound.resolve_span(field.ty.span);
+        assert!(
+            matches!(field_res, Some(Resolution::TypeName(_))),
+            "{field_res:?}"
+        );
+
+        assert!(bound.diagnostics().is_empty(), "{:?}", bound.diagnostics());
+    });
+}
+
 #[test]
 fn imports_aliased_glob_and_namespace() {
     let a = r"
