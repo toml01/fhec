@@ -674,6 +674,648 @@ fn sugar_error_cases() {
     // preserved), so no FHE1012 case exists for locals.
 }
 
+// ---- §2.7 `precondition` blocks ---------------------------------------------
+
+/// A contract whose `g` carries an `in euint32` parameter, so a
+/// `precondition` block is legal there. `pre` is the block body; `rest` is
+/// the remainder of `g`'s body.
+fn pre_contract(pre: &str, rest: &str) -> String {
+    format!(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract P {{\n\
+           euint32 enc;\n\
+           uint256 plainState;\n\
+           uint256[2] plainArr;\n\
+           struct Pair {{ uint256 a; uint256 b; }}\n\
+           Pair pairState;\n\
+           mapping(address => bool) operators;\n\
+           error Bad(address who);\n\
+           event Ping(uint256 x);\n\
+           function isOperator(address who) public view returns (bool) {{\n\
+             return operators[who];\n\
+           }}\n\
+           function encGetter() public view returns (euint32) {{ return enc; }}\n\
+           function bump() public {{ plainState += 1; }}\n\
+           function g(address from, uint256[] memory list, in euint32 amount) public {{\n\
+             precondition {{\n{pre}\n}}\n{rest}\n}}\n\
+         }}\n"
+    )
+}
+
+/// Error codes for a source, sorted (warnings and notes dropped).
+fn error_codes(src: &str) -> Vec<String> {
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let mut v: Vec<String> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.code.to_string())
+            .collect();
+        v.sort();
+        v
+    })
+}
+
+fn assert_pre_codes(pre: &str, expected: &[&str]) {
+    let got = error_codes(&pre_contract(pre, "enc = amount;"));
+    let mut want: Vec<String> = expected.iter().map(|s| s.to_string()).collect();
+    want.sort();
+    assert_eq!(got, want, "precondition body: {pre}");
+}
+
+#[test]
+fn precondition_plaintext_guard_is_accepted() {
+    let src = pre_contract(
+        "if (!isOperator(from)) revert Bad(from);\n\
+         require(from != address(0), \"zero\");",
+        "enc = amount;",
+    );
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        let errs: Vec<&str> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .map(|d| d.code)
+            .collect();
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(c.precondition_sites.len(), 1);
+        let site = &c.precondition_sites[0];
+        assert_eq!(snip(site.marker_span), "precondition ");
+        let block = snip(site.block_span);
+        assert!(block.starts_with('{') && block.ends_with('}'), "{block}");
+        assert_eq!(c.sugar_sites.len(), 1);
+        assert_eq!(c.sugar_sites[0].function, site.function);
+    });
+}
+
+#[test]
+fn precondition_permits_block_local_declaration_and_assignment() {
+    assert_pre_codes(
+        "uint256 n = plainState;\n\
+         n = n + 1;\n\
+         n++;\n\
+         if (n == 0) revert Bad(from);",
+        &[],
+    );
+}
+
+#[test]
+fn precondition_block_scope_does_not_escape() {
+    // Re-declaring the same name after the block is legal, which proves the
+    // block introduced its own scope (FHE1020 would fire otherwise).
+    let src = pre_contract(
+        "uint256 n = 1; n = n + 1;",
+        "uint256 n = 2; n; enc = amount;",
+    );
+    assert_eq!(error_codes(&src), Vec::<String>::new());
+}
+
+#[test]
+fn precondition_rejects_the_managed_encrypted_input() {
+    assert_pre_codes("amount;", &["FHE3014"]);
+    assert_pre_codes(
+        "if (isOperator(from)) revert Bad(from);\namount;",
+        &["FHE3014"],
+    );
+}
+
+/// Both codes apply to `amount == enc`, and FHE3014 is the useful one: it
+/// names the input and says why it does not exist yet.
+#[test]
+fn precondition_prefers_fhe3014_for_a_nested_managed_input() {
+    assert_pre_codes("if (amount == enc) revert Bad(from);", &["FHE3014"]);
+    assert_pre_codes("enc.add(amount);", &["FHE3014"]);
+    let src = pre_contract("if (amount == enc) revert Bad(from);", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3014")
+            .expect("FHE3014");
+        // The span points at the input itself, not at the comparison.
+        assert_eq!(snip(d.span), "amount");
+    });
+}
+
+#[test]
+fn precondition_rejects_encrypted_expressions() {
+    // Encrypted state read.
+    assert_pre_codes("enc;", &["FHE3015"]);
+    // A `view` call returning an encrypted value.
+    assert_pre_codes("encGetter();", &["FHE3015"]);
+    // An encrypted local declaration.
+    assert_pre_codes("euint32 t = enc;", &["FHE3015"]);
+}
+
+/// A type the positive fragment does not cover is `Unknown`, which means
+/// "the checker does not know" — never "plaintext". A qualified type name
+/// can hide an encrypted value, so reading one is refused (§1.3).
+#[test]
+fn precondition_rejects_an_unresolved_type() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\" as Fhe;\n\
+        contract Holder { struct Box { uint256 v; } }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          Holder.Box boxState;\n\
+          Fhe.euint32 hidden;\n\
+          function g(in euint32 amount) public {\n\
+            precondition { boxState; hidden; Holder.Box memory b = boxState; b; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(
+        error_codes(src),
+        ["FHE3015", "FHE3015", "FHE3015", "FHE3015"]
+    );
+    with_checked(&[("t.fsol", src)], |c, _| {
+        for d in c.diagnostics.iter().filter(|d| d.code == "FHE3015") {
+            assert!(
+                d.message.contains("cannot prove is plaintext"),
+                "{}",
+                d.message
+            );
+        }
+    });
+}
+
+/// A *plain* container can still hold encrypted data: `euint32[]` types as a
+/// plain array of encrypted elements, and a plain struct may declare an
+/// encrypted field. The root type alone therefore cannot decide (§1.3).
+///
+/// `getWallet` names its return on purpose: an *unnamed* return types as
+/// `Unknown`, which is refused for a different reason.
+#[test]
+fn precondition_rejects_a_nested_encrypted_type() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        struct Wallet { uint256 id; euint32 secret; }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          euint32[] encList;\n\
+          Wallet walletState;\n\
+          function getWallet() public view returns (Wallet memory w) { w = walletState; }\n\
+          function g(in euint32 amount) public {\n\
+            precondition {\n\
+              euint32[] memory xs;\n\
+              encList;\n\
+              walletState;\n\
+              getWallet();\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(
+        error_codes(src),
+        ["FHE3015", "FHE3015", "FHE3015", "FHE3015"]
+    );
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let by = |text: &str| {
+            c.diagnostics
+                .iter()
+                .find(|d| snip(d.span) == text)
+                .unwrap_or_else(|| panic!("no diagnostic on {text}"))
+                .message
+                .clone()
+        };
+        assert!(by("euint32[] memory xs").contains("`euint32`"));
+        assert!(by("encList").contains("`euint32`"));
+        assert!(by("walletState").contains("`euint32`"));
+        assert!(by("getWallet()").contains("returns `euint32`"));
+    });
+}
+
+#[test]
+fn precondition_rejects_state_writes() {
+    assert_pre_codes("plainState = 1;", &["FHE3015"]);
+    assert_pre_codes("plainState += 1;", &["FHE3015"]);
+    assert_pre_codes("operators[from] = true;", &["FHE3015"]);
+    assert_pre_codes("delete plainState;", &["FHE3015"]);
+    // The message names a *state* write; local assignment stays legal.
+    let src = pre_contract("plainState = 1;", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(d.message.contains("state write"), "{}", d.message);
+    });
+}
+
+#[test]
+fn precondition_rejects_parameter_writes() {
+    assert_pre_codes("from = address(0);", &["FHE3015"]);
+}
+
+/// An element or member write to a variable declared *outside* the block
+/// reaches the same variable the whole-variable write would, so it must get
+/// the same verdict *and* the same reason.
+#[test]
+fn precondition_element_writes_follow_the_base_variable() {
+    // A state array: still a state write, and the message must say so.
+    assert_pre_codes("plainArr[0] = 1;", &["FHE3015"]);
+    let src = pre_contract("plainArr[0] = 1;", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(d.message.contains("state write"), "{}", d.message);
+    });
+}
+
+/// A Solidity reference type binds to existing data instead of copying it, so
+/// a write *through* a block-local can mutate data the block does not own. The
+/// checker does not prove freshness (§1.3): it refuses every through-write,
+/// however the local was declared.
+#[test]
+fn precondition_rejects_every_write_through_a_local() {
+    // Round 2's case: `a` is bound to the parameter's array.
+    assert_pre_codes("uint256[] memory a = list; a[0] = 1;", &["FHE3015"]);
+    // A storage pointer to a state array is the same hazard.
+    assert_pre_codes("uint256[2] storage a = plainArr; a[0] = 1;", &["FHE3015"]);
+    // A struct member through an aliasing local.
+    assert_pre_codes("Pair memory p = pairState; p.a = 1;", &["FHE3015"]);
+    // A local with no initializer, and one the initializer freshly allocates:
+    // both refused now, because a later rebind can make either alias.
+    assert_pre_codes("uint256[2] memory a; a[0] = 1;", &["FHE3015"]);
+    assert_pre_codes("Pair memory p; p.a = 1;", &["FHE3015"]);
+    assert_pre_codes(
+        "uint256[] memory a = new uint256[](3); a[0] = 1;",
+        &["FHE3015"],
+    );
+    assert_pre_codes(
+        "uint256[2] memory a = [uint256(1), 2]; a[0] = 3;",
+        &["FHE3015"],
+    );
+    assert_pre_codes("Pair memory p = Pair(1, 2); p.a = 3;", &["FHE3015"]);
+    let src = pre_contract("uint256[2] memory a; a[0] = 1;", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(d.message.contains("write through `a`"), "{}", d.message);
+    });
+}
+
+/// Writing the local *itself* only rebinds the name, so it stays legal for a
+/// reference type too. Only the element or member write is refused.
+#[test]
+fn precondition_permits_rebinding_a_reference_typed_local() {
+    assert_pre_codes("uint256[] memory a = list; a = list;", &[]);
+    assert_pre_codes("uint256[] memory a; a = list;", &[]);
+    assert_pre_codes("Pair memory p; p = pairState;", &[]);
+    assert_pre_codes("uint256[] memory a = new uint256[](3); a = list;", &[]);
+}
+
+/// The three escapes round 3 found. Each one made a local *look* fresh at its
+/// declaration while the data it reached lived outside the block.
+#[test]
+fn precondition_rejects_the_rebind_and_container_escapes() {
+    // 1. Declared without an initializer, then rebound to a named return.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        struct Pair { uint256 a; uint256 b; }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(in euint32 amount) public returns (Pair memory outPair) {\n\
+            precondition { Pair memory p; p = outPair; p.a = 1; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015"]);
+    // The same escape through a parameter, and through a state variable.
+    assert_pre_codes("uint256[] memory a; a = list; a[0] = 1;", &["FHE3015"]);
+    assert_pre_codes("Pair memory p; p = pairState; p.a = 1;", &["FHE3015"]);
+    // 2. A tuple declaration: the element carries no initializer of its own.
+    assert_pre_codes(
+        "(uint256[] memory a, uint256 n) = (list, 0); n; a[0] = 1;",
+        &["FHE3015"],
+    );
+    // 3. A freshly allocated outer container holding an aliasing reference.
+    assert_pre_codes(
+        "uint256[][] memory n = new uint256[][](1); n[0] = list; n[0][0] = 1;",
+        &["FHE3015", "FHE3015"],
+    );
+}
+
+/// The binder resolves a named return to `Resolution::Local`, but it is part
+/// of the signature: writing it from the guard escapes the block.
+#[test]
+fn precondition_rejects_named_return_writes() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(in euint32 amount) public returns (uint256 outPlain) {\n\
+            precondition { outPlain = 42; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), vec!["FHE3015".to_string()]);
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE3015")
+            .expect("FHE3015");
+        assert!(
+            d.message.contains("declared outside the block"),
+            "{}",
+            d.message
+        );
+    });
+}
+
+/// The whitelist covers "an in-unit contract or type conversion" (§2.7).
+/// `payable(x)` is a Solidity primitive, and `Lib.Money(x)` / `Money.wrap(x)`
+/// name a type, not a function: none of them runs user code.
+#[test]
+fn precondition_permits_plaintext_conversions() {
+    assert_pre_codes("payable(from);", &[]);
+    assert_pre_codes(
+        "if (payable(from) == payable(address(0))) revert Bad(from);",
+        &[],
+    );
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        library Lib {\n\
+          type Money is uint256;\n\
+          struct Pair { uint256 a; uint256 b; }\n\
+        }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          error Bad();\n\
+          function g(uint256 n, in euint32 amount) public {\n\
+            precondition {\n\
+              uint256 back = Lib.Money.unwrap(Lib.Money.wrap(n));\n\
+              Lib.Pair(back, 1);\n\
+              if (back == 0) revert Bad();\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), Vec::<String>::new());
+}
+
+/// `wrap`/`unwrap` names a type, not a function — but only a *plaintext* type
+/// may be converted here. A profile encrypted type is refused however it is
+/// spelled: bare (`euint32.wrap`) or qualified (`Lib.euint32.wrap`).
+#[test]
+fn precondition_rejects_wrap_of_an_encrypted_type() {
+    let src = "pragma solidity ^0.8.25;\n\
+        type euint32 is bytes32;\n\
+        library Lib {\n\
+          type euint64 is bytes32;\n\
+          type Money is uint256;\n\
+        }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(bytes32 raw, uint256 n, in euint32 amount) public {\n\
+            precondition {\n\
+              euint32.unwrap(enc2(raw));\n\
+              Lib.euint64.wrap(raw);\n\
+              Lib.euint64.unwrap(Lib.euint64.wrap(raw));\n\
+              Lib.Money.unwrap(Lib.Money.wrap(n));\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+          function enc2(bytes32 raw) internal pure returns (bytes32) { return raw; }\n\
+        }\n";
+    // Three refusals: the bare `unwrap` and both qualified forms. The
+    // genuinely plaintext `Lib.Money` conversions stay legal.
+    assert_eq!(error_codes(src), ["FHE3015", "FHE3015", "FHE3015"]);
+}
+
+/// The conservative default holds for everything that is not recognizably a
+/// plaintext conversion.
+#[test]
+fn precondition_still_rejects_member_and_unresolved_calls() {
+    // A member call on a state variable of an in-unit contract type.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        interface IThing { function ok() external view returns (bool); }\n\
+        library Lib { function pure_(uint256 x) internal pure returns (uint256) { return x; } }\n\
+        contract P {\n\
+          euint32 enc;\n\
+          IThing thing;\n\
+          error Bad();\n\
+          function g(uint256 n, in euint32 amount) public {\n\
+            precondition {\n\
+              if (!thing.ok()) revert Bad();\n\
+              Lib.pure_(n);\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015", "FHE3015"]);
+}
+
+#[test]
+fn precondition_rejects_state_changing_and_member_calls() {
+    assert_pre_codes("bump();", &["FHE3015"]);
+    assert_pre_codes(
+        "if (FHE.isInitialized(enc)) revert Bad(from);",
+        &["FHE3015"],
+    );
+}
+
+/// `view`/`pure` forbids state access, not memory mutation: a `pure` callee
+/// may still write through a `memory` array/struct/`bytes`/`string`
+/// argument, letting an effect escape the block by proxy instead of through
+/// a direct write. `calldata` is read-only, so a callee that only takes
+/// `calldata` reference parameters stays permitted.
+#[test]
+fn precondition_rejects_a_call_that_can_write_through_a_memory_argument() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(uint256[] memory list, in euint32 amount) public returns (uint256) {\n\
+            precondition {\n\
+              require(list.length > 0, \"empty\");\n\
+              zap(list);\n\
+            }\n\
+            enc = amount;\n\
+            return list[0];\n\
+          }\n\
+          function zap(uint256[] memory a) internal pure { a[0] = 42; }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015"]);
+}
+
+#[test]
+fn precondition_permits_a_call_that_only_takes_calldata_arguments() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          error Bad();\n\
+          function g(uint256[] calldata list, in euint32 amount) public {\n\
+            precondition {\n\
+              if (!nonEmpty(list)) revert Bad();\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+          function nonEmpty(uint256[] calldata a) internal pure returns (bool) { return a.length > 0; }\n\
+        }\n";
+    assert_eq!(error_codes(src), Vec::<String>::new());
+}
+
+#[test]
+fn precondition_rejects_imported_and_unresolved_calls() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import { extCheck } from \"@vendor/Helper.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          error Bad(address who);\n\
+          function g(address from, in euint32 amount) public {\n\
+            precondition { if (!extCheck(from)) revert Bad(from); }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), ["FHE3015"]);
+}
+
+/// `msg.sender` is permitted in a `precondition` block (§2.7) even when the
+/// contract inherits from a base the binder cannot see completely (an
+/// external or unresolved import) — the ordinary shape of a real contract.
+/// Regression: the binder resolves `msg` through
+/// `Resolution::Unresolved(UnresolvedReason::IncompleteInheritance)` in that
+/// case, and `pre_ident` used to judge only the direct resolution, refusing
+/// `msg` as "outside this compilation unit" (FHE3015) in every inheriting
+/// contract — precisely the case the feature exists for.
+#[test]
+fn precondition_permits_msg_sender_with_an_unresolved_base() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import {Base} from \"@some/pkg/Base.sol\";\n\
+        contract P is Base {\n\
+          euint32 enc;\n\
+          mapping(address => bool) operators;\n\
+          error Bad(address who);\n\
+          function isOperator(address who, address spender) public view returns (bool) {\n\
+            return operators[who] && operators[spender];\n\
+          }\n\
+          function g(address from, in euint32 amount) public {\n\
+            precondition {\n\
+              if (!isOperator(from, msg.sender)) revert Bad(from);\n\
+            }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    assert_eq!(error_codes(src), Vec::<String>::new());
+}
+
+#[test]
+fn precondition_rejects_unsupported_statement_forms() {
+    assert_pre_codes("emit Ping(1);", &["FHE3015"]);
+    assert_pre_codes("return;", &["FHE3015"]);
+    assert_pre_codes(
+        "for (uint256 i = 0; i < 2; i++) { plainState; }",
+        &["FHE3015"],
+    );
+    assert_pre_codes("while (false) { }", &["FHE3015"]);
+    assert_pre_codes("assembly { }", &["FHE3015"]);
+    assert_pre_codes("try this.bump() { } catch { }", &["FHE3015"]);
+}
+
+#[test]
+fn precondition_permits_nested_blocks_and_plaintext_if() {
+    assert_pre_codes(
+        "{ uint256 n = 1; if (n == 1) { if (!isOperator(from)) revert Bad(from); } }",
+        &[],
+    );
+}
+
+#[test]
+fn precondition_late_position_is_fhe1017() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(uint256 z, in euint32 amount) public {\n\
+            z;\n\
+            precondition { z; }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        assert_eq!(snip(c.diagnostics[0].span), "precondition");
+        assert!(c.precondition_sites.is_empty());
+    });
+}
+
+#[test]
+fn precondition_duplicate_is_fhe1017() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P {\n\
+          euint32 enc;\n\
+          function g(in euint32 amount) public {\n\
+            precondition { }\n\
+            precondition { }\n\
+            enc = amount;\n\
+          }\n\
+        }\n";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        // A duplicate refuses the unit: no site survives.
+        assert!(c.precondition_sites.is_empty());
+    });
+}
+
+#[test]
+fn nested_precondition_is_a_duplicate() {
+    let src = pre_contract("precondition { }", "enc = amount;");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        assert!(c.precondition_sites.is_empty());
+    });
+}
+
+#[test]
+fn precondition_without_a_managed_input_is_fhe1017() {
+    let bare = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P { function g(address from) public { precondition { from; } } }";
+    with_checked(&[("t.fsol", bare)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+        assert!(c.precondition_sites.is_empty());
+    });
+    // A modifier is never a legal host: it cannot carry `in` parameters.
+    let modifier = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P { modifier m() { precondition { } _; } }";
+    with_checked(&[("t.fsol", modifier)], |c, _| {
+        let v: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        assert_eq!(v, ["FHE1017"], "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn no_precondition_leaves_the_sugar_untouched() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        contract P { euint32 enc; function g(in euint32 a) public { enc = a; } }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.precondition_sites.is_empty());
+        assert_eq!(c.sugar_sites.len(), 1);
+    });
+}
+
 // ---- helpers referenced from bodies ------------------------------------------
 
 // `unknownFn`, `stateWriterB`, `fhelperWrite`, `plainStateRead` are

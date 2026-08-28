@@ -6,14 +6,22 @@
 //!
 //! 1. ascending `range.start`;
 //! 2. at the same start offset, pure insertions before replacements;
-//! 3. remaining ties keep plan order.
+//! 3. then by [`fhec_ir::InsertOrder`] — a patch that declares names sorts
+//!    before patches that may read them;
+//! 4. remaining ties keep plan order.
 //!
-//! Rule 3 is what makes multi-statement insertions at one offset (e.g.
+//! Rule 3 exists because plan order is *not* output order: the passes run
+//! operators → if/select → ACL, plus a per-file sugar expansion, so an ACL
+//! grant can be queued before the materializer that declares the handle it
+//! grants. When the two anchor at one offset (no whitespace between the
+//! constructs) only an explicit tag can order them correctly.
+//!
+//! Rule 4 is what makes multi-statement insertions at one offset (e.g.
 //! `FHE.allowThis(x);` then `FHE.allowSender(x);`, spec §8.1) come out in the
 //! order the lowering pass produced them. The splicer normalizes rather than
-//! requiring pre-sorted input because the three lowering passes (operators →
-//! if/select → ACL) each append patches in their own walk order; only
-//! *overlap* indicates a genuine invariant violation upstream.
+//! requiring pre-sorted input because the lowering passes each append patches
+//! in their own walk order; only *overlap* indicates a genuine invariant
+//! violation upstream.
 
 use fhec_ir::{ByteRange, FilePlan, Provenance};
 
@@ -56,10 +64,7 @@ pub fn splice(original: &str, plan: &FilePlan) -> Result<SplicedFile, EmitError>
 
     // Canonical order (stable: plan order breaks remaining ties).
     let mut order: Vec<usize> = (0..plan.patches.len()).collect();
-    order.sort_by_key(|&i| {
-        let p = &plan.patches[i];
-        (p.range.start, u8::from(!p.is_insertion()))
-    });
+    order.sort_by_key(|&i| plan.patches[i].sort_key());
 
     let mut out = String::with_capacity(original.len());
     let mut applied = Vec::with_capacity(order.len());
@@ -170,6 +175,19 @@ mod tests {
         ]);
         let out = splice(src, &p).unwrap();
         assert_eq!(out.text, "x123y");
+    }
+
+    #[test]
+    fn declaration_insertion_precedes_normal_at_same_offset() {
+        let src = "xy";
+        // Plan order is the failing order: the reader is queued first, the
+        // materializer that declares what it reads second.
+        let p = plan(vec![
+            Patch::insert(1, "use;", prov()),
+            Patch::insert(1, "decl;", prov()).declaration(),
+        ]);
+        let out = splice(src, &p).unwrap();
+        assert_eq!(out.text, "xdecl;use;y");
     }
 
     #[test]
@@ -300,7 +318,7 @@ mod tests {
 
             // Each output range holds exactly the replacement text.
             let mut sorted = p.patches.clone();
-            sorted.sort_by_key(|pt| (pt.range.start, u8::from(!pt.is_insertion())));
+            sorted.sort_by_key(|pt| pt.sort_key());
             for (ap, pt) in out.applied.iter().zip(&sorted) {
                 assert_eq!(
                     &out.text[ap.output_range.start..ap.output_range.end],

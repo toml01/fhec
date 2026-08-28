@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract PreconditionBasic {
+    euint32 balance;
+    mapping(address => mapping(address => bool)) operators;
+
+    error UnauthorizedSpender(address owner, address spender);
+
+    function isOperator(address owner, address spender) public view returns (bool) {
+        return operators[owner][spender];
+    }
+
+    function deposit(address from, in euint32 amount) public {
+        precondition {
+            if (!isOperator(from, msg.sender)) revert UnauthorizedSpender(from, msg.sender);
+        }
+        balance = amount;
+    }
+}

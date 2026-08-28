@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE3014",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 347,
+      "end_byte": 353,
+      "start_line": 14,
+      "start_col": 13,
+      "end_line": 14,
+      "end_col": 19
+    },
+    "message": "`amount` is a dialect-managed encrypted input; it does not exist yet inside a `precondition` block, because the block runs before the generated conversion",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3014",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 631,
+      "end_byte": 637,
+      "start_line": 23,
+      "start_col": 17,
+      "end_line": 23,
+      "end_col": 23
+    },
+    "message": "`amount` is a dialect-managed encrypted input; it does not exist yet inside a `precondition` block, because the block runs before the generated conversion",
+    "rule": "§2.7"
+  }
+]

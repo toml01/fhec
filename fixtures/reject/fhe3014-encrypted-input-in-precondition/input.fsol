@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract PreconditionUsesInput {
+    euint32 balance;
+
+    error Denied();
+
+    // `amount` is materialized *after* the block, so it does not exist here.
+    function deposit(in euint32 amount) public {
+        precondition {
+            amount;
+        }
+        balance = amount;
+    }
+
+    // Nested inside an encrypted comparison, the input still decides the
+    // diagnostic: FHE3014 names it, FHE3015 would only say "not here".
+    function nested(in euint32 amount) public {
+        precondition {
+            if (amount == balance) revert Denied();
+        }
+        balance = amount;
+    }
+}

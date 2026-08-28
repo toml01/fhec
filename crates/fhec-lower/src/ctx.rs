@@ -1,7 +1,7 @@
 //! Shared lowering context: site indexes, span→byte-range conversion, source
 //! text access, and small text utilities used by all three passes.
 
-use fhec_bind::{BoundUnit, FileId, SourceFile};
+use fhec_bind::{BoundUnit, FileId, FunctionId, SourceFile};
 use fhec_check::CheckedUnit;
 use fhec_ir::ByteRange;
 use fhec_targets::TargetProfile;
@@ -28,6 +28,9 @@ pub(crate) struct Ctx<'a, 'ast> {
     pub incdecs_by_span: FxHashMap<Span, usize>,
     /// Encrypted-if sites indexed by their statement span.
     pub ifs_by_span: FxHashMap<Span, usize>,
+    /// The legal `precondition` site of a function, when it has one
+    /// (spec §2.7); at most one per function by construction.
+    pub preconditions_by_fn: FxHashMap<FunctionId, usize>,
 }
 
 impl<'a, 'ast> Ctx<'a, 'ast> {
@@ -58,6 +61,10 @@ impl<'a, 'ast> Ctx<'a, 'ast> {
         let mut ifs_by_span = FxHashMap::default();
         for (i, s) in checked.if_sites.iter().enumerate() {
             ifs_by_span.insert(s.span, i);
+        }
+        let mut preconditions_by_fn = FxHashMap::default();
+        for (i, s) in checked.precondition_sites.iter().enumerate() {
+            preconditions_by_fn.insert(s.function, i);
         }
         let texts = files
             .iter()
@@ -91,6 +98,7 @@ impl<'a, 'ast> Ctx<'a, 'ast> {
             compounds_by_span,
             incdecs_by_span,
             ifs_by_span,
+            preconditions_by_fn,
         }
     }
 

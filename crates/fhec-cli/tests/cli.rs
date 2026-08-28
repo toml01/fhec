@@ -106,6 +106,22 @@ fn explain_known_and_unknown() {
 }
 
 #[test]
+fn explain_covers_the_precondition_codes() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (code, name) in [
+        ("FHE1017", "precondition-bad-position"),
+        ("FHE3014", "encrypted-input-used-in-precondition"),
+        ("FHE3015", "precondition-forbidden-effect"),
+    ] {
+        let out = fhec(tmp.path(), &["explain", code]);
+        assert_eq!(out.status.code(), Some(0), "{code}");
+        let text = stdout(&out);
+        assert!(text.contains(name), "{code}: {text}");
+        assert!(text.contains("§2.7"), "{code}: {text}");
+    }
+}
+
+#[test]
 fn invalid_acl_mode_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let out = fhec(tmp.path(), &["check", "--acl", "bogus"]);

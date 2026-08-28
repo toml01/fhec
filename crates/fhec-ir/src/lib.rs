@@ -16,4 +16,4 @@ mod plan;
 pub use etype::{EType, EWidth};
 pub use fragment::{ByteRange, Expr, Operand, Stmt, TempType};
 pub use op::FheOp;
-pub use plan::{FilePlan, Patch, Provenance, RewritePlan};
+pub use plan::{FilePlan, InsertOrder, Patch, Provenance, RewritePlan};

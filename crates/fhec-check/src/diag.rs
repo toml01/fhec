@@ -79,6 +79,8 @@ pub mod codes {
     pub const IN_SUGAR_NAME_COLLISION: &str = "FHE1011";
     /// in-sugar-bad-position (§2.3).
     pub const IN_SUGAR_BAD_POSITION: &str = "FHE1012";
+    /// precondition-bad-position (§2.7).
+    pub const PRECONDITION_BAD_POSITION: &str = "FHE1017";
     /// encrypted-meets-unknown (§3.2).
     pub const ENCRYPTED_MEETS_UNKNOWN: &str = "FHE2001";
     /// incompatible-encrypted-operands (§3.3, §4.1).
@@ -123,6 +125,10 @@ pub mod codes {
     pub const DELETE_ON_ENCRYPTED: &str = "FHE3010";
     /// side-effecting-encrypted-operand (§5.5).
     pub const SIDE_EFFECT_OPERAND: &str = "FHE3012";
+    /// encrypted-input-used-in-precondition (§2.7).
+    pub const ENCRYPTED_INPUT_IN_PRECONDITION: &str = "FHE3014";
+    /// precondition-forbidden-effect (§2.7).
+    pub const PRECONDITION_FORBIDDEN_EFFECT: &str = "FHE3015";
     /// encrypted-index (§7.2).
     pub const ENCRYPTED_INDEX: &str = "FHE3020";
     /// encrypted-loop-condition (§5.6, §7.2).

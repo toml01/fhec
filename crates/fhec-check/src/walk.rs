@@ -79,6 +79,11 @@ pub(crate) struct FnChecker<'a, 'ast> {
     pub(crate) branch_writes: Vec<FxHashMap<usize, Span>>,
     /// The span of the statement currently being walked (facts anchor on it).
     pub(crate) current_stmt_span: Span,
+    /// The span of the `precondition` block currently being walked, if any.
+    /// A local whose declaration lies inside it does not escape the block, so
+    /// it is the one thing §2.7 lets the block write (see
+    /// [`FnChecker::check_precondition_block`]).
+    pub(crate) pre_span: Option<Span>,
 }
 
 impl<'a, 'ast> FnChecker<'a, 'ast> {
@@ -121,6 +126,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             branch_depth: 0,
             branch_writes: Vec::new(),
             current_stmt_span: Span::DUMMY,
+            pre_span: None,
         }
     }
 
@@ -293,6 +299,9 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 }
             }
             Block(b) | UncheckedBlock(b) => self.walk_block(b),
+            // A `precondition` block is a plaintext guard with its own,
+            // stricter rules (spec §2.7); its scope does not escape.
+            Precondition(b) => self.check_precondition_block(b),
             Break | Continue => {
                 if self.in_branch() {
                     self.error(

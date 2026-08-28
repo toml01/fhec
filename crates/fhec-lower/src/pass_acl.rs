@@ -498,7 +498,9 @@ fn search_block<'ast>(
             continue;
         }
         let found = match &s.kind {
-            ast::StmtKind::Block(b) | ast::StmtKind::UncheckedBlock(b) => search_block(b, target),
+            ast::StmtKind::Block(b)
+            | ast::StmtKind::UncheckedBlock(b)
+            | ast::StmtKind::Precondition(b) => search_block(b, target),
             ast::StmtKind::If(_, t, e) => {
                 search_stmt(t, target).or_else(|| e.as_ref().and_then(|e| search_stmt(e, target)))
             }

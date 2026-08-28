@@ -1,0 +1,227 @@
+[
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 627,
+      "end_byte": 638,
+      "start_line": 23,
+      "start_col": 13,
+      "end_line": 23,
+      "end_col": 24
+    },
+    "message": "a state write is not permitted in a `precondition` block: the block runs before the encrypted inputs are verified, so the write would persist for calls that later revert (only locals declared inside the block may be assigned)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 778,
+      "end_byte": 785,
+      "start_line": 30,
+      "start_col": 13,
+      "end_line": 30,
+      "end_col": 20
+    },
+    "message": "an encrypted value cannot appear in a `precondition` block: the block is a plaintext guard that runs before any FHE operation of this function",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 922,
+      "end_byte": 943,
+      "start_line": 37,
+      "start_col": 13,
+      "end_line": 37,
+      "end_col": 34
+    },
+    "message": "this call has a return type the checker cannot prove is plaintext; a `precondition` block may only use values it can prove are plaintext",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1084,
+      "end_byte": 1109,
+      "start_line": 44,
+      "start_col": 18,
+      "end_line": 44,
+      "end_col": 43
+    },
+    "message": "only `require`/`assert`/`revert`, plaintext conversions, and calls to statically resolved `view`/`pure` functions of this compilation unit may appear in a `precondition` block; imported, unresolved, member, and state-changing calls are refused",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1257,
+      "end_byte": 1270,
+      "start_line": 51,
+      "start_col": 13,
+      "end_line": 51,
+      "end_col": 26
+    },
+    "message": "`emit` is not permitted in a `precondition` block: the block runs before the encrypted inputs are verified, so the event would be observable for calls that later revert",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1402,
+      "end_byte": 1409,
+      "start_line": 58,
+      "start_col": 13,
+      "end_line": 58,
+      "end_col": 20
+    },
+    "message": "`return` is not permitted in a `precondition` block: the generated encrypted-input conversions run after the block and would be skipped (revert instead, or move the code into the body)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1534,
+      "end_byte": 1606,
+      "start_line": 65,
+      "start_col": 13,
+      "end_line": 67,
+      "end_col": 14
+    },
+    "message": "loops are not permitted in a `precondition` block: it is a straight-line plaintext guard",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1740,
+      "end_byte": 1791,
+      "start_line": 74,
+      "start_col": 13,
+      "end_line": 76,
+      "end_col": 14
+    },
+    "message": "inline assembly is not permitted in a `precondition` block: its effects are opaque to the checker",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 2295,
+      "end_byte": 2308,
+      "start_line": 92,
+      "start_col": 13,
+      "end_line": 92,
+      "end_col": 26
+    },
+    "message": "a `precondition` block must not write to `outPlain`: it is declared outside the block, so the effect would escape a guard that is plaintext only",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 2525,
+      "end_byte": 2537,
+      "start_line": 100,
+      "start_col": 13,
+      "end_line": 100,
+      "end_col": 25
+    },
+    "message": "a state write is not permitted in a `precondition` block: the block runs before the encrypted inputs are verified, so the write would persist for calls that later revert (only locals declared inside the block may be assigned)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 2884,
+      "end_byte": 2896,
+      "start_line": 110,
+      "start_col": 13,
+      "end_line": 110,
+      "end_col": 25
+    },
+    "message": "a `precondition` block must not write through `local`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 3326,
+      "end_byte": 3338,
+      "start_line": 122,
+      "start_col": 13,
+      "end_line": 122,
+      "end_col": 25
+    },
+    "message": "a `precondition` block must not write through `local`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 3688,
+      "end_byte": 3700,
+      "start_line": 133,
+      "start_col": 13,
+      "end_line": 133,
+      "end_col": 25
+    },
+    "message": "a `precondition` block must not write through `local`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 4036,
+      "end_byte": 4050,
+      "start_line": 143,
+      "start_col": 13,
+      "end_line": 143,
+      "end_col": 27
+    },
+    "message": "a `precondition` block must not write through `rows`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  },
+  {
+    "code": "FHE3015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 4064,
+      "end_byte": 4078,
+      "start_line": 144,
+      "start_col": 13,
+      "end_line": 144,
+      "end_col": 27
+    },
+    "message": "a `precondition` block must not write through `rows`: an element or member write reaches the data the local refers to, which the checker cannot prove lives inside the block, so the effect could escape a guard that is plaintext only (assign the local itself instead)",
+    "rule": "§2.7"
+  }
+]

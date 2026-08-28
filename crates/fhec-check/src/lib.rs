@@ -40,6 +40,7 @@ mod decl;
 mod diag;
 mod exprs;
 mod ops;
+mod precondition;
 mod sites;
 mod sugar;
 mod trust;
@@ -50,7 +51,7 @@ pub use diag::{codes, Diagnostic, FixIt, Severity};
 pub use sites::{
     AclFacts, CheckedUnit, CompoundAssignSite, EncryptedArgCall, EncryptedIfSite, EncryptedReturn,
     EncryptedStorageWrite, InSugarSite, IncDecSite, OperandKind, OperandPlan, OperatorSite,
-    SlotKind, TernarySite, TypeTable,
+    PreconditionSite, SlotKind, TernarySite, TypeTable,
 };
 pub use ty::{PlainTy, Ty};
 
@@ -74,6 +75,7 @@ pub fn check<'ast>(
     let mut out = CheckedUnit::default();
 
     sugar::scan(files, unit, &trust, &mut out);
+    precondition::scan(unit, &mut out);
 
     let mut safe_cache: FxHashMap<fhec_bind::FunctionId, bool> = FxHashMap::default();
     let fids: Vec<fhec_bind::FunctionId> = unit.functions().map(|(id, _)| id).collect();

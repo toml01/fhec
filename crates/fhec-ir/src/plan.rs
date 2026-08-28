@@ -8,7 +8,7 @@
 //!
 //! A [`FilePlan`] is valid when, after normalization to the canonical patch
 //! order (by `range.start`; insertions before replacements at the same
-//! offset; plan order as the tiebreaker):
+//! offset; [`InsertOrder`] next; plan order as the final tiebreaker):
 //!
 //! 1. every patch range is in bounds of the original file and lies on UTF-8
 //!    character boundaries,
@@ -55,6 +55,28 @@ impl Provenance {
     }
 }
 
+/// Relative order of two patches that land on the *same* byte offset.
+///
+/// Plan order cannot decide this: the lowering passes run in a fixed order
+/// (operators → if/select → ACL, plus per-file sugar expansion), and that
+/// order is not the order the output statements must appear in. When a
+/// materializer that *declares* a name and a patch that *reads* that name
+/// both anchor at one offset — which happens whenever there is no whitespace
+/// between the two source constructs — the declaration must come first or the
+/// output names an undeclared identifier.
+///
+/// Ordering is by declaration order: [`InsertOrder::Declaration`] sorts first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub enum InsertOrder {
+    /// The patch introduces declarations later patches at this offset may
+    /// name (spec §2.3 encrypted-input materializers, spec §2.7 when a
+    /// `precondition` block moves them).
+    Declaration,
+    /// Everything else. Plan order breaks the remaining ties.
+    #[default]
+    Normal,
+}
+
 /// A single byte-range patch: replace `range` in the original file with
 /// `replacement`.
 ///
@@ -67,6 +89,8 @@ pub struct Patch {
     pub replacement: String,
     /// Rule provenance, kept for the source-map manifest.
     pub provenance: Provenance,
+    /// Tiebreaker against other patches at the same offset.
+    pub order: InsertOrder,
 }
 
 impl Patch {
@@ -80,6 +104,7 @@ impl Patch {
             range,
             replacement: replacement.into(),
             provenance,
+            order: InsertOrder::Normal,
         }
     }
 
@@ -89,12 +114,28 @@ impl Patch {
             range: ByteRange::new(at, at),
             replacement: text.into(),
             provenance,
+            order: InsertOrder::Normal,
         }
+    }
+
+    /// Marks this patch as introducing declarations later patches at the same
+    /// offset may name; see [`InsertOrder`].
+    #[must_use]
+    pub fn declaration(mut self) -> Self {
+        self.order = InsertOrder::Declaration;
+        self
     }
 
     /// Whether this patch inserts without replacing any original bytes.
     pub fn is_insertion(&self) -> bool {
         self.range.is_empty()
+    }
+
+    /// The canonical sort key against other patches of the same file.
+    ///
+    /// Ties on this key are broken by plan order (the sort is stable).
+    pub fn sort_key(&self) -> (usize, u8, InsertOrder) {
+        (self.range.start, u8::from(!self.is_insertion()), self.order)
     }
 }
 

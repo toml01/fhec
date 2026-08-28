@@ -200,6 +200,28 @@ pub struct InSugarSite {
     pub file: FileId,
 }
 
+/// The one legal `precondition { ... }` block of a function (spec §2.7).
+///
+/// Only *legal* blocks become sites: the block is the first statement of a
+/// function or constructor body whose parameter list declares at least one
+/// dialect-managed encrypted input. Every other occurrence is FHE1017 and no
+/// site is stated, so the lowerer never sees one it must not act on.
+#[derive(Clone, Debug)]
+pub struct PreconditionSite {
+    /// Span of the whole statement, `precondition` through the closing `}`.
+    pub stmt_span: Span,
+    /// Span the lowerer deletes to leave a plain nested block behind: the
+    /// keyword plus the trivia up to the block's `{`.
+    pub marker_span: Span,
+    /// Span of the nested block, `{` through `}`. Input materializers are
+    /// inserted immediately after its end.
+    pub block_span: Span,
+    /// The enclosing function.
+    pub function: FunctionId,
+    /// The file containing the site.
+    pub file: FileId,
+}
+
 /// What kind of storage slot an encrypted write targets (spec §8.1).
 #[derive(Clone, Debug)]
 pub enum SlotKind {
@@ -314,6 +336,8 @@ pub struct CheckedUnit {
     pub incdec_sites: Vec<IncDecSite>,
     /// `in` parameter sugar expansions (spec §2.3).
     pub sugar_sites: Vec<InSugarSite>,
+    /// Legal `precondition` blocks, at most one per function (spec §2.7).
+    pub precondition_sites: Vec<PreconditionSite>,
     /// ACL facts (spec §8).
     pub acl: AclFacts,
     /// Diagnostics (spec §9). Any `Severity::Error` entry MUST abort
@@ -338,5 +362,6 @@ impl CheckedUnit {
             + self.compound_sites.len()
             + self.incdec_sites.len()
             + self.sugar_sites.len()
+            + self.precondition_sites.len()
     }
 }

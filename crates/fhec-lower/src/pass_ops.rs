@@ -53,7 +53,9 @@ fn walk_stmt<'ast>(
         return Ok(());
     }
     match &stmt.kind {
-        ast::StmtKind::Block(b) | ast::StmtKind::UncheckedBlock(b) => {
+        ast::StmtKind::Block(b)
+        | ast::StmtKind::UncheckedBlock(b)
+        | ast::StmtKind::Precondition(b) => {
             for s in b.iter() {
                 walk_stmt(ctx, s, skips, plan)?;
             }
@@ -233,6 +235,23 @@ const INPUT_PROOF: &str = "inputProof";
 /// several (one signature covers the whole batch; per-parameter conversion
 /// calls would not verify).
 pub(crate) fn expand_sugar(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan) -> Result<()> {
+    // The `precondition` marker (spec §2.7) is stripped so a plain nested
+    // block survives. The block's own bytes are untouched, and the
+    // conversions below are inserted after its closing `}` — the marker patch
+    // and the conversion insertion never overlap.
+    for site in ctx
+        .checked
+        .precondition_sites
+        .iter()
+        .filter(|s| s.file.index() == file_idx)
+    {
+        plan.push(Patch::replace(
+            ctx.range(site.marker_span),
+            String::new(),
+            Provenance::new("§2.7 precondition-marker", ctx.range(site.marker_span)),
+        ));
+    }
+
     let mut sites: Vec<&fhec_check::InSugarSite> = ctx
         .checked
         .sugar_sites
@@ -297,10 +316,23 @@ fn expand_function_sugar(
     };
     let body_range = ctx.range(body_span);
     // Insert right after the opening `{`, indented like the first body
-    // line (or the body's line + 4 when the body is empty).
+    // line (or the body's line + 4 when the body is empty)...
     let brace = body_range.start;
     debug_assert_eq!(&file_text[brace..brace + 1], "{");
     let indent = body_indent(file_text, body_range.start, body_range.end);
+    // ...unless the function opens with a `precondition` block (spec §2.7):
+    // then the conversions go after that block's closing `}`, so the author's
+    // plaintext guard runs before proof verification. The indent is unchanged
+    // — the block is the body's first statement, so it sets that indent.
+    let at = match ctx.preconditions_by_fn.get(&first.function) {
+        Some(&i) => {
+            let site = &ctx.checked.precondition_sites[i];
+            let block = ctx.range(site.block_span);
+            debug_assert_eq!(&file_text[block.end - 1..block.end], "}");
+            block.end
+        }
+        None => brace + 1,
+    };
 
     let statements: Vec<String> = if let [site] = sites {
         let input = format!("{}_input", site.name);
@@ -342,11 +374,17 @@ fn expand_function_sugar(
         prelude.push_str(&indent);
         prelude.push_str(stmt);
     }
-    plan.push(Patch::insert(
-        brace + 1,
-        prelude,
-        Provenance::new("§2.3 in-sugar-conversion", ctx.range(first.param_span)),
-    ));
+    // Tagged as a declaration: the prelude declares the handles, and a patch
+    // that reads one (an ACL grant on the next statement) can anchor at the
+    // very same offset when the source has no whitespace there.
+    plan.push(
+        Patch::insert(
+            at,
+            prelude,
+            Provenance::new("§2.3 in-sugar-conversion", ctx.range(first.param_span)),
+        )
+        .declaration(),
+    );
     Ok(())
 }
 

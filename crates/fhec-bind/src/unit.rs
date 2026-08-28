@@ -116,6 +116,16 @@ impl<'ast> BoundUnit<'ast> {
         &self.type_decls[id.index()]
     }
 
+    /// All type declarations in the unit, in declaration order.
+    pub fn type_decls(
+        &self,
+    ) -> impl Iterator<Item = (TypeDeclId, &TypeDeclInfo<'ast>)> + use<'_, 'ast> {
+        self.type_decls
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (TypeDeclId::new(i), t))
+    }
+
     /// The event declaration with the given id.
     pub fn event(&self, id: EventId) -> &EventInfo<'ast> {
         &self.events[id.index()]
