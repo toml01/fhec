@@ -31,7 +31,9 @@ import {
  * - shared inputs use `in shared euint64`, and directed shared outputs use
  *   `shared(msg.sender) euint64`;
  * - a `precondition` block runs before input proof verification, so the
- *   operator check keeps its upstream position in the From overloads;
+ *   operator check keeps its upstream position in the proof-taking From
+ *   functions; the shared-input From overloads stay receive-first, matching
+ *   upstream, since they never verify a proof;
  * - the {FHESafeMath} library disappears: its checked arithmetic is written
  *   inline in `_update` with encrypted operators (`+`, `-`, `>=`) and
  *   encrypted ternaries (`cond ? a : b`), which lower to `FHE.add`/`FHE.sub`/

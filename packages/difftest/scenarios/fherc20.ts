@@ -97,7 +97,8 @@ async function balanceHandleArg(ctx: StepContext, account: string): Promise<unkn
 /**
  * Strict external-input/operator/ACL coverage. This includes valid, self,
  * unauthorized, and expired operators, plus the operator-first compound-invalid
- * FromAndCall path. The basic known ordering divergence is isolated elsewhere.
+ * FromAndCall path. The basic From compound-invalid ordering case is isolated
+ * elsewhere (also strict — no divergence remains).
  */
 export function makeFherc20CoreScenario(wiring: Fherc20Accounts): Scenario {
   return {
@@ -392,6 +393,11 @@ export function makeFherc20SharedScenario(wiring: SharedWiring): Scenario {
  * pinned the one old baseline divergence: generated output used to verify the
  * proof first and report `InvalidSigner`. A `precondition` block now keeps the
  * operator check first, and both sides report `FHERC20UnauthorizedSpender`.
+ *
+ * A second step repeats the wrong-consumer proof with an AUTHORIZED operator,
+ * so the precondition passes and proof verification is actually reached. This
+ * proves the ordering test isn't tautological: the operator check firing
+ * first in step 0 isn't masking a proof check that would always pass anyway.
  */
 export function makeFherc20CompoundInvalidOrderingScenario(wiring: Fherc20Accounts): Scenario {
   return {
@@ -403,6 +409,18 @@ export function makeFherc20CompoundInvalidOrderingScenario(wiring: Fherc20Accoun
         label: 'unauthorized basic From with proof bound to wrong consumer',
         args: (ctx) => wrongConsumerArgs(ctx, 1n, wiring.dave, [wiring.alice, wiring.carol]),
         expectRevert: true,
+      },
+      {
+        fn: 'setOperator',
+        label: 'alice authorizes carol as operator',
+        args: [wiring.carol, OPERATOR_UNTIL],
+      },
+      {
+        fn: 'confidentialTransferFrom(address,address,bytes32,bytes)',
+        from: 2,
+        label: 'authorized basic From still fails on a proof bound to the wrong consumer',
+        args: (ctx) => wrongConsumerArgs(ctx, 1n, wiring.dave, [wiring.alice, wiring.carol]),
+        expectRevert: 'InvalidSigner',
       },
     ],
     probeAfterEachStep: false,

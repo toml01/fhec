@@ -361,6 +361,13 @@ describe('differential :: transpiled FHERC20 (dialect) vs upstream fhenix-confid
     expect(result.a.snapshots[0].plaintexts).to.deep.equal({});
     expect(result.a.snapshots[0].acl).to.deep.equal({});
     expect(result.a.snapshots[0].values).to.deep.equal({});
+
+    // Step 2 repeats the wrong-consumer proof with an authorized operator, so
+    // the precondition passes and proof verification is actually reached.
+    // Both sides must still report `InvalidSigner` — this is what proves step
+    // 0's operator-first ordering isn't hiding a proof check that never runs.
+    expect(result.a.steps[2].revertKey).to.equal('InvalidSigner');
+    expect(result.b.steps[2].revertKey).to.equal('InvalidSigner');
   });
 
   it('pins the canonical eight-transfer ABI, selectors, surface, and interface support', async function () {
