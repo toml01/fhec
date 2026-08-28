@@ -70,6 +70,50 @@ const WIRE_SUFFIX: &str = "_shared";
 /// The one recipient expression this MVP accepts.
 const RECIPIENT: &str = "msg.sender";
 
+/// Whether an expression is `msg.sender` where `msg` *resolves* to the
+/// Solidity builtin, not merely an expression spelled that way.
+///
+/// Structural spelling is not enough: a parameter, local, or struct field
+/// literally named `msg` shadows the builtin, and the checker must not
+/// accept a shadowed `msg.sender` as the recipient. Doing so would let the
+/// lowerer's fixed `msg.sender` re-emission (spec §2.8) resolve, in the
+/// generated Solidity, to whatever the shadowing declaration is — a
+/// caller-controlled value in the worst case (issue #61). Requiring the
+/// resolution, not the text, is the only way to keep the transpiler's proof
+/// that no other expression evaluates to the real caller (restriction 2).
+///
+/// Under an incomplete linearization (an unseen base), `msg` degrades to
+/// [`UnresolvedReason::IncompleteInheritance`] like any other name that is
+/// not the contract's own member — an unseen base could in principle also
+/// declare a member named `msg`. Requiring `Resolution::Builtin` outright
+/// would then refuse `shared(msg.sender)` in every contract that inherits
+/// from a package, which is the dominant real-world shape (spec §2.8 already
+/// has fixture/test coverage for it). This module follows the same narrow,
+/// established policy as `precondition.rs`'s `callee_resolution` for
+/// `require`: trust the `fallback` — what file scope alone would have
+/// answered — exactly when it says `Builtin`, and only then. A base that
+/// truly shadows `msg` defeats this, the same general hazard already
+/// documented there.
+fn resolves_to_msg_sender(unit: &BoundUnit<'_>, e: &ast::Expr<'_>) -> bool {
+    let ast::ExprKind::Member(base, member) = &e.peel_parens().kind else {
+        return false;
+    };
+    if member.as_str() != "sender" {
+        return false;
+    }
+    let ast::ExprKind::Ident(id) = &base.peel_parens().kind else {
+        return false;
+    };
+    let is_msg_builtin = |r: &Resolution| matches!(r, Resolution::Builtin(b) if b.0 == "msg");
+    match unit.resolve(*id) {
+        Some(r) if is_msg_builtin(r) => true,
+        Some(Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
+            fallback, ..
+        })) => is_msg_builtin(fallback),
+        _ => false,
+    }
+}
+
 /// Checks every shared-boundary marker of the unit and states the legal sites.
 ///
 /// Runs *after* the per-function walk: the shared-return type rule (FHE2012)
@@ -421,7 +465,7 @@ fn scan_returns<'ast>(
                 format!("a shared return must name its recipient: `shared({RECIPIENT}) eT`"),
             );
         }
-        Some(e) if !fhec_syntax::is_msg_sender(e) => {
+        Some(e) if !resolves_to_msg_sender(unit, e) => {
             return bad_position(
                 out,
                 e.span,

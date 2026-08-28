@@ -834,6 +834,20 @@ impl<'ast> Binder<'ast> {
                 // Named returns behave as locals.
                 w.declare_existing(vid, Resolution::Local(vid));
             }
+            // The §2.8 shared-return recipient (`shared(msg.sender)`), if
+            // any: syntactically part of the return-type list, but a name
+            // inside it resolves in the function's own scope — params
+            // included — same as any other body expression. Walking it here,
+            // with params already declared, is what lets the checker tell a
+            // shadowing parameter named `msg` from the real builtin (spec
+            // §2.8 restriction 2; issue #61).
+            for r in func.header.returns() {
+                if let Some(shared) = &r.shared {
+                    if let Some(recipient) = &shared.recipient {
+                        w.walk_expr(recipient);
+                    }
+                }
+            }
             // Modifier invocations (includes base-constructor calls on constructors).
             for m in func.header.modifiers.iter() {
                 let res = w.resolve_name(m.name.segments()[0].name, m.name.segments()[0].as_str());
