@@ -2326,6 +2326,62 @@ fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
 }
 
 #[test]
+fn r1_broad_grant_window_stops_at_a_comment_decorated_reassignment() {
+    // A write hidden behind a comment inside otherwise-redundant parens must
+    // still stop the window: the write-barrier compares resolved identity,
+    // not raw snippet text, so a comment cannot hide a real reassignment
+    // that lands after the broad grant (spec §1.3).
+    let src = contract(
+        "        euint32 ptr = a;\n\
+         \x20       FHE.allowPublic(ptr);\n\
+         \x20       (/*reassigned*/ ptr) = b;\n\
+         \x20       balances[msg.sender] = ptr;",
+    );
+    let expected = contract(
+        "        euint32 ptr = a;\n\
+         \x20       FHE.allowPublic(ptr);\n\
+         \x20       (/*reassigned*/ ptr) = b;\n\
+         \x20       balances[msg.sender] = ptr;\n\
+         \x20       FHE.allowThis(balances[msg.sender]);\n\
+         \x20       FHE.allowSender(balances[msg.sender]);",
+    );
+    let out = transpile(&[("t.fsol", &src)]);
+    assert_eq!(out.files[0].1, expected);
+}
+
+#[test]
+fn r1_broad_grant_on_a_state_variable_does_not_survive_an_opaque_call() {
+    // A broad grant on a STATE variable (not a local/param) must never
+    // suppress R1's `allowThis`: `assigned_local` requires the copied RHS to
+    // resolve to a local or parameter, so a bare state-variable name is
+    // rejected even though it is identifier-shaped text. This window only
+    // sees sibling statements in the same block, so it cannot prove a call
+    // like `helper()` left `a` untouched (spec §1.3) — the call does not
+    // need to actually reassign `a`; the analysis must be conservative
+    // regardless.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   mapping(address => euint32) balances;\n\
+               \x20   function helper() internal {}\n\
+               \x20   function f() public {\n\
+               \x20       FHE.allowPublic(a);\n\
+               \x20       helper();\n\
+               \x20       balances[msg.sender] = a;\n\
+               \x20   }\n\
+               }\n";
+    let expected = src.replace(
+        "        balances[msg.sender] = a;\n",
+        "        balances[msg.sender] = a;\n        \
+         FHE.allowThis(balances[msg.sender]);\n        \
+         FHE.allowSender(balances[msg.sender]);\n",
+    );
+    golden(src, &expected);
+}
+
+#[test]
 fn r2_dedupe_path_owns_the_statement_it_rewrote() {
     // Spec §8.2: the fully-deduplicated path still rewrites the operator
     // argument, so pass 1 must not render the same expression again — the

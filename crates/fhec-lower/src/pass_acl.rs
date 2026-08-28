@@ -165,8 +165,8 @@ fn rule_r1(
     // files, so it counts (spec §8.6).
     let local = assigned_local(ctx, w.function, w.stmt_span, &lvalue);
     let local_window = local
-        .as_deref()
-        .map(|l| local_grant_window(ctx, w.function, w.stmt_span, l))
+        .as_ref()
+        .map(|(name, var)| local_grant_window(ctx, w.function, w.stmt_span, name, *var))
         .unwrap_or_default();
     let mut missing: Vec<FheOp> = Vec::new();
     for &op in ops {
@@ -174,7 +174,7 @@ fn rule_r1(
         let equivalent_grant = window
             .iter()
             .any(|s| acl_call_matches(ctx, s, &name, &lvalue, None))
-            || local.as_deref().is_some_and(|l| {
+            || local.as_ref().is_some_and(|(l, _)| {
                 local_window
                     .iter()
                     .any(|s| acl_call_matches(ctx, s, &name, l, None))
@@ -186,7 +186,7 @@ fn rule_r1(
         // extends this broad-grant subsumption to the unconditional contract
         // grant.
         let broad_local_grant = op == FheOp::AllowThis
-            && local.as_deref().is_some_and(|l| {
+            && local.as_ref().is_some_and(|(l, _)| {
                 local_window.iter().any(|s| {
                     ["allowPublic", "allowGlobal"]
                         .into_iter()
@@ -829,7 +829,7 @@ fn forward_window<'ast>(
     };
     let mut out = Vec::new();
     for s in stmts.iter().skip(idx + 1) {
-        if writes_to(ctx, s, lvalue) {
+        if writes_to(ctx, s, WriteTarget::Text(lvalue)) {
             break;
         }
         out.push(s);
@@ -918,12 +918,19 @@ fn search_stmt<'ast>(
 /// `local` already covers `slot` once the handle is stored there. The
 /// idiomatic shape is compute into a local, grant on the local, then store
 /// (spec §8.6).
+///
+/// The RHS must *resolve* to a local variable or parameter — not merely be
+/// identifier-shaped text. A state variable, a free function reference, or
+/// any other bare identifier is rejected: the write-barrier this feeds
+/// ([`local_grant_window`]) only sees sibling statements in the same block,
+/// so it cannot prove a state variable (or anything reachable through a call)
+/// still holds the value an earlier grant covered (spec §1.3).
 fn assigned_local<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,
     stmt_span: Span,
     lvalue: &str,
-) -> Option<String> {
+) -> Option<(String, fhec_bind::VarId)> {
     let (stmts, idx) = enclosing_block(ctx, function, stmt_span)?;
     let ast::StmtKind::Expr(e) = &stmts[idx].kind else {
         return None;
@@ -934,8 +941,15 @@ fn assigned_local<'ast>(
     if strip_parens(&ctx.snippet(lhs.span)) != lvalue {
         return None;
     }
+    let ast::ExprKind::Ident(ident) = &rhs.peel_parens().kind else {
+        return None;
+    };
+    let var = match ctx.unit.resolve(*ident) {
+        Some(fhec_bind::Resolution::Local(v)) | Some(fhec_bind::Resolution::Param(v)) => *v,
+        _ => return None,
+    };
     let text = strip_parens(&ctx.snippet(rhs.span)).to_string();
-    is_ident_text(&text).then_some(text)
+    Some((text, var))
 }
 
 /// Whether a statement declares a variable named `name`.
@@ -958,11 +972,20 @@ fn local_grant_window<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,
     trigger: Span,
-    local: &str,
+    local_name: &str,
+    local_var: fhec_bind::VarId,
 ) -> Vec<&'ast ast::Stmt<'ast>> {
     let mut out = Vec::new();
     for s in backward_window(ctx, function, trigger) {
-        if writes_to(ctx, s, local) || declares(s, local) {
+        if writes_to(
+            ctx,
+            s,
+            WriteTarget::Var {
+                name: local_name,
+                id: local_var,
+            },
+        ) || declares(s, local_name)
+        {
             break;
         }
         out.push(s);
@@ -970,24 +993,53 @@ fn local_grant_window<'ast>(
     out
 }
 
-/// Whether a statement can assign to, delete, or inc/dec `lvalue` anywhere
+/// What [`writes_to`] compares a candidate lvalue against.
+#[derive(Clone, Copy)]
+enum WriteTarget<'a> {
+    /// An arbitrary source-text lvalue path (a state variable, a mapping or
+    /// array element, a struct field, ...). Compared by snippet text only —
+    /// there is no single resolved identity for a structural path.
+    Text(&'a str),
+    /// A resolved local variable or parameter. Compared by [`VarId`]
+    /// identity once a candidate resolves to one, which is immune to
+    /// comments/whitespace and to two differently-spelled spans that name
+    /// the same variable.
+    ///
+    /// [`VarId`]: fhec_bind::VarId
+    Var { name: &'a str, id: fhec_bind::VarId },
+}
+
+impl WriteTarget<'_> {
+    fn text(&self) -> &str {
+        match self {
+            WriteTarget::Text(s) => s,
+            WriteTarget::Var { name, .. } => name,
+        }
+    }
+}
+
+/// Whether a statement can assign to, delete, or inc/dec `target` anywhere
 /// in its subtree.
 ///
 /// This is deliberately conservative: assembly and parser-recovery nodes are
 /// barriers because proving that they leave the tracked value untouched would
 /// require semantics this pass does not model (spec §1.3).
-fn writes_to<'ast>(ctx: &Ctx<'_, 'ast>, stmt: &'ast ast::Stmt<'ast>, lvalue: &str) -> bool {
+fn writes_to<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+    target: WriteTarget<'_>,
+) -> bool {
     use solar_ast::visit::Visit;
     use std::ops::ControlFlow;
 
     struct Search<'a, 'ctx, 'ast> {
         ctx: &'a Ctx<'ctx, 'ast>,
-        lvalue: &'a str,
+        target: WriteTarget<'a>,
     }
 
     impl<'ast> Search<'_, '_, 'ast> {
         fn lvalue_matches(&self, lhs: &'ast ast::Expr<'ast>) -> bool {
-            if strip_parens(&self.ctx.snippet(lhs.span)) == self.lvalue {
+            if strip_parens(&self.ctx.snippet(lhs.span)) == self.target.text() {
                 return true;
             }
             match &lhs.peel_parens().kind {
@@ -996,12 +1048,26 @@ fn writes_to<'ast>(ctx: &Ctx<'_, 'ast>, stmt: &'ast ast::Stmt<'ast>, lvalue: &st
                         .unspan()
                         .is_some_and(|item| self.lvalue_matches(item))
                 }),
+                // A bare identifier: when tracking a resolved local/param,
+                // resolve the candidate too and compare identity rather than
+                // text — a comment or extra parenthesization must not hide a
+                // real write (spec §1.3). When tracking arbitrary text (a
+                // state variable, a mapping/array/struct path), the fast
+                // text-compare above is the only available identity, so a
+                // mismatch here means a genuinely different lvalue.
+                ast::ExprKind::Ident(ident) => match self.target {
+                    WriteTarget::Var { id, .. } => matches!(
+                        self.ctx.unit.resolve(*ident),
+                        Some(fhec_bind::Resolution::Local(v))
+                            | Some(fhec_bind::Resolution::Param(v))
+                            if *v == id
+                    ),
+                    WriteTarget::Text(_) => false,
+                },
                 // Every valid non-tuple Solidity lvalue has one of these
                 // shapes. A different shape is a recovery/unsupported case,
                 // where stopping is the only sound answer.
-                ast::ExprKind::Ident(_)
-                | ast::ExprKind::Member(_, _)
-                | ast::ExprKind::Index(_, _) => false,
+                ast::ExprKind::Member(_, _) | ast::ExprKind::Index(_, _) => false,
                 _ => true,
             }
         }
@@ -1047,7 +1113,7 @@ fn writes_to<'ast>(ctx: &Ctx<'_, 'ast>, stmt: &'ast ast::Stmt<'ast>, lvalue: &st
         }
     }
 
-    Search { ctx, lvalue }.visit_stmt(stmt).is_break()
+    Search { ctx, target }.visit_stmt(stmt).is_break()
 }
 
 /// Strips one `address(...)` wrapper, then parentheses.
