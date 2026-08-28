@@ -1104,8 +1104,9 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     // above (which this loop does not touch) still covers
                     // its own, different hazard.
                     //
-                    // When only ONE arm writes this slot, the other arm's
-                    // contribution really is the pre-if value (already
+                    // When only ONE arm writes this slot AND the pre-if
+                    // value was itself unassigned, the other arm's
+                    // contribution really is that pre-if value (already
                     // reflected in the three-way join above, via
                     // `then_states`/`else_states` both equalling `snap` on
                     // the side that never wrote it) — that shape is the
@@ -1116,7 +1117,21 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     // deliberate behavior for that shape (fixtures/typing/
                     // fhe2007-encrypted-if-one-arm expects exactly one
                     // diagnostic, not two, for exactly this reason).
-                    if then_writes.contains_key(&slot) && else_writes.contains_key(&slot) {
+                    //
+                    // But when the pre-if value WAS already `Assigned`, the
+                    // "needs a pre-value" check above stays silent for this
+                    // slot (its own premise — the pre-value might be
+                    // uninitialized — does not hold), so nothing else catches
+                    // a one-arm write that copies an unassigned value on top
+                    // of an already-assigned target (`r = a; if (eb) { r = u;
+                    // }`). Joining unconditionally once the pre-if value is
+                    // `Assigned` closes that gap: the untouched arm's own
+                    // contribution is still `Assigned` (unchanged from
+                    // `snap`), so the join reduces to the writing arm's own
+                    // state exactly as intended, with no new false positive.
+                    if (then_writes.contains_key(&slot) && else_writes.contains_key(&slot))
+                        || snap[slot] == AState::Assigned
+                    {
                         self.slots[slot].state = AState::join(then_states[slot], else_states[slot]);
                     } else {
                         self.slots[slot].state = AState::Assigned;

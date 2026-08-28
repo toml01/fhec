@@ -1363,6 +1363,34 @@ fn encrypted_if_merge_with_both_arms_genuinely_assigned_stays_clean() {
 }
 
 #[test]
+fn encrypted_if_one_arm_write_over_a_pre_assigned_target_still_flags() {
+    // `r` is Assigned BEFORE the `if`, so the merge's "needs a pre-value"
+    // check stays silent for this slot (its own premise — the pre-value
+    // might be uninitialized — does not hold here). Only one arm writes
+    // `r`, and that write is itself a copy of an unassigned local (`u`):
+    // nothing else catches this unless the post-merge join respects the
+    // writing arm's own (copy-propagated) state instead of blindly forcing
+    // `Assigned` just because the pre-if value was already assigned.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(ebool eb, euint64 a) internal returns (euint64 r) {\n\
+             euint64 u;\n\
+             r = a;\n\
+             if (eb) { r = u; }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
 fn encrypted_if_one_arm_write_still_reports_exactly_one_diagnostic() {
     // Regression guard for fixtures/typing/fhe2007-encrypted-if-one-arm:
     // only one arm writes (no `else`), so the merge's own "needs a
