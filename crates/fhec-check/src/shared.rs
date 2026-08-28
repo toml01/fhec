@@ -114,6 +114,45 @@ fn resolves_to_msg_sender(unit: &BoundUnit<'_>, e: &ast::Expr<'_>) -> bool {
     }
 }
 
+/// The span of the first local declaration named `msg` anywhere in `body`,
+/// if any — a plain local, a tuple-declaration component, a `for`-init
+/// declaration, or a `try`/`catch` binder. Any of these is a *declaration*
+/// that shadows the `msg` builtin (Solidity scoping); a plain *use* of the
+/// name (an ordinary identifier expression) does not, and must not trip
+/// this, or a legitimate `shared(msg.sender)` return would refuse itself by
+/// finding its own header recipient.
+///
+/// Deliberately does not track which declarations are actually in scope at
+/// which `return`: see the call site in [`scan_returns`] for why the
+/// over-approximation (refuse on any declaration in the body, not just one
+/// that provably reaches a `return`) is the conservative and simple choice.
+fn body_shadows_msg<'ast>(body: &'ast ast::Block<'ast>) -> Option<Span> {
+    use ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Search;
+    impl<'ast> Visit<'ast> for Search {
+        type BreakValue = Span;
+
+        fn visit_variable_definition(
+            &mut self,
+            var: &'ast ast::VariableDefinition<'ast>,
+        ) -> ControlFlow<Self::BreakValue> {
+            if let Some(name) = var.name {
+                if name.as_str() == "msg" {
+                    return ControlFlow::Break(name.span);
+                }
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    match Search.visit_block(body) {
+        ControlFlow::Break(span) => Some(span),
+        ControlFlow::Continue(()) => None,
+    }
+}
+
 /// Checks every shared-boundary marker of the unit and states the legal sites.
 ///
 /// Runs *after* the per-function walk: the shared-return type rule (FHE2012)
@@ -476,6 +515,33 @@ fn scan_returns<'ast>(
             );
         }
         Some(_) => {}
+    }
+    // The header recipient resolves to the builtin at the point it is
+    // checked (params and named returns in scope, nothing declared in the
+    // body yet). But the lowerer does not carry that resolution forward: it
+    // re-emits the literal text `msg.sender` fresh at every `return`
+    // (spec §2.8's rewrite). A local, a `for`-init declaration, or a
+    // `try`/`catch` binder named `msg` anywhere in the body shadows the
+    // builtin in Solidity from its declaration point onward, which would
+    // flip a later re-emitted `msg.sender` to read the shadowing
+    // declaration instead of the real transaction sender (issue #61 follow
+    // up). Working out exactly which `return`s a given declaration reaches
+    // needs the same per-statement reachability analysis this module
+    // elsewhere avoids, so this refuses the whole function instead of
+    // guessing (§1.3) — a function legitimately declaring something named
+    // `msg` is not a real-world shape worth the extra precision for.
+    if let Some(body) = &f.ast.body {
+        if let Some(shadow_span) = body_shadows_msg(body) {
+            return bad_position(
+                out,
+                shadow_span,
+                "this function declares a local named `msg`, which shadows the builtin from \
+                 here onward; the shared return's recipient, `msg.sender`, is re-emitted at \
+                 every `return` and would then read this declaration instead of the real \
+                 transaction sender — rename it"
+                    .to_string(),
+            );
+        }
     }
     if decl.in_sugar.is_some() {
         return bad_position(
