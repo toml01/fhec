@@ -2477,3 +2477,520 @@ fn a_precondition_keeps_an_inherited_call_when_every_base_is_visible() {
     let codes = codes_for_source(src);
     assert!(codes.is_empty(), "{codes:?}");
 }
+
+// ---- FHE1022: `FHE` shadowed at a generated-call insertion point --------------
+
+/// The repro from issue #60: a state variable named `FHE` shadows the
+/// profile library in the same contract a generated call would use it in.
+#[test]
+fn fhe1022_state_var_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            FakeLib FHE;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A local variable named `FHE`, declared anywhere in the function, shadows
+/// the library for the whole function (a safe over-approximation of the
+/// live block scope).
+#[test]
+fn fhe1022_local_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                FakeLib FHE = FakeLib(address(0));
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A parameter named `FHE` shadows the library for the whole function.
+#[test]
+fn fhe1022_param_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            function f(FakeLib FHE) external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A same-named local in an unrelated function of the same contract must
+/// not refuse a function that never needs a generated `FHE.` call itself.
+#[test]
+fn fhe1022_is_scoped_to_the_function_that_needs_the_call() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        contract C {
+            euint32 a;
+            euint32 b;
+            function untouched() external pure returns (uint256) {
+                FakeLib FHE = FakeLib(address(0));
+                return 1;
+            }
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}
+
+/// Regression: an in-unit `bytes32` UDVT literally named `euint32`, with no
+/// `FHE` binding anywhere (no library, no import), types as encrypted
+/// through the checker's permissive in-unit-UDVT trust path — but `FHE`
+/// resolving to nothing at all (not to a competing declaration) must not be
+/// reported as FHE1022; it is a loud undefined-identifier failure at solc,
+/// not the silent-miscompile risk this rule guards against.
+#[test]
+fn fhe1022_does_not_fire_when_fhe_has_no_binding_at_all() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        type euint32 is bytes32;
+        contract C {
+            euint32 a;
+            euint32 b;
+            function f(in euint32 amount) public {
+                a = amount;
+            }
+        }
+    "#;
+    let codes = codes_for_source(src);
+    assert!(!codes.iter().any(|c| c == "FHE1022"), "{codes:?}");
+}
+
+/// A named return variable named `FHE` shadows the library for the whole
+/// function, same as any other local.
+#[test]
+fn fhe1022_named_return_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            function f() external returns (FakeLib FHE) {
+                a = a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A constructor parameter named `FHE` shadows the library for the R1
+/// storage-write ACL grant the constructor body needs.
+#[test]
+fn fhe1022_constructor_param_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        contract Victim {
+            euint32 a;
+            constructor(FakeLib FHE, in euint32 amount) {
+                a = amount;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Critical regression (issue #60 review): an unresolvable/external base
+/// leaves `FHE` as `Unresolved(IncompleteInheritance)`, and when the
+/// fallback is ALSO untrusted (no plain import of the profile anywhere,
+/// only the in-unit UDVT bypass that types `euint32` independently of any
+/// import), the unseen base is the only possible source of `FHE` — this
+/// must refuse, not silently defer like the `NotFound` case.
+#[test]
+fn fhe1022_unseen_base_without_a_confirmed_import_is_refused() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract KnownBase {
+            type euint32 is bytes32;
+            euint32 a;
+            euint32 b;
+        }
+        contract Victim is UnseenBase, KnownBase {
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// The same unseen-base shape, but the file also plain-imports the profile
+/// library — the exact shape of the original issue's repro family. The
+/// binder's own fallback policy (`trust.rs` rule 3) already gives this the
+/// benefit of the doubt to avoid refusing every inheriting contract, and
+/// `emit_trust` must preserve that: it must not refuse merely because an
+/// unseen base exists.
+#[test]
+fn fhe1022_incomplete_inheritance_with_a_confirmed_import_is_trusted() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract Victim is UnseenBase {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    let codes = codes_for_source(src);
+    assert!(!codes.iter().any(|c| c == "FHE1022"), "{codes:?}");
+}
+
+/// Critical regression (issue #60 review): a plain import of an unrelated,
+/// untrusted file (not the profile) makes `FHE` resolve as
+/// `Unresolved(MaybeExternal)`. That import's contents are invisible to the
+/// binder and could define anything under that name — this must refuse, the
+/// same as any other untrusted `Unresolved` reason besides `NotFound`.
+#[test]
+fn fhe1022_untrusted_plain_import_is_refused() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "attacker.sol";
+
+        type euint32 is bytes32;
+
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// The batch `in`-sugar materializer's `Impl`/`Utils`/`UnsignedEncryptedInput`
+/// identifiers (issue #79) get the same emit-time trust check as `FHE`: a
+/// state variable named `Impl` shadows the batch materializer's own call.
+#[test]
+fn fhe1022_batch_materializer_impl_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeImpl {}
+        contract Victim {
+            FakeImpl Impl;
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A single (non-batch) `in` parameter never reaches the batch materializer,
+/// so a state variable named `Impl` alongside it must not be flagged.
+#[test]
+fn fhe1022_single_in_param_does_not_check_the_batch_materializer_names() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeImpl {}
+        contract Victim {
+            FakeImpl Impl;
+            function f(in ebool flag) public {}
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}
+
+/// PROBE (round-3 review item 1): an in-unit FHE.sol stand-in declaring
+/// `library Impl` and `library Utils` alongside `library FHE`, plain-imported
+/// by the victim file — the real profile-library shape when the profile file
+/// is part of the compilation unit. Multi-param `in` sugar here must not be
+/// spuriously refused: `Impl`/`Utils` resolve to `Resolution::Contract` from
+/// the same trusted import, not `Unresolved`.
+#[test]
+fn probe_fhe1022_in_unit_fhe_sol_with_batch_sugar() {
+    let fhe_sol = r#"
+        pragma solidity ^0.8.25;
+        type ebool is bytes32;
+        type eaddress is bytes32;
+        library FHE {
+            function select(ebool c, ebool a, ebool b) internal pure returns (ebool) { return a; }
+            function allowThis(ebool v) internal pure {}
+        }
+        library Impl {
+            function verifyBatchInputs(uint256[] memory, bytes memory) internal pure returns (bytes32[] memory r) {}
+        }
+        library Utils {
+            uint8 constant EBOOL_TFHE = 0;
+            uint8 constant EADDRESS_TFHE = 1;
+        }
+        struct UnsignedEncryptedInput { uint256 data; uint8 securityZone; uint8 utype; }
+    "#;
+    let victim = r#"
+        pragma solidity ^0.8.25;
+        import "./FHE.sol";
+        contract Victim {
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    with_checked(&[("FHE.sol", fhe_sol), ("Victim.fsol", victim)], |c, _| {
+        let mut v: Vec<String> = c.diagnostics.iter().map(|d| d.code.to_string()).collect();
+        v.sort();
+        assert!(v.is_empty(), "{v:?}");
+    });
+}
+
+/// Critical regression (round-3 review item 2): a known, in-unit,
+/// *earlier* base already declares `FakeLib FHE`, but a *later*, opaque
+/// base in the same `is` list means `inherited_member_in_known_prefix`
+/// cannot certify it as the provably-first member — and the file also
+/// imports the real profile, so the incomplete-inheritance fallback alone
+/// would otherwise wave this through. The real, visible shadow must win.
+#[test]
+fn fhe1022_known_ancestor_shadow_beats_a_trailing_opaque_base() {
+    // `a`/`b` are declared directly on `Victim` (own member, resolved
+    // without touching inheritance at all) so the construct isolates the
+    // one thing under test: `FHE` resolution specifically, inherited from
+    // `KnownBase`, which is *not* the rightmost direct base and so is not
+    // covered by `inherited_member_in_known_prefix`'s "rightmost known
+    // base" special case either.
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract KnownBase {
+            FakeLib FHE;
+        }
+        contract Victim is KnownBase, UnseenBase {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Same shape, but the ordering is reversed (`UnseenBase, KnownBase`) so
+/// `inherited_member_in_known_prefix` *would* have found the shadow via its
+/// own "rightmost known base" special case — pinning that the new
+/// known-ancestor check does not depend on which arm of that function
+/// happens to fire.
+#[test]
+fn fhe1022_known_ancestor_shadow_found_regardless_of_base_order() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract KnownBase {
+            euint32 a;
+            euint32 b;
+            FakeLib FHE;
+        }
+        contract Victim is UnseenBase, KnownBase {
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 4 (round-3 review): `Utils` shadowed by a state variable, alongside
+/// a legitimately trusted `Impl`/`UnsignedEncryptedInput` from a real plain
+/// import — pins that each batch-materializer name is checked
+/// independently, not as an all-or-nothing bundle.
+#[test]
+fn fhe1022_batch_materializer_utils_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeUtils {}
+        contract Victim {
+            FakeUtils Utils;
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 4: `UnsignedEncryptedInput` shadowed by an in-unit struct that is
+/// not the profile's own declaration.
+#[test]
+fn fhe1022_batch_materializer_unsigned_encrypted_input_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        struct UnsignedEncryptedInput { uint256 x; }
+        contract Victim {
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 3 (round-3 review): the batch materializer also writes
+/// `externalT.unwrap(...)` and `eT.wrap(...)` calls for every parameter
+/// type; a state variable literally named `externalEbool` (the wire type of
+/// one of the `in` parameters here) must be caught even though `Impl`,
+/// `Utils`, and `UnsignedEncryptedInput` stay correctly trusted.
+#[test]
+fn fhe1022_batch_materializer_external_wire_type_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeExternalEbool {}
+        contract Victim {
+            FakeExternalEbool externalEbool;
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 3: the plain encrypted type name side (`eT.wrap(...)`), not just the
+/// external wire-type side.
+#[test]
+fn fhe1022_batch_materializer_plain_type_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeEbool {}
+        contract Victim {
+            FakeEbool ebool;
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 5 (round-3 review): a bodiless multi-`in` declaration never reaches
+/// `batch_input_statements` (signature rewrite only), so it must not be
+/// scanned for the batch-materializer names at all.
+#[test]
+fn fhe1022_bodiless_multi_in_declaration_is_not_scanned() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeImpl {}
+        abstract contract Victim {
+            FakeImpl Impl;
+            function f(in ebool flag, in eaddress owner_) external virtual;
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}
+
+/// Round-4 regression: an in-unit `import "./FHE.sol"` combined with an
+/// unrelated unseen/external base — issue #47's shape, and an ordinary,
+/// common pattern (e.g. a token contract that both vendors the profile
+/// library in-unit and inherits an external OpenZeppelin base) — must not
+/// spuriously refuse. Every resolution the checker sees is wrapped in
+/// `Unresolved(IncompleteInheritance)` because of the unseen base, so this
+/// exercises the unwrap fix in `is_fhe_library` (a plain `a + b` operator,
+/// which needs `FHE` trusted) and in `encrypted_type`/
+/// `external_input_type`/`is_trusted_profile_declaration` (multi-param `in`
+/// sugar, which needs `euint32`, `Impl`, `Utils`, and
+/// `UnsignedEncryptedInput` all trusted) at once.
+#[test]
+fn fhe1022_in_unit_import_with_an_unseen_base_stays_trusted() {
+    let fhe_sol = r#"
+        pragma solidity ^0.8.25;
+        type euint32 is bytes32;
+        type ebool is bytes32;
+        type eaddress is bytes32;
+        type externalEbool is bytes32;
+        type externalEaddress is bytes32;
+        library FHE {
+            function add(euint32 x, euint32 y) internal pure returns (euint32) { return x; }
+            function select(ebool c, ebool a, ebool b) internal pure returns (ebool) { return a; }
+            function allowThis(ebool v) internal pure {}
+        }
+        library Impl {
+            function verifyBatchInputs(uint256[] memory, bytes memory) internal pure returns (bytes32[] memory r) {}
+        }
+        library Utils {
+            uint8 constant EBOOL_TFHE = 0;
+            uint8 constant EADDRESS_TFHE = 1;
+        }
+        struct UnsignedEncryptedInput { uint256 data; uint8 securityZone; uint8 utype; }
+    "#;
+    let victim = r#"
+        pragma solidity ^0.8.25;
+        import "./FHE.sol";
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract Victim is UnseenBase {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+            function g(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    with_checked(&[("FHE.sol", fhe_sol), ("Victim.fsol", victim)], |c, _| {
+        let mut v: Vec<String> = c.diagnostics.iter().map(|d| d.code.to_string()).collect();
+        v.sort();
+        assert!(v.is_empty(), "{v:?}");
+    });
+}

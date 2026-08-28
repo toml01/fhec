@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE1022",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 348,
+      "end_byte": 351,
+      "start_line": 17,
+      "start_col": 13,
+      "end_line": 17,
+      "end_col": 16
+    },
+    "message": "this declaration shadows `FHE`, an identifier a generated call in this function must use; the call would silently bind to it instead of the profile module (the transpiler never renames a generated call around a collision) — rename this declaration",
+    "rule": "§1.3"
+  }
+]

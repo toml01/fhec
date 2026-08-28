@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.6.0 |
+| **Version** | 0.6.7 |
 | **Status** | Draft |
 | **Date** | 2026-08-28 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -32,6 +32,10 @@ A *conforming transpiler* is a program that, for every input compilation unit:
 When the transpiler cannot determine with certainty that a rewrite is semantics-preserving, it MUST emit an error and refuse to produce output for the affected contract. It MUST NOT guess, and it MUST NOT fall back to "best effort" output.
 
 *Rationale (informative):* the CoFHE `FHE.select` operation substitutes default values (`asEbool(false)`, `asEuintN(0)`) for uninitialized ciphertext handles instead of reverting. A miscompilation therefore tends to produce *wrong ciphertexts*, not reverts; the error is silent and may be irreversible. Refusal is always safer than guessing.
+
+Every rewrite the transpiler emits writes the literal identifier `FHE` (spec §1.5) — and, for the batched `in`-sugar materializer (§2.3), `Impl`, `Utils`, `UnsignedEncryptedInput`, and the specific `externalT`/`eT` wire and encrypted type names its parameters name — expecting each to resolve to the profile module at the point the generated call lands. A state variable, local, parameter, inherited member, or member of a base outside the compilation unit can shadow one of these names there and silently retarget the call and any ACL grant it carries; an unconfirmed plain import (of a file that is not the profile) creates the same risk, since its contents are invisible to the binder. The transpiler MUST verify, for every function it writes a generated call into, that each identifier the call uses resolves to the trusted profile module at that function's scope, and refuse with FHE1022 otherwise — the same collision-refuses-rather-than-renames precedent as FHE1011 and FHE1016.
+
+This verification MUST treat an unresolved name as trusted only when the binder can positively prove nothing anywhere — in the compilation unit or out of it — defines it (a name unresolved for every other reason, including an unconfirmed plain import or an unseen base, MUST refuse instead, unless positively trusted through the exception below): a provable total absence fails loudly at solc as an undefined identifier, which is not the silent-miscompile risk this rule guards against, while every other unresolved reason means *something* the binder cannot see could still define the name, silently. The one narrow exception (spec §1.5, the incomplete-inheritance trust rule): when an unseen base leaves the resolution ambiguous but the file also positively imports the profile module directly, the explicit import is trusted rather than refusing every inheriting contract on the unseen base's mere possibility of shadowing — but only when no *known* (in-unit) ancestor already declares the name; a real, visible declaration earlier in the hierarchy always wins over that benefit of the doubt, even when a later, unrelated unseen base means the binder cannot certify it as the member Solidity's linearization resolves first.
 
 ### §1.4 The no-op guarantee
 
@@ -632,6 +636,7 @@ Assigned in this version:
 | FHE1019 | error | sugar-name-in-modifier (§2.3, §2.8) |
 | FHE1021 | error | sugar-symbol-not-imported (§2.3, §2.8) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
+| FHE1022 | error | fhe-library-identifier-shadowed (§1.3) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
 | FHE2002 | error | incompatible-encrypted-operands (e.g. eaddress + euint32) |
 | FHE2003 | error | literal-out-of-range (§3.3) |
@@ -748,3 +753,7 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.6.1 (2026-08-28)** — FHE1007: the load stage warns when `project.include` matches no source files under `project.src`. Non-error FHE6000 diagnostics from files outside `project.src` are suppressed by default; `--all-solc-warnings` restores them. Errors from any file are still forwarded.
 - **0.6.2 (2026-08-28)** — FHE1003 carries a `safe: true` fix-it when swapping the dialect extension of a relative import names a discovered unit file.
 - **0.6.3 (2026-08-28)** — §5.2 permits rendering an `if`/`else` whose arms are each a single assignment of the same identifier as one `FHE.select` with no condition or branch temporaries, when the operands are free of side effects.
+- **0.6.4 (2026-08-28)** — §1.3 adds the emit-time trust rule: the transpiler MUST verify `FHE` resolves to the profile library at the scope of every function it writes a generated call into, and refuse with FHE1022 (new code) when a state variable, local, parameter, inherited member, or unseen-base member shadows it. Closes the gap where the checker's trust rule (§1.5) validated author-written reads of `FHE` but the lowerer never checked what it was about to write.
+- **0.6.5 (2026-08-28)** — §1.3's emit-time trust rule is corrected and widened. Corrected: an unseen base or an unconfirmed plain import (`Unresolved(IncompleteInheritance)`/`Unresolved(MaybeExternal)`) now refuses with FHE1022 like any other shadow, unless positively trusted through the explicit-profile-import exception; only a provable total absence of any binding (`Unresolved(NotFound)`) is exempt, since that fails loudly at solc instead of silently. Widened: the same check now also covers `Impl`, `Utils`, and `UnsignedEncryptedInput`, the identifiers the batched `in`-sugar materializer (§2.3) writes when a function has more than one `in` parameter.
+- **0.6.6 (2026-08-28)** — §1.3's emit-time trust rule is corrected again on three points found in review. (1) The `Impl`/`Utils`/`UnsignedEncryptedInput` check now also trusts a `Contract`/`TypeName` resolution declared in-unit in the same file as the recognized profile `library FHE` (the conformance-corpus case), not only the generic exposure paths — an in-unit-vendored profile file no longer produces a spurious refusal on ordinary multi-parameter `in` sugar. (2) A known (in-unit) ancestor's own declaration now always beats the incomplete-inheritance fallback's benefit of the doubt, even when a *trailing* opaque base in the same `is` list would otherwise keep the binder from certifying it as the provably-first member. (3) The check now also covers the batch materializer's `externalT.unwrap(...)`/`eT.wrap(...)` type names, not only its three fixed identifiers.
+- **0.6.7 (2026-08-28)** — §1.3's emit-time trust rule fix from 0.6.6 was applied inconsistently: `is_fhe_library`'s rule 4 and the `encrypted_type`/`external_input_type` UDVT bypass still pattern-matched only the *direct* `Contract`/`TypeName` resolution, so an in-unit `import "./FHE.sol"` combined with an unrelated unseen base — an ordinary shape, not an edge case — still produced a spurious FHE1022 on plain `FHE.add(...)` calls and on wrap/unwrap type checks, because that combination wraps the resolution in `Unresolved(IncompleteInheritance)` before it ever reaches those variants. All three trust checks now unwrap that fallback first, matching what the 0.6.6 fix already did for the batch-materializer names.
