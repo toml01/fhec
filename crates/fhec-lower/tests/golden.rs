@@ -1610,3 +1610,58 @@ fn acl_grant_in_a_for_header_rejects_with_fhe4004() {
     assert_eq!(out.failed_files, 1);
     assert_eq!(out.files[0].1, src, "a refused file must stay untouched");
 }
+
+#[test]
+fn r1_grants_land_inside_the_r3_return_rewrite() {
+    // Spec §8.0: `return slot = value;` states both facts on one statement.
+    // R1's insertion point is R3's replacement end, so R3 must emit the
+    // storage grants itself or they would follow the `return`.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 balance;\n\
+               \x20   function set(euint32 amount) public returns (euint32) {\n\
+               \x20       return balance = amount;\n\
+               \x20   }\n\
+               }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 balance;\n\
+               \x20   function set(euint32 amount) public returns (euint32) {\n\
+               \x20       euint32 __fhe_ret_0 = balance = amount;\n\
+               \x20       FHE.allowThis(balance);\n\
+               \x20       FHE.allowSender(balance);\n\
+               \x20       FHE.allowTransient(__fhe_ret_0, msg.sender);\n\
+               \x20       return __fhe_ret_0;\n\
+               \x20   }\n\
+               }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r1_write_inside_a_return_without_r3_rejects_with_fhe4004() {
+    // No R3 fact on an internal function, so nothing owns the statement and
+    // the grants would land after the `return`.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 balance;\n\
+               \x20   function set(euint32 amount) internal returns (euint32) {\n\
+               \x20       return balance = amount;\n\
+               \x20   }\n\
+               }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4004")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(out.failed_files, 1);
+    assert_eq!(out.files[0].1, src, "a refused file must stay untouched");
+}

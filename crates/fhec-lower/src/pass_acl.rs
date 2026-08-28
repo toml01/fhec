@@ -36,6 +36,10 @@ pub(crate) struct AclOutcome {
     /// Statement spans this pass already wrapped in braces (spec §8.0); a
     /// statement carrying two ACL facts is wrapped once.
     braced: Vec<Span>,
+    /// R1 grants for a write that shares its statement with an R3 return
+    /// (`return slot = value;`). R3 owns the whole statement, so R1 hands its
+    /// calls over instead of inserting after the `return` it cannot see.
+    pending_r1: Vec<(Span, fhec_bind::FileId, fhec_bind::FunctionId, Vec<String>)>,
 }
 
 /// Runs R1/R2/R3 for one function, in source order.
@@ -51,6 +55,7 @@ pub(crate) fn run_function<'ast>(
     let mut outcome = AclOutcome {
         owned_stmts: Vec::new(),
         braced: Vec::new(),
+        pending_r1: Vec::new(),
     };
     let inside_if = |span: Span| if_spans.iter().any(|s| ctx.contains(*s, span));
 
@@ -84,6 +89,11 @@ pub(crate) fn run_function<'ast>(
             Fact::C(c) => rule_r2(ctx, c, namer, acl_insert, diags, plan, &mut outcome)?,
             Fact::R(r) => rule_r3(ctx, r, namer, acl_insert, diags, plan, &mut outcome)?,
         }
+    }
+    // Defensive: a grant handed to an R3 fact that never ran (its statement
+    // was filtered out) is still owed to the contract (spec §1.3).
+    while let Some(&(span, _, _, _)) = outcome.pending_r1.first() {
+        refuse_pending_r1(ctx, span, &mut outcome)?;
     }
     Ok(outcome)
 }
@@ -146,15 +156,30 @@ fn rule_r1(
     let indent = ctx.line_indent(w.file, ctx.range(w.stmt_span).start);
     let at = after_stmt_offset(ctx.text(w.file), ctx.range(w.stmt_span).end);
     if acl_insert {
+        let calls: Vec<String> = missing
+            .iter()
+            .map(|op| {
+                ctx.profile
+                    .render_call(*op, &[w.value_ty], &[&lvalue])
+                    .map(|c| format!("{c};"))
+            })
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| internal(w.stmt_span, e))?;
+        // `return slot = value;` states both an R1 write and an R3 return on
+        // one statement. R1's insertion point is R3's replacement end, so the
+        // grants would land after the `return` and never run (spec §8.0).
+        // R3 owns the statement: hand the calls over.
+        if is_return_site(ctx, w.function, w.stmt_span) {
+            outcome
+                .pending_r1
+                .push((w.stmt_span, w.file, w.function, calls));
+            return Ok(());
+        }
         brace_lone_stmt(ctx, w.function, w.stmt_span, plan, outcome)?;
-        for op in missing {
-            let call = ctx
-                .profile
-                .render_call(op, &[w.value_ty], &[&lvalue])
-                .map_err(|e| internal(w.stmt_span, e))?;
+        for call in calls {
             plan.push(Patch::insert(
                 at,
-                format!("\n{indent}{call};"),
+                format!("\n{indent}{call}"),
                 Provenance::new("§8.1 R1", ctx.range(w.stmt_span)).with_code("FHE4010"),
             ));
         }
@@ -379,7 +404,7 @@ fn rule_r3<'ast>(
     outcome: &mut AclOutcome,
 ) -> Result<()> {
     if !r.is_public_or_external {
-        return Ok(());
+        return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
     if r.is_view {
         diags.borrow_mut().push(fhec_check::Diagnostic {
@@ -392,7 +417,7 @@ fn rule_r3<'ast>(
             fixits: Vec::new(),
             rule: Some("§8.4"),
         });
-        return Ok(());
+        return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
 
     let transient = ctx
@@ -405,7 +430,8 @@ fn rule_r3<'ast>(
         .iter()
         .any(|s| acl_call_matches(ctx, s, &transient, &expr_key, Some("msg.sender")))
     {
-        return Ok(()); // already granted (also the idempotence path, §8.6)
+        // Already granted (also the idempotence path, §8.6).
+        return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
 
     let node = find_expr(ctx, r.function, r.expr_span)
@@ -424,7 +450,7 @@ fn rule_r3<'ast>(
             fixits: Vec::new(),
             rule: Some("§8.3"),
         });
-        return Ok(());
+        return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
 
     brace_lone_stmt(ctx, r.function, r.stmt_span, plan, outcome)?;
@@ -437,22 +463,75 @@ fn rule_r3<'ast>(
     let stmt_range = ctx.range(r.stmt_span);
     // Cover the trailing `;` when the statement span excludes it.
     let end = after_stmt_offset(ctx.text(r.file), stmt_range.end);
+    // Grants handed over by R1 for a `return slot = value;` statement: they
+    // must run before the `return`, inside the text R3 owns.
+    let storage_grants: String = take_pending_r1(outcome, r.stmt_span)
+        .iter()
+        .map(|c| format!("{c}\n{indent}"))
+        .collect();
     plan.push(Patch::replace(
         fhec_ir::ByteRange::new(stmt_range.start, end),
         format!(
-            "{} {} = {};\n{}{};\n{}return {};",
+            "{} {} = {};\n{indent}{storage_grants}{call};\n{indent}return {temp};",
             r.value_ty.solidity_name(),
             temp,
             rendered,
-            indent,
-            call,
-            indent,
-            temp
         ),
         Provenance::new("§8.3 R3", ctx.range(r.stmt_span)).with_code("FHE4012"),
     ));
     outcome.owned_stmts.push(r.stmt_span);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// R1/R3 composition on one statement
+// ---------------------------------------------------------------------------
+
+/// Whether an R3 return fact is stated on exactly this statement.
+fn is_return_site(ctx: &Ctx<'_, '_>, function: fhec_bind::FunctionId, stmt_span: Span) -> bool {
+    ctx.checked
+        .acl
+        .returns
+        .iter()
+        .any(|r| r.function == function && r.stmt_span == stmt_span)
+}
+
+/// Removes and returns the R1 grants handed over for `stmt_span`.
+fn take_pending_r1(outcome: &mut AclOutcome, stmt_span: Span) -> Vec<String> {
+    let mut out = Vec::new();
+    outcome.pending_r1.retain(|(span, _, _, calls)| {
+        if *span == stmt_span {
+            out.extend(calls.iter().cloned());
+            false
+        } else {
+            true
+        }
+    });
+    out
+}
+
+/// Refuses when R3 did not claim a statement whose R1 grants it was handed.
+///
+/// The write sits inside a `return`, so there is no position left where the
+/// grants would run: before the statement the slot does not hold the value
+/// yet, and after it the function has returned. Spec §1.3 — refuse rather
+/// than emit a grant that silently never runs.
+fn refuse_pending_r1(ctx: &Ctx<'_, '_>, stmt_span: Span, outcome: &mut AclOutcome) -> Result<()> {
+    if take_pending_r1(outcome, stmt_span).is_empty() {
+        return Ok(());
+    }
+    let lvalue = strip_parens(&ctx.snippet(stmt_span)).to_string();
+    fail_coded(
+        stmt_span,
+        format!(
+            "the encrypted storage write in `{lvalue}` cannot receive its ACL grants: \
+             inserted before the statement the slot does not hold the value yet, and \
+             inserted after it the function has already returned (spec §8.0); split the \
+             statement into a write and a `return`"
+        ),
+        codes::ACL_POSITION_ILLEGAL,
+        Some("§8.1"),
+    )
 }
 
 // ---------------------------------------------------------------------------

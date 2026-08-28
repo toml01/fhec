@@ -515,6 +515,8 @@ The wrap is part of the insertion, never of the no-op path: when every grant for
 
 Where no statement may be written at all — a trigger statement that is the initializer of a `for` header — the transpiler MUST refuse the file with FHE4004 rather than emit a grant in the wrong place.
 
+A single statement MAY state both an R1 write and an R3 return (`return slot = value;`). R1's insertion point is exactly the end of the text R3 replaces, so an independent R1 insertion would land after the `return` and never run. R3 MUST emit the R1 grants inside its own replacement, before the `return`. When R3 does not rewrite the statement (an internal function, a `view` function, or a §8.6 dedupe hit), no legal position is left — before the statement the slot does not hold the value yet, and after it the function has returned — and the transpiler MUST refuse the file with FHE4004.
+
 ### §8.1 R1 — storage writes
 
 After each storage write whose right-hand value is encrypted (state variable, mapping slot, array element, struct field), the transpiler MUST insert:
