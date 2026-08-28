@@ -1,7 +1,8 @@
 {
   "name": "fhec",
   "version": "0.1.0",
-  "private": true,
+  "description": "npm wrapper for the fhec native binary (platform-package distribution model, a la esbuild/biome)",
+  "license": "MIT",
   "bin": {
     "fhec": "bin/fhec.js"
   },
@@ -11,17 +12,30 @@
       "default": "./lib/resolve.js"
     }
   },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build:native": "node scripts/build-native.mjs",
     "test": "node --test test/**/*.test.mjs"
   },
   "optionalDependencies": {
-    "@fhec/cli-darwin-arm64": "workspace:*"
+    "@fhec/cli-darwin-arm64": "workspace:^0.1.0"
   },
-  "description": "npm wrapper for the fhec native binary (platform-package distribution model, a la esbuild/biome)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/toml01/fhec.git"
+    "url": "git+https://github.com/toml01/fhec.git",
+    "directory": "packages/fhec"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/toml01/fhec/tree/main/packages/fhec",
+  "bugs": {
+    "url": "https://github.com/toml01/fhec/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

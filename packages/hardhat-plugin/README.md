@@ -75,6 +75,13 @@ is set to `<root>/<out>` so Hardhat compiles the generated tree. On
 If no `fhec.toml` is present at compile time, the plugin throws and tells
 you to run `fhec init` (or set `fhec.enabled: false`).
 
+Hardhat then names artifacts `<out>/Path/File.sol:Name` (default
+`generated/...`), not `contracts/Path/File.sol:Name`. Update
+`getContractFactory`, `deployments.deploy({ contract })`, and
+`verify:verify` to that form. `solidity.overrides` keys that still use the
+source path are rewritten to the `<out>/` form at plugin load, with a
+warning. Test and deploy scripts are not rewritten.
+
 ## Config keys
 
 | Key | Default | Meaning |
@@ -93,3 +100,45 @@ you to run `fhec init` (or set `fhec.enabled: false`).
 - Compatible with `@cofhe/hardhat-plugin`: that plugin appends mock sources
   via `GET_SOURCE_PATHS` and deploys mocks on `test` / `node`. This plugin
   does not touch those tasks.
+
+## Local checkout
+
+These packages are not on the npm registry yet. `pnpm add -D
+@fhec/hardhat-plugin` therefore cannot work from a project outside this
+monorepo: the plugin depends on `fhec` via `workspace:^0.1.0`, and the
+`fhec` wrapper looks for `target/{release,debug}/fhec` relative to the
+cargo checkout.
+
+Until the first publish (see [`RELEASING.md`](../../RELEASING.md)), wire a
+Hardhat 2 project to this checkout as follows.
+
+1. Add the plugin as a `file:` dependency:
+
+   ```sh
+   pnpm add -D file:/abs/path/to/fhec/packages/hardhat-plugin
+   ```
+
+2. pnpm materialises that `file:` dependency in its store, so `fhec@workspace:`
+   is not visible. Override it to the wrapper package:
+
+   ```json
+   {
+     "pnpm": {
+       "overrides": {
+         "fhec": "file:/abs/path/to/fhec/packages/fhec"
+       }
+     }
+   }
+   ```
+
+3. The wrapper's cargo fallback (`../../../target/{release,debug}/fhec`
+   relative to `packages/fhec/lib/resolve.js`) no longer reaches this
+   checkout after the store copy. Point it at a binary you built:
+
+   ```sh
+   cargo build --release -p fhec-cli
+   export FHEC_BINARY_PATH=/abs/path/to/fhec/target/release/fhec
+   ```
+
+Both the override and `FHEC_BINARY_PATH` are required. Neither is enough
+on its own.

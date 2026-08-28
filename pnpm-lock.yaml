@@ -68,7 +68,7 @@ importers:
   packages/fhec:
     optionalDependencies:
       '@fhec/cli-darwin-arm64':
-        specifier: workspace:*
+        specifier: workspace:^0.1.0
         version: link:../fhec-darwin-arm64
 
   packages/fhec-darwin-arm64: {}
@@ -76,7 +76,7 @@ importers:
   packages/hardhat-plugin:
     dependencies:
       fhec:
-        specifier: workspace:*
+        specifier: workspace:^0.1.0
         version: link:../fhec
       smol-toml:
         specifier: 1.8.0

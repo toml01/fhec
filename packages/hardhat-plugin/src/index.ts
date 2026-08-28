@@ -11,6 +11,10 @@ import { HardhatPluginError } from "hardhat/plugins";
 import type { HardhatConfig, HardhatUserConfig } from "hardhat/types";
 
 import { runFhecBuild } from "./build";
+import {
+  formatOverrideWarning,
+  rewriteSolidityOverrides,
+} from "./overrides";
 import { loadManifest, remapSolcOutput, type RemapContext } from "./remap";
 import { loadFhecToml, resolveTomlPath } from "./toml";
 import {
@@ -27,6 +31,12 @@ export type { FhecConfig, FhecUserConfig, ParsedFhecToml } from "./types";
 export { parseFhecToml, findConfig, resolveTomlPath } from "./toml";
 export { remapRange, matchManifestFile, displaySourcePath, remapSolcOutput } from "./remap";
 export { versionSatisfies, parseSemver } from "./version";
+export {
+  mapSrcKeyToOut,
+  rewriteSolidityOverrides,
+  formatOverrideWarning,
+} from "./overrides";
+export type { OverrideNotice } from "./overrides";
 
 extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) => {
   const user = userConfig.fhec ?? {};
@@ -58,6 +68,17 @@ extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) =>
       resolved.outDir = parsed.out;
       resolved.profileVersion = parsed.version;
       config.paths.sources = path.resolve(config.paths.root, parsed.out);
+      const overrides = config.solidity?.overrides;
+      if (overrides !== undefined) {
+        const notices = rewriteSolidityOverrides(
+          overrides,
+          parsed.src,
+          parsed.out,
+        );
+        if (notices.length > 0) {
+          console.warn(formatOverrideWarning(notices, parsed.src, parsed.out));
+        }
+      }
     }
   }
 
