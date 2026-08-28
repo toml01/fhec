@@ -1046,6 +1046,71 @@ fn tuple_copy_from_a_call_rhs_is_unaffected_by_propagation() {
     });
 }
 
+// ---- issue #90 gap 1: an unassigned copy into a slot-less target ----------
+
+#[test]
+fn copy_of_an_unassigned_local_into_storage_is_flagged() {
+    // `x` may be unassigned when copied into the state variable `a`. A
+    // storage write has no tracked slot (`lv.slot` is `None`), so there is
+    // nothing local to propagate the unassigned marker into — before issue
+    // #90's fix this silently dropped the marker instead of flagging it.
+    assert_codes("euint32 x; if (p > 0) { x = a; } a = x;", &["FHE2007"]);
+}
+
+#[test]
+fn copy_of_an_unassigned_local_into_a_struct_field_is_flagged() {
+    // Issue #90's exact repro: a struct-field write is equally slot-less.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           struct S { euint64 v; }\n\
+           S s;\n\
+           function f(bool cond, euint64 a) external {\n\
+             euint64 x;\n\
+             if (cond) { x = a; }\n\
+             s.v = x;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn copy_of_an_unassigned_local_into_an_array_index_is_flagged() {
+    // A mapping/array-index write is also slot-less.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           mapping(uint256 => euint64) arr;\n\
+           function f(bool cond, euint64 a, uint256 i) external {\n\
+             euint64 x;\n\
+             if (cond) { x = a; }\n\
+             arr[i] = x;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn copy_of_a_definitely_assigned_local_into_storage_stays_clean() {
+    // Positive control: `x` is definitely assigned before the copy, so the
+    // storage write is unaffected by the slot-less-target fix.
+    assert_codes("euint32 x = a; a = x;", &[]);
+}
+
 #[test]
 fn inline_assembly_anywhere_in_the_body_fails_closed() {
     // This checker does not parse Yul, so it cannot rule out an assembly
