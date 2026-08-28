@@ -1605,15 +1605,18 @@ fn acl_facts_r3_returns() {
            function ext_() external returns (euint32) { return a; }\n\
            function int_() internal returns (euint32) { return a; }\n\
            function view_() public view returns (euint32) { return a; }\n\
+           function pure_(euint32 x) public pure returns (euint32) { return x; }\n\
          }";
     with_checked(&[("t.fsol", src)], |c, _| {
         assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
-        assert_eq!(c.acl.returns.len(), 4);
+        assert_eq!(c.acl.returns.len(), 5);
         assert!(c.acl.returns[0].is_public_or_external);
-        assert!(!c.acl.returns[0].is_view);
+        assert!(!c.acl.returns[0].is_view_or_pure);
         assert!(c.acl.returns[1].is_public_or_external);
         assert!(!c.acl.returns[2].is_public_or_external);
-        assert!(c.acl.returns[3].is_view);
+        assert!(c.acl.returns[3].is_view_or_pure);
+        assert!(c.acl.returns[4].is_public_or_external);
+        assert!(c.acl.returns[4].is_view_or_pure);
     });
 }
 

@@ -569,7 +569,7 @@ When the callee expression's type is `Unknown` to the checker, no R2 fact exists
 
 ### §8.3 R3 — encrypted returns
 
-In a non-`view` `public`/`external` function returning an encrypted value, the return expression MUST be hoisted to a temp `__fhe_ret_n` and
+In a non-`view`, non-`pure` `public`/`external` function returning an encrypted value, the return expression MUST be hoisted to a temp `__fhe_ret_n` and
 
 ```solidity
 FHE.allowTransient(__fhe_ret_n, msg.sender);
@@ -579,11 +579,11 @@ inserted before `return __fhe_ret_n;`.
 
 R3 does **not** apply to a function whose return is declared `shared(...)` (§2.8): the share call already directs the handle at the caller, and inserting `allowTransient` as well would grant twice.
 
-R3 does **not** apply to a `public`/`external`, state-changing function declared inside a `library` (checked after the `view` exception above, which still applies to a library's `view` member). A state-changing library member is linked by address and reached through `DELEGATECALL`, which preserves the caller's `msg.sender` and storage context: the library function's real caller is same-transaction host code, not an independent external actor, and it is the host's own return (typically its own R3 grant, or a `shared(...)` return) that decides what the transaction sender may read. Inserting `allowTransient` inside the library would be redundant and would move the bytecode of a library that may be pinned by address for reproducible deployment. A library's `view` member is different: Solidity's library-call protection only reverts a direct `CALL` for a state-changing member, so a `view` library function stays directly callable by an arbitrary external caller with the real transaction sender as `msg.sender`, the same as any other `view` function — R3's `view` exception (FHE4002) applies to it exactly as it would to a non-library function. `internal` library functions never state an R3 fact in the first place: they have no visibility that qualifies, since they are inlined into the caller with no delegatecall boundary at all.
+R3 does **not** apply to a `public`/`external`, state-changing function declared inside a `library` (checked after the `view`/`pure` exception above, which still applies to a library's `view` or `pure` member). A state-changing library member is linked by address and reached through `DELEGATECALL`, which preserves the caller's `msg.sender` and storage context: the library function's real caller is same-transaction host code, not an independent external actor, and it is the host's own return (typically its own R3 grant, or a `shared(...)` return) that decides what the transaction sender may read. Inserting `allowTransient` inside the library would be redundant and would move the bytecode of a library that may be pinned by address for reproducible deployment. A library's `view` or `pure` member is different: Solidity's library-call protection only reverts a direct `CALL` for a state-changing member, so a `view` or `pure` library function stays directly callable by an arbitrary external caller with the real transaction sender as `msg.sender`, the same as any other `view`/`pure` function — R3's `view`/`pure` exception (FHE4002) applies to it exactly as it would to a non-library function. `internal` library functions never state an R3 fact in the first place: they have no visibility that qualifies, since they are inlined into the caller with no delegatecall boundary at all.
 
-### §8.4 View functions
+### §8.4 View and pure functions
 
-ACL operations cannot execute in `view` context. A `view` function returning an encrypted value gets NO insertion and warning FHE4002 (the caller must have been granted access elsewhere; the getter itself cannot grant it).
+ACL operations cannot execute in `view` or `pure` context — `allowTransient` makes an external call, and neither a `view` nor a `pure` function may make one. A `view` or `pure` function returning an encrypted value gets NO insertion and warning FHE4002 (the caller must have been granted access elsewhere; the getter itself cannot grant it).
 
 ### §8.5 The never-auto-allow rule
 

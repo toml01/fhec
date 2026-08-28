@@ -61,16 +61,15 @@ pub(crate) struct FnChecker<'a, 'ast> {
     pub(crate) file: FileId,
     pub(crate) contract: Option<ContractId>,
     pub(crate) is_view_or_pure: bool,
-    pub(crate) is_view: bool,
     pub(crate) is_public_or_external: bool,
     /// Whether this function is declared inside a `library`. A library's
     /// state-changing `public`/`external` members are delegatecall-linked:
     /// they share the host's `msg.sender` and storage, so R3's "grant the
     /// external caller" premise does not apply there — but a library's
-    /// `view` member IS directly, independently callable (Solidity's
+    /// `view`/`pure` member IS directly, independently callable (Solidity's
     /// library-call protection only reverts a direct `CALL` for
-    /// state-changing members), so the `view` exception still applies to it
-    /// first (spec §8.3, §8.4).
+    /// state-changing members), so the `view`/`pure` exception still applies
+    /// to it first (spec §8.3, §8.4).
     pub(crate) in_library: bool,
     /// Whether the `returns` list carries a §2.8 shared-boundary marker. Such
     /// a function states no R3 fact: a legal shared return grants through
@@ -162,7 +161,6 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 mutability,
                 ast::StateMutability::View | ast::StateMutability::Pure
             ),
-            is_view: mutability == ast::StateMutability::View,
             is_public_or_external: matches!(
                 visibility,
                 Some(ast::Visibility::Public) | Some(ast::Visibility::External)
@@ -830,7 +828,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                                 expr_span: e.span,
                                 value_ty: t,
                                 is_public_or_external: self.is_public_or_external,
-                                is_view: self.is_view,
+                                is_view_or_pure: self.is_view_or_pure,
                                 in_library: self.in_library,
                                 function: self.fid,
                                 file: self.file,

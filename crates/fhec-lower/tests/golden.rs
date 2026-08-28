@@ -511,6 +511,28 @@ fn r3_view_warns_only() {
 }
 
 #[test]
+fn r3_pure_warns_only() {
+    // A `pure` function cannot make any call, including `FHE.allowTransient`
+    // (issue #91): it gets the same warn-only treatment as a `view` function,
+    // not a guessed grant that would not compile.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   function p(euint32 x) public pure returns (euint32) {\n\
+         \x20       return x;\n\
+         \x20   }\n\
+         }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(!out.any_patches);
+    assert!(out
+        .lower_diag_codes
+        .iter()
+        .any(|d| d.starts_with("FHE4002")));
+    assert_eq!(out.files[0].1, src);
+}
+
+#[test]
 fn r3_internal_gets_nothing() {
     let src = r3_contract("internal", "        return a;");
     let out = transpile(&[("t.fsol", &src)]);
@@ -582,6 +604,28 @@ fn r3_library_view_member_still_warns_only() {
          \n\
          library L {\n\
          \x20   function peek(euint32 a) public view returns (euint32) {\n\
+         \x20       return a;\n\
+         \x20   }\n\
+         }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(!out.any_patches);
+    assert!(out
+        .lower_diag_codes
+        .iter()
+        .any(|d| d.starts_with("FHE4002")));
+    assert_eq!(out.files[0].1, src);
+}
+
+#[test]
+fn r3_library_pure_member_still_warns_only() {
+    // A library's `pure` member is directly, independently callable, exactly
+    // like a `view` member (issue #91): R3's `view`/`pure` exception
+    // (FHE4002) must fire here too, checked before the `in_library` skip.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         library L {\n\
+         \x20   function peek(euint32 a) public pure returns (euint32) {\n\
          \x20       return a;\n\
          \x20   }\n\
          }\n";
