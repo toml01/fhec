@@ -9,6 +9,5 @@ contract CoerceLiteral {
     function f() public {
         a8 = FHE.add(a8, FHE.asEuint8(250));
         FHE.allowThis(a8);
-        FHE.allowSender(a8);
     }
 }

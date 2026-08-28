@@ -10,9 +10,7 @@ contract CompoundAssign {
     function f() public {
         a = FHE.add(a, b);
         FHE.allowThis(a);
-        FHE.allowSender(a);
         a = FHE.mul(a, FHE.asEuint32(2));
         FHE.allowThis(a);
-        FHE.allowSender(a);
     }
 }

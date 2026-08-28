@@ -23,7 +23,6 @@ contract GrantOnLocal {
         ptr = other;
         total = ptr;
         FHE.allowThis(total);
-        FHE.allowSender(total);
     }
 
     // Only one of the two grants is present.

@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 184,
+      "end_byte": 186,
+      "start_line": 10,
+      "start_col": 9,
+      "end_line": 10,
+      "end_col": 11
+    },
+    "message": "encrypted write to `a8` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  }
+]

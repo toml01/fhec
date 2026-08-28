@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 412,
+      "end_byte": 424,
+      "start_line": 13,
+      "start_col": 9,
+      "end_line": 13,
+      "end_col": 21
+    },
+    "message": "encrypted write to `accounts[id]` is keyed by an expression that is not `msg.sender`, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  }
+]

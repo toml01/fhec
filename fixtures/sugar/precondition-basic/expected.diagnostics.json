@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 615,
+      "end_byte": 622,
+      "start_line": 20,
+      "start_col": 9,
+      "end_line": 20,
+      "end_col": 16
+    },
+    "message": "encrypted write to `balance` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  }
+]

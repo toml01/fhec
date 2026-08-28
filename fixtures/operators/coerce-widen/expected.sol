@@ -10,6 +10,5 @@ contract CoerceWiden {
     function f() public {
         a = FHE.add(FHE.asEuint32(a8), a);
         FHE.allowThis(a);
-        FHE.allowSender(a);
     }
 }

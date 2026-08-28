@@ -7,9 +7,11 @@ import "@fhenixprotocol/cofhe-contracts/FHE.sol";
  * Hand-written reference for `contracts-dialect/EncryptedCounterDialect.fsol`.
  *
  * Written independently from spec §5 (both branches execute; the guarded write
- * merges through `FHE.select`) and §8 (allowThis + allowSender after every
- * encrypted storage write) — NOT copied from fhec output. This is the oracle
- * the transpiled contract must be differentially equivalent to.
+ * merges through `FHE.select`) and §8.1 R1 — NOT copied from fhec output.
+ * `count` and `cap` are simple state variables with no key at all, so their
+ * owner is not provably `msg.sender` (issue #70): every write grants
+ * allowThis only, never allowSender. This is the oracle the transpiled
+ * contract must be differentially equivalent to.
  */
 contract EncryptedCounterDialectRef {
     address public owner;
@@ -28,10 +30,8 @@ contract EncryptedCounterDialectRef {
         owner = msg.sender;
         count = FHE.asEuint32(initialValue);
         FHE.allowThis(count);
-        FHE.allowSender(count);
         cap = FHE.asEuint32(capValue);
         FHE.allowThis(cap);
-        FHE.allowSender(cap);
     }
 
     function getCount() external view returns (euint32) {
@@ -44,12 +44,10 @@ contract EncryptedCounterDialectRef {
         ebool withinCap = FHE.lte(next, cap);
         count = FHE.select(withinCap, next, count);
         FHE.allowThis(count);
-        FHE.allowSender(count);
     }
 
     function incrementByOne() external onlyOwner {
         count = FHE.add(count, FHE.asEuint32(1));
         FHE.allowThis(count);
-        FHE.allowSender(count);
     }
 }

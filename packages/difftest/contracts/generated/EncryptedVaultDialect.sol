@@ -60,7 +60,6 @@ contract EncryptedVaultDialect {
             }
             balances[__fhe_key_5] = FHE.select(__fhe_cond_4, __fhe_then_7, __fhe_pre_6);
             FHE.allowThis(balances[__fhe_key_5]);
-            FHE.allowSender(balances[__fhe_key_5]);
         }
     }
 

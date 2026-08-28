@@ -13,10 +13,11 @@ interface IAuditorSinkRef {
  * Written independently from the spec, NOT copied from fhec output:
  *  - §5: each guarded slot update merges through `FHE.select` against the
  *    value the slot held before the `if`;
- *  - §8.1 (R1): allowThis + allowSender after every encrypted storage write —
- *    note allowSender grants to the *transaction sender* even on the
- *    recipient-keyed slot; that is what R1 says, so the reference does the
- *    same;
+ *  - §8.1 (R1): allowThis after every encrypted storage write, plus
+ *    allowSender only where the slot's owner is provably `msg.sender`
+ *    (issue #70) — `balances[msg.sender]` qualifies, `balances[to]` does
+ *    not (it is keyed by the recipient, not the caller), so the transferer
+ *    must NOT gain read access to the recipient's balance there;
  *  - §8.2 (R2): transient grant to the callee before the external call;
  *  - §8.3 (R3): hoist the return value, transient grant to msg.sender;
  *  - §8.4: the view getter grants nothing.
@@ -44,9 +45,10 @@ contract EncryptedVaultDialectRef {
         FHE.allowThis(balances[msg.sender]);
         FHE.allowSender(balances[msg.sender]);
 
+        // Keyed by `to`, not `msg.sender`: not provably owned by the
+        // transferer, so only allowThis is granted (issue #70).
         balances[to] = FHE.select(ok, FHE.add(toBalance, amount), toBalance);
         FHE.allowThis(balances[to]);
-        FHE.allowSender(balances[to]);
     }
 
     function getBalance() external returns (euint64) {

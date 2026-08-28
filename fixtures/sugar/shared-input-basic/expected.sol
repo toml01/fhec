@@ -13,7 +13,6 @@ contract SharedInputBasic {
         euint32 amount = FHE.receiveEuint32Param(amount_shared);
         a = amount;
         FHE.allowThis(a);
-        FHE.allowSender(a);
         tag;
     }
 }

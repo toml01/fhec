@@ -16,9 +16,7 @@ contract SugarMulti {
         eaddress owner_ = eaddress.wrap(__fhe_hashes_1[1]);
         eb = flag;
         FHE.allowThis(eb);
-        FHE.allowSender(eb);
         ea = owner_;
         FHE.allowThis(ea);
-        FHE.allowSender(ea);
     }
 }

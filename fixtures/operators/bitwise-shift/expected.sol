@@ -10,21 +10,15 @@ contract BitwiseShift {
     function f() public {
         a = FHE.and(a, b);
         FHE.allowThis(a);
-        FHE.allowSender(a);
         a = FHE.or(a, b);
         FHE.allowThis(a);
-        FHE.allowSender(a);
         a = FHE.xor(a, b);
         FHE.allowThis(a);
-        FHE.allowSender(a);
         a = FHE.not(a);
         FHE.allowThis(a);
-        FHE.allowSender(a);
         a = FHE.shl(a, FHE.asEuint32(2));
         FHE.allowThis(a);
-        FHE.allowSender(a);
         a = FHE.shr(a, FHE.asEuint32(1));
         FHE.allowThis(a);
-        FHE.allowSender(a);
     }
 }

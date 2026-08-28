@@ -11,12 +11,9 @@ contract BooleanOps {
     function f() public {
         eb = FHE.and(eb, (FHE.lt(a, b)));
         FHE.allowThis(eb);
-        FHE.allowSender(eb);
         eb = FHE.or(eb, eb);
         FHE.allowThis(eb);
-        FHE.allowSender(eb);
         eb = FHE.not(eb);
         FHE.allowThis(eb);
-        FHE.allowSender(eb);
     }
 }

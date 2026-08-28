@@ -1,1 +1,92 @@
-[]
+[
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 198,
+      "end_byte": 199,
+      "start_line": 11,
+      "start_col": 9,
+      "end_line": 11,
+      "end_col": 10
+    },
+    "message": "encrypted write to `a` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 217,
+      "end_byte": 218,
+      "start_line": 12,
+      "start_col": 9,
+      "end_line": 12,
+      "end_col": 10
+    },
+    "message": "encrypted write to `a` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 236,
+      "end_byte": 237,
+      "start_line": 13,
+      "start_col": 9,
+      "end_line": 13,
+      "end_col": 10
+    },
+    "message": "encrypted write to `a` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 255,
+      "end_byte": 256,
+      "start_line": 14,
+      "start_col": 9,
+      "end_line": 14,
+      "end_col": 10
+    },
+    "message": "encrypted write to `a` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 271,
+      "end_byte": 272,
+      "start_line": 15,
+      "start_col": 9,
+      "end_line": 15,
+      "end_col": 10
+    },
+    "message": "encrypted write to `a` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 291,
+      "end_byte": 292,
+      "start_line": 16,
+      "start_col": 9,
+      "end_line": 16,
+      "end_col": 10
+    },
+    "message": "encrypted write to `a` targets a state variable, which has no key at all, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  }
+]

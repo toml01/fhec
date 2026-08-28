@@ -26,6 +26,5 @@ contract PreconditionLocalAssign {
         limit = requested;
         balance = amount;
         FHE.allowThis(balance);
-        FHE.allowSender(balance);
     }
 }

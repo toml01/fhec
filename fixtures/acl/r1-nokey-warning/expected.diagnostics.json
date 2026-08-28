@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 499,
+      "end_byte": 509,
+      "start_line": 18,
+      "start_col": 9,
+      "end_line": 18,
+      "end_col": 19
+    },
+    "message": "encrypted write to `amounts[i]` targets an array element, which carries no owner key, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 572,
+      "end_byte": 584,
+      "start_line": 22,
+      "start_col": 9,
+      "end_line": 22,
+      "end_col": 21
+    },
+    "message": "encrypted write to `acct.balance` targets a struct field, which carries no owner key, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  }
+]

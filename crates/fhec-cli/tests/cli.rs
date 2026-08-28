@@ -38,10 +38,24 @@ fn init_then_check_succeeds() {
     assert!(err.contains("rewrite site(s)"), "stderr: {err}");
     assert!(err.contains("config hash"), "stderr: {err}");
 
-    // `--json` keeps the spec §10.2 stream silent on a clean project.
+    // `--json` still exits 0 on the sample project: `count` and `max` (simple
+    // state variables, so not provably keyed by `msg.sender`) each draw
+    // warning FHE4001 on their constructor write, and `count`'s merged write
+    // inside the encrypted `if` in `increment` draws a third (issue #70)
+    // rather than a silently guessed leak — "clean" means no error
+    // diagnostics, not no diagnostics at all.
     let out = fhec(tmp.path(), &["check", "--json"]);
     assert_eq!(out.status.code(), Some(0), "check --json: {}", stderr(&out));
-    assert!(stdout(&out).is_empty(), "stdout: {}", stdout(&out));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid JSON array");
+    let diags = parsed.as_array().expect("diagnostics array");
+    assert!(
+        diags
+            .iter()
+            .all(|d| d["code"] == "FHE4001" && d["severity"] == "warning"),
+        "stdout: {}",
+        stdout(&out)
+    );
+    assert_eq!(diags.len(), 3, "stdout: {}", stdout(&out));
     assert!(
         !stderr(&out).contains("checked clean"),
         "summary must not leak onto --json stderr: {}",

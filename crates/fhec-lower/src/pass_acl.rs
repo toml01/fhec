@@ -116,26 +116,31 @@ fn rule_r1(
     }
     let lvalue = strip_parens(&ctx.snippet(w.lvalue_span)).to_string();
 
-    // Whether the slot is filed under an address that is not the caller. The
-    // caller must not be handed read access to it (spec §8.1).
-    let filed_under_another = matches!(
+    // Whether the slot's owner is provably `msg.sender`. Only a mapping
+    // keyed exactly by `msg.sender` earns that proof; every other slot kind
+    // — a simple state variable (no key at all), an array element or struct
+    // field (no owner key), or a mapping keyed by anything else (a
+    // different address, or a non-address key) — has none, so guessing the
+    // sender grant there is the same confidentiality leak (spec §1.3,
+    // §8.1).
+    let sender_provably_owns = matches!(
         &w.slot,
         SlotKind::Mapping {
-            key_is_msg_sender: false,
-            key_is_address: true,
+            key_is_msg_sender: true,
             ..
         }
     );
-    if filed_under_another {
+    if !sender_provably_owns {
+        let reason = sender_unproven_reason(&w.slot);
         diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4001",
             severity: Severity::Warning,
             span: w.lvalue_span,
             message: format!(
-                "encrypted write to `{lvalue}` is keyed by an address that is not \
-                 `msg.sender`; the sender grant is withheld here, so the transaction \
-                 sender does not gain read access to a ciphertext filed under another \
-                 address. Add an explicit grant if that is what you intend"
+                "encrypted write to `{lvalue}` {reason}, so its owner is not provably \
+                 `msg.sender`; the sender grant is withheld here, so the transaction sender \
+                 does not gain read access to a ciphertext that is not provably its own. \
+                 Add an explicit grant if that is what you intend"
             ),
             fixits: Vec::new(),
             rule: Some("§8.1"),
@@ -144,12 +149,12 @@ fn rule_r1(
 
     // `allowThis` is always right: it grants the contract access to its own
     // slot. `allowSender` is a claim about who owns the value, and on a slot
-    // filed under another address that claim is a confidentiality leak — so
-    // it is never guessed there (spec §1.3, §8.1).
-    let ops: &[FheOp] = if filed_under_another {
-        &[FheOp::AllowThis]
-    } else {
+    // that is not provably owned by `msg.sender` that claim is a
+    // confidentiality leak — so it is never guessed there (spec §1.3, §8.1).
+    let ops: &[FheOp] = if sender_provably_owns {
         &[FheOp::AllowThis, FheOp::AllowSender]
+    } else {
+        &[FheOp::AllowThis]
     };
 
     let window = forward_window(ctx, w.function, w.stmt_span, &lvalue);
@@ -237,6 +242,24 @@ fn rule_r1(
         });
     }
     Ok(())
+}
+
+/// The varying middle clause of the withheld-sender-grant note (spec §8.1),
+/// phrased per slot kind: a `SimpleVar` has no key at all, so it reads
+/// differently from a mapping keyed by something other than `msg.sender`.
+/// Only called for a slot [`rule_r1`] has already established is not
+/// provably owned by `msg.sender`.
+fn sender_unproven_reason(slot: &SlotKind) -> &'static str {
+    match slot {
+        SlotKind::SimpleVar => "targets a state variable, which has no key at all",
+        SlotKind::Mapping {
+            key_is_address: true,
+            ..
+        } => "is keyed by an address that is not `msg.sender`",
+        SlotKind::Mapping { .. } => "is keyed by an expression that is not `msg.sender`",
+        SlotKind::ArrayIndex { .. } => "targets an array element, which carries no owner key",
+        SlotKind::StructField => "targets a struct field, which carries no owner key",
+    }
 }
 
 // ---------------------------------------------------------------------------

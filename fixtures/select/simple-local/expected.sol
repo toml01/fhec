@@ -21,6 +21,5 @@ contract SimpleLocal {
         }
         a = x;
         FHE.allowThis(a);
-        FHE.allowSender(a);
     }
 }
