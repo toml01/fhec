@@ -21,9 +21,12 @@ first one it finds:
 2. **The platform package** for the current `process.platform`/`process.arch`,
    e.g. `@fhec/cli-darwin-arm64`. Resolved via `require.resolve`, with the
    binary expected at `<package>/bin/fhec`.
-3. **Dev fallback** — `../../target/release/fhec`, then
-   `../../target/debug/fhec`, resolved relative to `bin/fhec.js` (i.e. a
-   `cargo build` done directly in this monorepo checkout).
+3. **Dev fallback** — `../../../target/release/fhec`, then
+   `../../../target/debug/fhec`, resolved relative to `lib/resolve.js`
+   (this file lives at `packages/fhec/lib/resolve.js`, so the repo root is
+   three levels up). This layout exists only when the package sits in this
+   checkout (a workspace install or `link:`). A `file:` or registry copy
+   does not keep it; use `FHEC_BINARY_PATH` or a platform package.
 
 If none of these resolve, `fhec.js` exits 1 and prints every location it
 tried.
