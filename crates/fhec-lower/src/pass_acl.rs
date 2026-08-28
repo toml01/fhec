@@ -21,6 +21,7 @@
 
 use std::cell::RefCell;
 
+use fhec_bind::{FunctionId, MethodResolution};
 use fhec_check::{
     EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, PlainTy, Severity, SlotKind, Ty,
 };
@@ -173,11 +174,11 @@ fn rule_r1(
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
         let equivalent_grant = window
             .iter()
-            .any(|s| acl_call_matches(ctx, s, &name, &lvalue, None))
+            .any(|s| acl_call_matches(ctx, w.function, s, &name, &lvalue, None))
             || local.as_ref().is_some_and(|(l, _)| {
                 local_window
                     .iter()
-                    .any(|s| acl_call_matches(ctx, s, &name, l, None))
+                    .any(|s| acl_call_matches(ctx, w.function, s, &name, l, None))
             });
         // An explicit broad grant on the local copied into the slot makes the
         // handle readable by this contract already, so R1 need not append its
@@ -190,7 +191,7 @@ fn rule_r1(
                 local_window.iter().any(|s| {
                     ["allowPublic", "allowGlobal"]
                         .into_iter()
-                        .any(|name| acl_call_matches(ctx, s, name, l, None))
+                        .any(|name| acl_call_matches(ctx, w.function, s, name, l, None))
                 })
             });
         let granted = equivalent_grant || broad_local_grant;
@@ -321,9 +322,9 @@ fn rule_r2<'ast>(
         let rendered = Renderer::new(ctx).render_expr(node)?;
         let original = ctx.snippet(*span);
         let arg_key = strip_parens(&original).to_string();
-        let deduped = window
-            .iter()
-            .any(|s| acl_call_matches_normalized(ctx, s, &transient, &arg_key, &callee_key));
+        let deduped = window.iter().any(|s| {
+            acl_call_matches_normalized(ctx, c.function, s, &transient, &arg_key, &callee_key)
+        });
         args.push(ArgPlan {
             span: *span,
             ty: *ty,
@@ -564,10 +565,16 @@ fn rule_r3<'ast>(
         .unwrap_or_default();
     let expr_key = strip_parens(&ctx.snippet(r.expr_span)).to_string();
     let window = backward_window(ctx, r.function, r.stmt_span);
-    if window
-        .iter()
-        .any(|s| acl_call_matches(ctx, s, &transient, &expr_key, Some("msg.sender")))
-    {
+    if window.iter().any(|s| {
+        acl_call_matches(
+            ctx,
+            r.function,
+            s,
+            &transient,
+            &expr_key,
+            Some("msg.sender"),
+        )
+    }) {
         // Already granted (also the idempotence path, §8.6).
         return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
@@ -1149,10 +1156,44 @@ fn strip_address_cast(s: &str) -> &str {
     t
 }
 
+/// Whether a method-syntax broad-grant call on an encrypted receiver of
+/// Solidity type `receiver_type` actually resolves to the trusted profile
+/// library, as opposed to an in-unit, non-profile `using` binding (spec
+/// §8.6, issue #87).
+///
+/// [`fhec_bind::BoundUnit::method_candidates`] cannot see a `using`
+/// directive that lives in a file outside the compilation unit, which is
+/// exactly where CoFHE's real `using BindingsEuintN for euintN global;`
+/// lives (inside `FHE.sol`) unless that file happens to be part of the unit
+/// (the vendored/conformance-corpus case). So `MethodResolution::NoBinding`
+/// or `::External` — no in-unit candidate resolves the call at all — is the
+/// ordinary real-world shape and is trusted by default; only an in-unit
+/// candidate (`MethodResolution::Functions`) is checked against
+/// [`fhec_check::is_profile_library_function`], the same gate library
+/// syntax (`FHE.allowPublic(ptr)`) already gets via `PlainTy::FheLib`.
+fn method_call_is_trusted(
+    ctx: &Ctx<'_, '_>,
+    function: FunctionId,
+    receiver_type: &str,
+    method: solar_interface::Symbol,
+) -> bool {
+    let info = ctx.unit.function(function);
+    match ctx
+        .unit
+        .method_candidates(info.contract, info.file, receiver_type, method)
+    {
+        MethodResolution::Functions(ids) => ids
+            .iter()
+            .all(|&fid| fhec_check::is_profile_library_function(ctx.unit, ctx.profile, fid)),
+        MethodResolution::External { .. } | MethodResolution::NoBinding => true,
+    }
+}
+
 /// [`acl_call_matches`] with the account operand compared modulo an
 /// `address(...)` wrapper (the inserted grant always wraps, spec §8.2).
 fn acl_call_matches_normalized<'ast>(
     ctx: &Ctx<'_, 'ast>,
+    function: FunctionId,
     stmt: &'ast ast::Stmt<'ast>,
     name: &str,
     arg0: &str,
@@ -1185,7 +1226,8 @@ fn acl_call_matches_normalized<'ast>(
         && arg_texts[0] == arg0
         && account_matches(&arg_texts[1]);
     // Method syntax: handle.name(account).
-    let method_syn = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(_)))
+    let method_syn = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(t)) if
+        method_call_is_trusted(ctx, function, t.solidity_name(), method.name))
         && base_text == arg0
         && arg_texts.len() == 1
         && account_matches(&arg_texts[0]);
@@ -1243,6 +1285,7 @@ fn callee_type_text<'ast>(ctx: &Ctx<'_, 'ast>, e: &'ast ast::Expr<'ast>) -> Opti
 /// `arg0.<name>([arg1])` with the given argument texts (spec §8.6).
 fn acl_call_matches<'ast>(
     ctx: &Ctx<'_, 'ast>,
+    function: FunctionId,
     stmt: &'ast ast::Stmt<'ast>,
     name: &str,
     arg0: &str,
@@ -1279,7 +1322,8 @@ fn acl_call_matches<'ast>(
         (None, _) => false,
     };
     // Method syntax: handle.name([account]) — the base is the handle.
-    let method_match = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(_)))
+    let method_match = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(t)) if
+        method_call_is_trusted(ctx, function, t.solidity_name(), method.name))
         && base_text == arg0
         && match arg1 {
             None => arg_texts.is_empty(),

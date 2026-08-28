@@ -2411,6 +2411,39 @@ fn r1_dedupe_accepts_broad_grant_method_syntax() {
 }
 
 #[test]
+fn r1_broad_grant_method_syntax_requires_a_trusted_using_binding() {
+    // Issue #87: the method-syntax matcher recognizes an encrypted receiver
+    // plus a matching method name, but that alone does not prove the method
+    // is a genuine profile grant — an in-unit, non-profile `using` binding
+    // for the same method name must not be trusted either.
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = format!(
+            "pragma solidity ^0.8.25;\n\
+             import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+             \n\
+             library FakeAcl {{\n\
+             \x20   function {grant}(euint32) internal {{}}\n\
+             }}\n\
+             using FakeAcl for euint32;\n\
+             \n\
+             contract C {{\n\
+             \x20   euint32 a;\n\
+             \x20   function f() public {{\n\
+             \x20       euint32 ptr = a;\n\
+             \x20       ptr.{grant}();\n\
+             \x20       a = ptr;\n\
+             \x20   }}\n\
+             }}\n"
+        );
+        let expected = src.replace(
+            "        a = ptr;\n",
+            "        a = ptr;\n        FHE.allowThis(a);\n",
+        );
+        golden(&src, &expected);
+    }
+}
+
+#[test]
 fn r1_broad_grant_leaves_existing_sender_grant_alone() {
     for grant in ["allowPublic", "allowGlobal"] {
         let src = contract(&format!(

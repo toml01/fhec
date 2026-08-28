@@ -58,6 +58,7 @@ pub use sites::{
     OperatorSite, PreconditionSite, SharedInputSite, SharedReturnSite, SlotKind, TernarySite,
     TypeTable,
 };
+pub use trust::is_profile_library_function;
 pub use ty::{PlainTy, Ty};
 
 use fhec_bind::{BoundUnit, SourceFile};
