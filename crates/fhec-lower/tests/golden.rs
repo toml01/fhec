@@ -774,8 +774,28 @@ fn a_bodiless_shared_declaration_rewrites_its_signature_only() {
          import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
          \n\
          interface I {\n\
-         \x20   function set(sharedEuint32 amount_shared) external;\n\
+         \x20   function set(sharedEuint32 amount) external;\n\
          \x20   function take() external returns (sharedEuint64);\n\
+         }\n",
+    );
+}
+
+#[test]
+fn a_bodiless_declaration_keeps_the_author_parameter_name() {
+    // Spec §2.3 / §2.8: no local is generated, so the ABI-visible parameter
+    // name must not change on a published interface.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface I {\n\
+         \x20   function deposit(in euint32 amount) external;\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface I {\n\
+         \x20   function deposit(externalEuint32 amount, bytes memory inputProof) external;\n\
          }\n",
     );
 }

@@ -7,6 +7,11 @@ prebuilt native binary for the current platform/arch and execs it,
 forwarding args and exit code. Resolution lives in `lib/resolve.js` and
 is exported as `fhec/resolve` for the Hardhat plugin and other tooling.
 
+This package is the published JS wrapper (`fhec` on npm). Platform packages
+(`@fhec/cli-<platform>`) are not published yet, so a registry or `file:`
+install still needs `FHEC_BINARY_PATH` (or a local `cargo build`) until
+those packages ship a binary. See [`RELEASING.md`](../../RELEASING.md).
+
 ## Binary resolution order
 
 `fhec/resolve` looks for the native binary in this order, stopping at the

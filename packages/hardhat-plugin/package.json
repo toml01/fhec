@@ -21,7 +21,7 @@
     "hardhat": "^2.0.0"
   },
   "dependencies": {
-    "fhec": "workspace:*",
+    "fhec": "workspace:^0.1.0",
     "smol-toml": "1.8.0"
   },
   "devDependencies": {
@@ -33,5 +33,12 @@
     "type": "git",
     "url": "git+https://github.com/toml01/fhec.git",
     "directory": "packages/hardhat-plugin"
+  },
+  "homepage": "https://github.com/toml01/fhec/tree/main/packages/hardhat-plugin",
+  "bugs": {
+    "url": "https://github.com/toml01/fhec/issues"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

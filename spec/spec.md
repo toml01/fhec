@@ -157,6 +157,8 @@ The bound parameter is an ordinary author-declared parameter everywhere else: it
 
 A modifier invocation is part of the function *header* and is evaluated before the body opens, but `<name>` only exists from the materialization point onwards. A modifier argument that names an `in` / `in(proof)` / `in shared` parameter would therefore reference an identifier the output does not declare there, so the transpiler MUST refuse with FHE1019 rather than emit it.
 
+On a **bodiless** declaration the §2.3 expansion likewise generates no local, so the parameter keeps the author's name and only its type changes; the appended proof parameter is unaffected.
+
 **⚠ Draft decision (generated names):** the raw-input parameter is named `<name>_input`, and, in the implicit form, the appended proof parameter is named `inputProof`. If `<name>_input` is already declared anywhere in the function's scope (parameters, locals, contract members referenced unqualified), the transpiler MUST reject with FHE1011 rather than rename silently; the same applies to `inputProof` in the implicit form. The explicit binder introduces **no** new fixed generated name — it reuses the author's own parameter name verbatim — so `inputProof` is not reserved in a bound function and a parameter of that name is the ordinary case there.
 
 **Restrictions.**
@@ -275,6 +277,8 @@ Several shared inputs of one function receive **independently**, one statement e
 5. **⚠ Draft decision (no mixed inputs):** one parameter list declares either shared inputs or external `in` / `in(proof)` inputs, never both. The two verify under different models — several external inputs form one atomic proof batch — and this version fixes no ordering between that batch and the receives. Splitting the function is the workaround.
 6. On a declaration without a body, only the signature rewrite applies; no receive statement is generated (as §2.3 restriction 3). The visibility rule of restriction 1 still holds, so an interface or abstract declaration carrying `in shared` must be `external`.
 7. The declaration takes no data location. Encrypted types and shared handles are value types, so `memory`, `calldata`, `storage`, and `transient` are all illegal — as they are in plain Solidity on the same type. The transpiler MUST refuse rather than drop the keyword while rewriting the declaration (§1.3).
+
+On a **bodiless** declaration (an interface member or an abstract function) the expansion generates no local, so the parameter keeps the author's name and only its type changes. That name is ABI-visible: on a published interface it is what integrators read and what named-argument call sites bind to, and a signature-only rewrite must not change it.
 
 **⚠ Draft decision (generated name):** the wire parameter is named `<name>_shared`. If that identifier is already used anywhere in the function's scope, the transpiler MUST reject with FHE1016 rather than rename silently.
 
