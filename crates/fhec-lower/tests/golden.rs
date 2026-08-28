@@ -1716,3 +1716,39 @@ fn r1_write_inside_a_return_without_r3_rejects_with_fhe4004() {
     assert_eq!(out.failed_files, 1);
     assert_eq!(out.files[0].1, src, "a refused file must stay untouched");
 }
+
+#[test]
+fn r1_dedupe_accepts_a_grant_on_the_stored_local() {
+    // Spec §8.6: CoFHE files permissions against the handle, so a grant on
+    // the local the store copies already covers the slot.
+    let src = contract(
+        "        euint32 ptr = a;\n\
+         \x20       FHE.allowThis(ptr);\n\
+         \x20       FHE.allowSender(ptr);\n\
+         \x20       balances[msg.sender] = ptr;",
+    );
+    let out = transpile(&[("t.fsol", &src)]);
+    assert_eq!(out.files[0].1, src, "no grant may be appended");
+}
+
+#[test]
+fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
+    let src = contract(
+        "        euint32 ptr = a;\n\
+         \x20       FHE.allowThis(ptr);\n\
+         \x20       FHE.allowSender(ptr);\n\
+         \x20       ptr = b;\n\
+         \x20       balances[msg.sender] = ptr;",
+    );
+    let expected = contract(
+        "        euint32 ptr = a;\n\
+         \x20       FHE.allowThis(ptr);\n\
+         \x20       FHE.allowSender(ptr);\n\
+         \x20       ptr = b;\n\
+         \x20       balances[msg.sender] = ptr;\n\
+         \x20       FHE.allowThis(balances[msg.sender]);\n\
+         \x20       FHE.allowSender(balances[msg.sender]);",
+    );
+    let out = transpile(&[("t.fsol", &src)]);
+    assert_eq!(out.files[0].1, expected);
+}

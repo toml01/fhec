@@ -571,6 +571,8 @@ The transpiler MUST NOT auto-insert `FHE.allow(x, <address>)` for any address ot
 
 An insertion is suppressed when an equivalent call is already present. **⚠ Draft decision (dedupe window):** "already present" means: a statement calling the same ACL function with an argument that is syntactically identical (after trivial parenthesis stripping) to the would-be inserted argument. For R1 the window looks **forward**: in the same block after the triggering statement and before the next write to the same location, the next external call, or the end of the block, whichever comes first. For R2 and R3 the window looks **backward**: in the same block before the triggering call or `return`, after the previous write to the granted value, since the grant must precede the statement it serves. Method-syntax calls (`x.allowThis()`) count as equivalent to library-syntax calls (`FHE.allowThis(x)`). An existing grant modulo the `address(...)` wrapper counts as equivalent for R2.
 
+CoFHE files ACL permissions against the ciphertext *handle*, not against the storage location, so for R1 a grant on the copied value counts as a grant on the slot. When the triggering statement is exactly `slot = local;` with `local` a plain identifier, the R1 window additionally looks **backward** for a grant whose argument is `local`, stopping at the statement that reassigns or declares `local`. This is the most common CoFHE idiom — compute into a local, grant on the local, then store — and without it every such site receives a redundant on-chain grant.
+
 This rule is what makes §1.4 idempotence hold through the ACL pass: re-transpiling output inserts nothing.
 
 ### §8.7 Transient-only values

@@ -153,13 +153,25 @@ fn rule_r1(
     };
 
     let window = forward_window(ctx, w.function, w.stmt_span, &lvalue);
+    // `FHE.allowThis(ptr); slot = ptr;` grants the same handle the store
+    // files, so it counts (spec §8.6).
+    let local = assigned_local(ctx, w.function, w.stmt_span, &lvalue);
+    let local_window = local
+        .as_deref()
+        .map(|l| local_grant_window(ctx, w.function, w.stmt_span, l))
+        .unwrap_or_default();
     let mut missing: Vec<FheOp> = Vec::new();
     for &op in ops {
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
-        if !window
+        let granted = window
             .iter()
             .any(|s| acl_call_matches(ctx, s, &name, &lvalue, None))
-        {
+            || local.as_deref().is_some_and(|l| {
+                local_window
+                    .iter()
+                    .any(|s| acl_call_matches(ctx, s, &name, l, None))
+            });
+        if !granted {
             missing.push(op);
         }
     }
@@ -766,6 +778,64 @@ fn search_stmt<'ast>(
             }
         }
     }
+}
+
+/// The identifier a storage write copies, for `slot = local;` exactly.
+///
+/// CoFHE files ACL permissions against the ciphertext *handle*, so a grant on
+/// `local` already covers `slot` once the handle is stored there. The
+/// idiomatic shape is compute into a local, grant on the local, then store
+/// (spec §8.6).
+fn assigned_local<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+    stmt_span: Span,
+    lvalue: &str,
+) -> Option<String> {
+    let (stmts, idx) = enclosing_block(ctx, function, stmt_span)?;
+    let ast::StmtKind::Expr(e) = &stmts[idx].kind else {
+        return None;
+    };
+    let ast::ExprKind::Assign(lhs, None, rhs) = &e.kind else {
+        return None;
+    };
+    if strip_parens(&ctx.snippet(lhs.span)) != lvalue {
+        return None;
+    }
+    let text = strip_parens(&ctx.snippet(rhs.span)).to_string();
+    is_ident_text(&text).then_some(text)
+}
+
+/// Whether a statement declares a variable named `name`.
+fn declares<'ast>(stmt: &'ast ast::Stmt<'ast>, name: &str) -> bool {
+    match &stmt.kind {
+        ast::StmtKind::DeclSingle(v) => v.name.is_some_and(|n| n.as_str() == name),
+        ast::StmtKind::DeclMulti(vars, _) => vars.iter().any(|v| {
+            v.as_ref()
+                .unspan()
+                .and_then(|v| v.name)
+                .is_some_and(|n| n.as_str() == name)
+        }),
+        _ => false,
+    }
+}
+
+/// Statements before the trigger that can still hold a grant on `local`:
+/// nearest first, stopping at the statement that reassigns or declares it.
+fn local_grant_window<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+    trigger: Span,
+    local: &str,
+) -> Vec<&'ast ast::Stmt<'ast>> {
+    let mut out = Vec::new();
+    for s in backward_window(ctx, function, trigger) {
+        if writes_to(ctx, s, local) || declares(s, local) {
+            break;
+        }
+        out.push(s);
+    }
+    out
 }
 
 /// Whether a statement is an assignment to (or inc/dec of) `lvalue`.
