@@ -1649,6 +1649,144 @@ fn a_shared_return_recipient_shadowed_by_a_parameter_named_msg_is_refused() {
 }
 
 #[test]
+fn a_shared_return_recipient_shadowed_by_a_body_local_msg_is_refused() {
+    // Regression for issue #61 (follow-up): the header recipient resolves
+    // to the builtin fine (nothing named `msg` is in scope yet at the
+    // header), but the lowerer re-emits the literal text `msg.sender` at
+    // every `return`, so a local declared later in the body — even after
+    // the point the header itself was checked — must still be refused: it
+    // shadows the builtin from its declaration onward, and a `return` past
+    // it would read the local instead of the real sender.
+    let src = unit(
+        "struct Msg { address sender; }\n\
+         function f(bool c) external returns (shared(msg.sender) euint64) {\n\
+           if (c) {\n\
+             Msg memory msg;\n\
+             msg.sender = address(0);\n\
+             return b;\n\
+           }\n\
+           return b;\n\
+         }",
+    );
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE1015")
+            .unwrap_or_else(|| panic!("expected FHE1015, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Error);
+        assert!(
+            d.message.contains("declares a local named `msg`"),
+            "{:?}",
+            d.message
+        );
+        assert!(c.shared_return_sites.is_empty());
+    });
+}
+
+#[test]
+fn a_shared_return_recipient_shadowed_by_a_try_catch_binder_named_msg_is_refused() {
+    // Same hazard as the body-local case, via a `try`/`catch` binder rather
+    // than an ordinary declaration.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        interface IVault {\n\
+          function pull() external returns (bytes memory);\n\
+        }\n\
+        contract S {\n\
+          euint64 b;\n\
+          IVault vault;\n\
+          function f() external returns (shared(msg.sender) euint64) {\n\
+            try vault.pull() returns (bytes memory msg) {\n\
+              msg;\n\
+              return b;\n\
+            } catch {\n\
+              return b;\n\
+            }\n\
+          }\n\
+        }\n";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE1015")
+            .unwrap_or_else(|| panic!("expected FHE1015, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Error);
+        assert!(
+            d.message.contains("declares a local named `msg`"),
+            "{:?}",
+            d.message
+        );
+        assert!(c.shared_return_sites.is_empty());
+    });
+}
+
+#[test]
+fn a_shared_return_recipient_shadowed_by_an_own_state_variable_named_msg_is_refused() {
+    // A state variable named `msg` is the contract's own member, resolved
+    // before the builtin fallback is ever consulted — the primary
+    // (header-recipient) check already refuses it, with no need for the
+    // body-declaration scan.
+    let src = unit(
+        "address msg;\n\
+         function f() external returns (shared(msg.sender) euint64) {\n\
+           return b;\n\
+         }",
+    );
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE1015")
+            .unwrap_or_else(|| panic!("expected FHE1015, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(
+            d.message,
+            "the only recipient this version accepts is `msg.sender`; the transpiler cannot \
+             prove another expression names the caller"
+        );
+        assert!(c.shared_return_sites.is_empty());
+    });
+}
+
+#[test]
+fn an_in_unit_base_declaring_msg_is_refused_even_behind_an_opaque_base() {
+    // Guards the `IncompleteInheritance` fallback trust (used so a
+    // `shared(msg.sender)` return stays legal under a package base) against
+    // waving through a *real*, in-unit shadow. Solidity gives the rightmost
+    // direct base precedence, so `Base` — listed last — is the one member
+    // the binder can certify despite the opaque `ReentrancyGuardTransient`
+    // earlier in the list; its `msg` member resolves positively and must
+    // never fall back to "what file scope would have said".
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import {ReentrancyGuardTransient} from \"@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol\";\n\
+        contract Base {\n\
+          address msg;\n\
+        }\n\
+        contract Derived is ReentrancyGuardTransient, Base {\n\
+          euint64 b;\n\
+          function f() external returns (shared(msg.sender) euint64) {\n\
+            return b;\n\
+          }\n\
+        }\n";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE1015")
+            .unwrap_or_else(|| panic!("expected FHE1015, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(
+            d.message,
+            "the only recipient this version accepts is `msg.sender`; the transpiler cannot \
+             prove another expression names the caller"
+        );
+        assert!(c.shared_return_sites.is_empty());
+    });
+}
+
+#[test]
 fn an_ordinary_encrypted_return_still_states_an_r3_fact() {
     // Guards the suppression above against over-reach.
     let src = unit("function g() public returns (euint64) { return b; }");
