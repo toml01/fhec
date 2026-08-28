@@ -88,20 +88,28 @@ You can name the `.fsol` file you actually edit — the one under `src`, not
 artifact:
 
 ```ts
-await ethers.getContractFactory(
-  "contracts/ERC20Confidential/ERC20ConfidentialLib.fsol:ERC20ConfidentialLib",
-);
+const LIB_FQN =
+  "contracts/ERC20Confidential/ERC20ConfidentialLib.fsol:ERC20ConfidentialLib";
+
+const lib = await (await ethers.getContractFactory(LIB_FQN)).deploy();
+await ethers.getContractFactory("MyToken", {
+  libraries: { [LIB_FQN]: await lib.getAddress() },
+});
 ```
 
 This works for `hre.artifacts.readArtifact` / `readArtifactSync` /
 `artifactExists` / `getBuildInfo` / `getBuildInfoSync` /
-`formArtifactPathFromFullyQualifiedName`, and for `solidity.overrides` keys
-(rewritten in place at config load, with a console warning). The lookup
-uses `generated/.fhec/manifest.json`, so it only works once you have run
-`hardhat compile` at least once (the manifest is written there); before
-that, or for a path the manifest does not know about, the name you gave is
-passed straight through to Hardhat unchanged — you get Hardhat's normal
-"contract not found" error, not a silent miss.
+`formArtifactPathFromFullyQualifiedName`; for `libraries` keys passed to
+`getContractFactory` / `getContractFactoryFromArtifact` / `deployContract`;
+and for `solidity.overrides` keys (rewritten in place at config load and
+again after `fhec build` on `hardhat compile`, with a console warning). The
+lookup uses `generated/.fhec/manifest.json`. Artifact reads and `libraries`
+keys need a compile first (the manifest is written there); before that, or
+for a path the manifest does not know about, the name you gave is passed
+straight through to Hardhat unchanged — you get Hardhat's normal "contract
+not found" / "not one of its libraries" error, not a silent miss. A
+`.fsol` `solidity.overrides` key is rewritten on the first compile as well,
+once `fhec build` has written the manifest.
 
 A plain pass-through `.sol` file (one with no dialect features, copied
 byte-identical into `out`) is not translated by this alias: it already

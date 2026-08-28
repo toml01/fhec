@@ -12,6 +12,7 @@ import type { HardhatConfig, HardhatUserConfig } from "hardhat/types";
 
 import { wrapArtifacts } from "./artifacts";
 import { runFhecBuild } from "./build";
+import { installLibrariesTranslation } from "./libraries";
 import { formatOverrideWarning, rewriteSolidityOverrides } from "./overrides";
 import { loadManifest, remapSolcOutput, type RemapContext } from "./remap";
 import { loadFhecToml, resolveTomlPath } from "./toml";
@@ -39,6 +40,11 @@ export type { OverrideNotice } from "./overrides";
 export { translateFsolFqn } from "./fqn";
 export { wrapArtifacts } from "./artifacts";
 export { installVerifyOverride } from "./verify";
+export {
+  translateLibrariesMap,
+  translateFactoryOptionsArg,
+  installLibrariesTranslation,
+} from "./libraries";
 
 extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) => {
   const user = userConfig.fhec ?? {};
@@ -73,17 +79,15 @@ extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) =>
 
       // The manifest from a previous `fhec build` may already be on disk;
       // if not, `.fsol` override keys are left alone (see overrides.ts),
-      // and plain `.sol` keys are still moved to `out/`.
-      const manifest = loadManifest(config.paths.sources);
-      const notices = rewriteSolidityOverrides(
+      // and plain `.sol` keys are still moved to `out/`. A later rewrite
+      // runs after `fhec build` on `hardhat compile`, once the manifest
+      // exists, so a first compile still picks up `.fsol` override keys.
+      rewriteOverridesFromManifest(
         config.solidity.overrides,
         parsed.src,
         parsed.out,
-        manifest,
+        config.paths.sources,
       );
-      if (notices.length > 0) {
-        console.warn(formatOverrideWarning(notices, parsed.src, parsed.out));
-      }
     }
   }
 
@@ -96,12 +100,38 @@ extendEnvironment((hre) => {
   }
   (hre as { artifacts: typeof hre.artifacts }).artifacts = wrapArtifacts(hre);
   installVerifyOverride(hre);
+  installLibrariesTranslation(hre);
 });
 
 task(TASK_COMPILE, async (args, hre, runSuper) => {
   runFhecBuild(hre);
+  if (hre.config.fhec.enabled) {
+    rewriteOverridesFromManifest(
+      hre.config.solidity.overrides,
+      hre.config.fhec.srcDir,
+      hre.config.fhec.outDir,
+      hre.config.paths.sources,
+    );
+  }
   return runSuper(args);
 });
+
+function rewriteOverridesFromManifest(
+  overrides: HardhatConfig["solidity"]["overrides"],
+  srcDir: string,
+  outDir: string,
+  sourcesDir: string,
+): void {
+  const notices = rewriteSolidityOverrides(
+    overrides,
+    srcDir,
+    outDir,
+    loadManifest(sourcesDir),
+  );
+  if (notices.length > 0) {
+    console.warn(formatOverrideWarning(notices, srcDir, outDir));
+  }
+}
 
 function remapAfterSolc(output: unknown, hre: { config: HardhatConfig }): unknown {
   const fhec = hre.config.fhec;

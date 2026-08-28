@@ -96,6 +96,66 @@ function artifactExists(dir, contractFile, contractName) {
   return candidates.some((p) => fs.existsSync(p));
 }
 
+function writeLibrariesTaskProject(dir) {
+  fs.mkdirSync(path.join(dir, "contracts", "Path"), { recursive: true });
+  linkLocalHardhat(dir);
+  fs.writeFileSync(
+    path.join(dir, "hardhat.config.js"),
+    `'use strict';
+const { task } = require("hardhat/config");
+require(${JSON.stringify(pluginEntry)});
+const { translateLibrariesMap } = require(${JSON.stringify(path.join(pluginRoot, "dist", "libraries.js"))});
+const { loadManifest } = require(${JSON.stringify(path.join(pluginRoot, "dist", "remap.js"))});
+task("fhec-test-libraries", async (args, hre) => {
+  const artifact = await hre.artifacts.readArtifact("contracts/Path/User.fsol:User");
+  const fsolKey = "contracts/Path/Lib.fsol:Lib";
+  const translated = translateLibrariesMap(
+    { [fsolKey]: "0x" + "11".repeat(20) },
+    hre.config.fhec.srcDir,
+    hre.config.fhec.outDir,
+    loadManifest(hre.config.paths.sources),
+  );
+  const generatedKey = Object.keys(translated)[0];
+  const colon = generatedKey.lastIndexOf(":");
+  const sourceName = generatedKey.slice(0, colon);
+  const libName = generatedKey.slice(colon + 1);
+  const hit =
+    artifact.linkReferences[sourceName] !== undefined &&
+    artifact.linkReferences[sourceName][libName] !== undefined;
+  console.log(
+    "FHEC_TEST_RESULT:" +
+      JSON.stringify({
+        generatedKey,
+        hit,
+        linkReferenceFiles: Object.keys(artifact.linkReferences),
+      }),
+  );
+});
+module.exports = {
+  solidity: {
+    version: "0.8.28",
+    settings: { evmVersion: "cancun" },
+  },
+};
+`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "fhec.toml"),
+    `[project]
+src = "contracts"
+out = "generated"
+`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "contracts", "Path", "Lib.fsol"),
+    "pragma solidity ^0.8.25; library Lib { function add(uint256 a, uint256 b) public pure returns (uint256) { return a + b; } }\n",
+  );
+  fs.writeFileSync(
+    path.join(dir, "contracts", "Path", "User.fsol"),
+    'pragma solidity ^0.8.25; import "./Lib.fsol"; contract User { function add(uint256 a, uint256 b) public pure returns (uint256) { return Lib.add(a, b); } }\n',
+  );
+}
+
 function writeReadArtifactTaskProject(dir) {
   fs.mkdirSync(path.join(dir, "contracts", "Nested"), { recursive: true });
   linkLocalHardhat(dir);
@@ -193,6 +253,36 @@ test(
       const parsed = JSON.parse(match[1]);
       assert.equal(parsed.contractName, "D");
       assert.equal(parsed.sourceName, "generated/Nested/D.sol");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "a .fsol libraries key translates to a solc linkReferences entry",
+  { skip: skipReason, timeout: 180_000 },
+  () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-libs-"));
+    try {
+      writeLibrariesTaskProject(dir);
+      const compileResult = runCompile(dir, nativeBinary);
+      assert.equal(
+        compileResult.status,
+        0,
+        `compile failed\nstdout:\n${compileResult.stdout}\nstderr:\n${compileResult.stderr}`,
+      );
+      const taskResult = runTask(dir, nativeBinary, "fhec-test-libraries");
+      assert.equal(
+        taskResult.status,
+        0,
+        `task failed\nstdout:\n${taskResult.stdout}\nstderr:\n${taskResult.stderr}`,
+      );
+      const match = taskResult.stdout.match(/FHEC_TEST_RESULT:(.+)/);
+      assert.ok(match, `expected FHEC_TEST_RESULT marker in stdout:\n${taskResult.stdout}`);
+      const parsed = JSON.parse(match[1]);
+      assert.equal(parsed.generatedKey, "generated/Path/Lib.sol:Lib");
+      assert.equal(parsed.hit, true, `linkReferences files: ${JSON.stringify(parsed.linkReferenceFiles)}`);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
