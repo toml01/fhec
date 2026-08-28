@@ -12,11 +12,12 @@
 //!
 //! Dedupe (spec §8.6): an equivalent existing call suppresses the insertion —
 //! same ACL function, syntactically identical argument after parenthesis
-//! stripping; method syntax counts as library syntax. R1 scans forward from
-//! the trigger to the next write of the same location or the end of the
-//! block; R2/R3 insert *before* their trigger, so their window scans backward
-//! from the trigger to the start of the block (a §8.6 refinement — the
-//! spec's forward window is written for R1).
+//! stripping; method syntax counts as library syntax. An author-written
+//! `allowPublic` or `allowGlobal` on a copied local also subsumes only R1's
+//! `allowThis`. R1 scans forward from the trigger to the next write of the
+//! same location or the end of the block; R2/R3 insert *before* their trigger,
+//! so their window scans backward from the trigger to the start of the block
+//! (a §8.6 refinement — the spec's forward window is written for R1).
 
 use std::cell::RefCell;
 
@@ -168,7 +169,7 @@ fn rule_r1(
     let mut missing: Vec<FheOp> = Vec::new();
     for &op in ops {
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
-        let granted = window
+        let equivalent_grant = window
             .iter()
             .any(|s| acl_call_matches(ctx, s, &name, &lvalue, None))
             || local.as_deref().is_some_and(|l| {
@@ -176,6 +177,21 @@ fn rule_r1(
                     .iter()
                     .any(|s| acl_call_matches(ctx, s, &name, l, None))
             });
+        // An explicit broad grant on the local copied into the slot makes the
+        // handle readable by this contract already, so R1 need not append its
+        // `allowThis`. This is deliberately not applied to `allowSender`:
+        // §8.1 treats that as the separate, owner-proven grant, and §8.6 only
+        // extends this broad-grant subsumption to the unconditional contract
+        // grant.
+        let broad_local_grant = op == FheOp::AllowThis
+            && local.as_deref().is_some_and(|l| {
+                local_window.iter().any(|s| {
+                    ["allowPublic", "allowGlobal"]
+                        .into_iter()
+                        .any(|name| acl_call_matches(ctx, s, name, l, None))
+                })
+            });
+        let granted = equivalent_grant || broad_local_grant;
         if !granted {
             missing.push(op);
         }

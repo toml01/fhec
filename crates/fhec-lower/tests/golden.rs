@@ -2187,6 +2187,27 @@ fn r1_dedupe_accepts_a_grant_on_the_stored_local() {
 }
 
 #[test]
+fn r1_dedupe_broad_grant_on_stored_local_suppresses_only_allow_this() {
+    // Spec §8.6: public/global access on the local handle covers R1's
+    // unconditional contract grant after it is stored. It does not replace
+    // the separate, owner-proven `allowSender` grant (spec §8.1).
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       balances[msg.sender] = ptr;"
+        ));
+        let expected = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       balances[msg.sender] = ptr;\n\
+             \x20       FHE.allowSender(balances[msg.sender]);"
+        ));
+        golden(&src, &expected);
+    }
+}
+
+#[test]
 fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
     let src = contract(
         "        euint32 ptr = a;\n\

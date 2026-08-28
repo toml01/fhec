@@ -1,0 +1,40 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A broad grant on a local handle already lets this contract read the handle
+// after the store. It does not replace R1's separate owner-proven sender grant.
+contract BroadGrantOnLocal {
+    euint64 pub;
+    euint64 global;
+    euint64 plain;
+    mapping(address => euint64) owned;
+
+    function viaPublic(uint64 v) external {
+        euint64 s = FHE.asEuint64(v);
+        FHE.allowPublic(s);
+        pub = s;
+    }
+
+    function viaGlobal(uint64 v) external {
+        euint64 s = FHE.asEuint64(v);
+        FHE.allowGlobal(s);
+        global = s;
+    }
+
+    // No existing grant: R1 must still grant the contract access.
+    function control(uint64 v) external {
+        euint64 s = FHE.asEuint64(v);
+        plain = s;
+        FHE.allowThis(plain);
+    }
+
+    // A broad grant suppresses only allowThis, not the separate sender grant.
+    function senderStillInserted(uint64 v) external {
+        euint64 s = FHE.asEuint64(v);
+        FHE.allowPublic(s);
+        owned[msg.sender] = s;
+        FHE.allowSender(owned[msg.sender]);
+    }
+}
