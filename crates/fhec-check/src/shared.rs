@@ -45,7 +45,9 @@
 //! expression's own boundaries, so it composes with R2's grants and with
 //! ordinary operator lowering inside the expression without owning anything.
 
-use fhec_bind::{BoundUnit, FunctionInfo, SourceFile};
+use fhec_bind::{
+    BaseRef, BoundUnit, ContractId, FunctionInfo, Resolution, SourceFile, UnresolvedReason,
+};
 use fhec_ir::EType;
 use fhec_targets::TargetProfile;
 use solar_ast as ast;
@@ -493,9 +495,9 @@ fn scan_returns<'ast>(
                             codes::SHARED_BOUNDARY_TYPE_MISMATCH,
                             e.span,
                             format!(
-                                "this function shares `{}`, but the returned expression is {}",
+                                "this function shares `{}`, but {}",
                                 ety.solidity_name(),
-                                describe(other)
+                                describe_mismatch(unit, e, other)
                             ),
                         )
                         .with_rule(RULE),
@@ -780,12 +782,84 @@ fn supports_shared(
     }
 }
 
-fn describe(ty: Option<&Ty>) -> String {
+fn describe_mismatch(unit: &BoundUnit<'_>, expr: &ast::Expr<'_>, ty: Option<&Ty>) -> String {
     match ty {
-        Some(Ty::Encrypted(t)) => format!("`{}`", t.solidity_name()),
-        Some(Ty::Plain(_)) => "a plaintext value".to_string(),
-        _ => "of a type the checker cannot prove is that encrypted type".to_string(),
+        Some(Ty::Encrypted(t)) => {
+            format!("the returned expression is `{}`", t.solidity_name())
+        }
+        Some(Ty::Plain(_)) => "the returned expression is a plaintext value".to_string(),
+        _ => incomplete_inheritance_call(unit, expr).unwrap_or_else(|| {
+            "the returned expression is of a type the checker cannot prove is that encrypted type"
+                .to_string()
+        }),
     }
+}
+
+fn incomplete_inheritance_call(unit: &BoundUnit<'_>, expr: &ast::Expr<'_>) -> Option<String> {
+    let ast::ExprKind::Call(callee, _) = &expr.peel_parens().kind else {
+        return None;
+    };
+    let (name, root) = callee_path(callee)?;
+    let Resolution::Unresolved(UnresolvedReason::IncompleteInheritance { contract, .. }) =
+        unit.resolve(root)?
+    else {
+        return None;
+    };
+    let contract_name = &unit.contract(*contract).name_str;
+    let cause = opaque_base(unit, *contract, &mut Vec::new()).map_or_else(
+        || "has an inherited surface the binder cannot establish completely".to_string(),
+        |base| match base {
+            OpaqueBase::External(base) => {
+                format!("inherits `{base}`, which is outside the compilation unit")
+            }
+            OpaqueBase::Unknown(base) => {
+                format!("inherits `{base}`, which cannot be resolved inside the compilation unit")
+            }
+        },
+    );
+    Some(format!(
+        "`{name}` resolves to `Unknown` because contract `{contract_name}` {cause}"
+    ))
+}
+
+fn callee_path(expr: &ast::Expr<'_>) -> Option<(String, solar_interface::Ident)> {
+    match &expr.peel_parens().kind {
+        ast::ExprKind::Ident(id) => Some((id.as_str().to_string(), *id)),
+        ast::ExprKind::Member(object, member) => {
+            let (prefix, root) = callee_path(object)?;
+            Some((format!("{prefix}.{}", member.as_str()), root))
+        }
+        ast::ExprKind::CallOptions(inner, _) => callee_path(inner),
+        _ => None,
+    }
+}
+
+enum OpaqueBase {
+    External(String),
+    Unknown(String),
+}
+
+fn opaque_base(
+    unit: &BoundUnit<'_>,
+    contract: ContractId,
+    seen: &mut Vec<ContractId>,
+) -> Option<OpaqueBase> {
+    if seen.contains(&contract) {
+        return None;
+    }
+    seen.push(contract);
+    for base in &unit.contract(contract).bases {
+        match base {
+            BaseRef::External { name, .. } => return Some(OpaqueBase::External(name.clone())),
+            BaseRef::Unknown { name } => return Some(OpaqueBase::Unknown(name.clone())),
+            BaseRef::InUnit(base) => {
+                if let Some(cause) = opaque_base(unit, *base, seen) {
+                    return Some(cause);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn bad_position(out: &mut CheckedUnit, span: Span, message: String) {

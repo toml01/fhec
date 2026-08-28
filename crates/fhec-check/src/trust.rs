@@ -15,11 +15,11 @@
 //!    cannot see the file's exports, but the author explicitly imported the
 //!    profile library, and both solc and the verify gate re-check actual
 //!    name resolution downstream.
-//! 3. **Incomplete inheritance.** [`UnresolvedReason::IncompleteInheritance`]
-//!    defers to its file-scope `fallback`, to which rules 1–2 apply. (A base
-//!    contract shadowing `FHE`/`euint32` cannot be ruled out, but treating
-//!    that as possible would reject every inheriting contract; the explicit
-//!    profile import wins.)
+//! 3. **Incomplete inheritance.** A positive file-scope binding survives
+//!    incomplete inheritance directly. For a file-scope miss,
+//!    [`UnresolvedReason::IncompleteInheritance`] defers to its unresolved
+//!    `fallback`, so rule 2 can still recognize exposure from an explicit
+//!    profile plain import.
 //! 4. **In-unit library.** The name resolves to an in-unit `library FHE`
 //!    declared in a file that also declares a user-defined value type
 //!    `euintN is bytes32` (the CoFHE library file itself, when it is part of

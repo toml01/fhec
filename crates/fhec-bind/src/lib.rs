@@ -20,10 +20,11 @@
 //!   - Imports that leave the unit resolve to [`Resolution::External`] (aliased/glob:
 //!     we know the specifier) or make unknown names degrade to
 //!     [`UnresolvedReason::MaybeExternal`] (plain imports: unknown symbol set).
-//!   - A contract with a base outside the unit has an *incomplete inherited surface*:
-//!     names that miss its own members degrade to
-//!     [`UnresolvedReason::IncompleteInheritance`] instead of falling through to file
-//!     scope (they might be members of the unseen base).
+//!   - A contract with a base outside the unit has an *incomplete inherited surface*.
+//!     Members in the provably ordered in-unit prefix and positive file-scope bindings
+//!     still resolve; only names that miss both degrade to
+//!     [`UnresolvedReason::IncompleteInheritance`] because they might be members of the
+//!     unseen base.
 //! - **Hard errors are rare.** Only structural facts produce FHE1xxx diagnostics:
 //!   duplicate definitions in one scope and unresolvable imports. Everything else is a
 //!   resolution state; solc remains the authority on plain-Solidity legality.

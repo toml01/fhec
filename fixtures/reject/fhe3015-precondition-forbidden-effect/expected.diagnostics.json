@@ -41,7 +41,7 @@
       "end_line": 37,
       "end_col": 34
     },
-    "message": "this call has a return type the checker cannot prove is plaintext; a `precondition` block may only use values it can prove are plaintext",
+    "message": "an encrypted value cannot appear in a `precondition` block: the block is a plaintext guard that runs before any FHE operation of this function",
     "rule": "§2.7"
   },
   {

@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract UnnamedReturnCallType {
+    function a1(euint64 value) internal returns (euint64) {
+        return value;
+    }
+
+    function a2(euint64 value) internal returns (euint64 out) {
+        return value;
+    }
+
+    function c1(euint64 value) external returns (shared(msg.sender) euint64) {
+        return a1(value);
+    }
+
+    function c2(euint64 value) external returns (shared(msg.sender) euint64) {
+        return a2(value);
+    }
+
+    // Keep this in the rejection corpus with one deliberate Unknown. Exact
+    // diagnostic matching proves the four functions above stay clean.
+    function stillUnknown(euint64 value) external returns (shared(msg.sender) euint64) {
+        return unresolved(value);
+    }
+}

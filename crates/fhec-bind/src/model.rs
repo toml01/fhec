@@ -65,11 +65,10 @@ pub enum UnresolvedReason {
     IncompleteInheritance {
         /// The contract whose inherited surface is incomplete.
         contract: ContractId,
-        /// What file-scope lookup would have said if the unseen inherited surface did
-        /// not exist. This is *not* a resolution; it is data for an explicit,
-        /// policy-driven override in the checker (e.g. trusting a profile-pinned
-        /// `FHE` import). Using it as-is without such a policy would violate the
-        /// prime directive.
+        /// The unresolved result of file-scope lookup. Positive file-scope
+        /// bindings resolve directly; this preserves the reason for the miss
+        /// so an explicit checker policy can still inspect it (e.g. trusting
+        /// exposure from a profile-pinned plain import).
         fallback: Box<Resolution>,
     },
     /// The name was bound by an import the binder could not resolve.
@@ -122,7 +121,7 @@ pub enum VarOwner {
     State(ContractId),
     /// Function/constructor/modifier parameter.
     Param(FunctionId),
-    /// Named return variable.
+    /// Return parameter, named or unnamed.
     Return(FunctionId),
     /// Local variable in a function body.
     Local(FunctionId),
@@ -162,7 +161,7 @@ pub struct FunctionInfo<'ast> {
     pub contract: Option<ContractId>,
     /// Parameter variable ids, in declaration order.
     pub params: Vec<VarId>,
-    /// Named return variable ids, in declaration order (unnamed returns are skipped).
+    /// Return parameter variable ids, in declaration order.
     pub returns: Vec<VarId>,
 }
 

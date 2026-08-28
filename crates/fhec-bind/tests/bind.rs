@@ -119,6 +119,36 @@ fn state_vars_params_and_shadowing() {
 }
 
 #[test]
+fn unnamed_returns_are_collected_and_their_types_are_resolved() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import {euint64} from "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        contract C {
+            function unnamed(euint64 a) internal returns (euint64) { return a; }
+            function named(euint64 a) internal returns (euint64 out) { out = a; }
+        }
+    "#;
+    with_bound(&[("t.sol", src)], |bound, _| {
+        for name in ["unnamed", "named"] {
+            let (_, function) = bound
+                .functions()
+                .find(|(_, f)| f.name_str.as_deref() == Some(name))
+                .expect("function is collected");
+            assert_eq!(function.returns.len(), 1, "function: {name}");
+            let ret = bound.var(function.returns[0]);
+            assert!(matches!(ret.owner, VarOwner::Return(_)));
+            assert!(
+                matches!(
+                    bound.resolve_span(ret.decl.ty.span),
+                    Some(Resolution::External { .. })
+                ),
+                "function: {name}"
+            );
+        }
+    });
+}
+
+#[test]
 fn imports_aliased_glob_and_namespace() {
     let a = r"
         pragma solidity ^0.8.25;
@@ -341,6 +371,91 @@ fn external_base_makes_inherited_surface_incomplete() {
         assert!(matches!(
             bound.contract(c).bases.as_slice(),
             [BaseRef::External { .. }]
+        ));
+    });
+}
+
+#[test]
+fn file_scope_names_survive_incomplete_inheritance() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import {ExternalBase, importedFn} from "@vendor/External.sol";
+        library L { function pub(uint256 value) internal returns (uint256) { return value; } }
+        function freeFn(uint256 value) pure returns (uint256) { return value; }
+        contract C is ExternalBase {
+            function f(uint256 value) public returns (uint256) {
+                msg.sender;
+                importedFn(value);
+                return L.pub(freeFn(value));
+            }
+        }
+    "#;
+    with_bound(&[("t.sol", src)], |bound, asts| {
+        assert!(matches!(
+            resolutions_of(bound, asts[0], "L").as_slice(),
+            [Resolution::Contract(_)]
+        ));
+        assert!(matches!(
+            resolutions_of(bound, asts[0], "freeFn").as_slice(),
+            [Resolution::Function(_)]
+        ));
+        assert!(matches!(
+            resolutions_of(bound, asts[0], "importedFn").as_slice(),
+            [Resolution::External { .. }]
+        ));
+        assert!(matches!(
+            resolutions_of(bound, asts[0], "msg").as_slice(),
+            [Resolution::Builtin(_)]
+        ));
+    });
+}
+
+#[test]
+fn known_inherited_prefix_survives_an_opaque_ancestor() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import {ExternalBase} from "@vendor/External.sol";
+        contract Core is ExternalBase {
+            function helper(uint256 value) internal returns (uint256) { return value; }
+        }
+        contract Child is Core {
+            function f(uint256 value) public returns (uint256) { return helper(value); }
+        }
+    "#;
+    with_bound(&[("t.sol", src)], |bound, asts| {
+        assert!(matches!(
+            resolutions_of(bound, asts[0], "helper").as_slice(),
+            [Resolution::Function(_)]
+        ));
+    });
+}
+
+#[test]
+fn opaque_higher_priority_base_still_blocks_a_known_lower_member() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import {ExternalBase} from "@vendor/External.sol";
+        contract Known {
+            function unsafeHelper(uint256 value) internal returns (uint256) { return value; }
+            function safeHelper(uint256 value) internal returns (uint256) { return value; }
+        }
+        contract Unsafe is Known, ExternalBase {
+            function f(uint256 value) public returns (uint256) { return unsafeHelper(value); }
+        }
+        contract Safe is ExternalBase, Known {
+            function f(uint256 value) public returns (uint256) { return safeHelper(value); }
+        }
+    "#;
+    with_bound(&[("t.sol", src)], |bound, asts| {
+        assert!(matches!(
+            resolutions_of(bound, asts[0], "unsafeHelper").as_slice(),
+            [Resolution::Unresolved(
+                UnresolvedReason::IncompleteInheritance { .. }
+            )]
+        ));
+        assert!(matches!(
+            resolutions_of(bound, asts[0], "safeHelper").as_slice(),
+            [Resolution::Function(_)]
         ));
     });
 }

@@ -299,7 +299,6 @@ impl<'ast> Binder<'ast> {
             .header
             .returns()
             .iter()
-            .filter(|v| v.name.is_some())
             .map(|v| self.push_var(file, VarOwner::Return(id), v))
             .collect();
         let info = &mut self.unit.functions[id.index()];
@@ -805,32 +804,6 @@ impl<'ast> Binder<'ast> {
             }
         }
 
-        // Return types carrying a §2.8 shared-boundary marker. Named returns
-        // are registered as vars and the signature-level pass above already
-        // walked them; unnamed ones are not registered at all, so their type
-        // name has no resolution and every consumer sees `Unknown`. A shared
-        // return is unnamed by definition and must know its declared encrypted
-        // type, so it is walked here.
-        //
-        // Deliberately narrow: resolving *every* unnamed return type would
-        // also teach the checker the result of in-unit calls it treats as
-        // `Unknown` today, which changes typing and lowering well beyond the
-        // shared boundary. That is a separate change.
-        for fi in 0..self.unit.functions.len() {
-            let (file, contract, ast) = (
-                self.unit.functions[fi].file,
-                self.unit.functions[fi].contract,
-                self.unit.functions[fi].ast,
-            );
-            if !ast.header.returns().iter().any(|r| r.shared.is_some()) {
-                continue;
-            }
-            let mut w = Walker::new(self, file, contract, None);
-            for r in ast.header.returns().iter().filter(|r| r.shared.is_some()) {
-                w.walk_type(&r.ty);
-            }
-        }
-
         // Contract base constructor arguments (`is Base(42)`).
         for ci in 0..self.unit.contracts.len() {
             let (file, ast) = (self.unit.contracts[ci].file, self.unit.contracts[ci].ast);
@@ -973,10 +946,20 @@ impl<'a, 'ast> Walker<'a, 'ast> {
                     return r;
                 }
             } else {
-                // The name may be a member of a base we cannot see. Guessing that it
-                // is (or is not) would violate the prime directive; degrade instead,
-                // but carry what file scope would have said for policy-driven use.
+                if let Some(r) = self
+                    .binder
+                    .unit
+                    .inherited_member_in_known_prefix(contract, name)
+                {
+                    return r;
+                }
                 let fallback = self.binder.unit.resolve_at_file(self.file, name, text);
+                // A positive file-scope binding is a fact independent of how
+                // much of the inherited surface is visible. Preserve it;
+                // only a genuine file-scope miss may come from an unseen base.
+                if !matches!(fallback, Resolution::Unresolved(_)) {
+                    return fallback;
+                }
                 return Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
                     contract,
                     fallback: Box::new(fallback),

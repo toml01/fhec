@@ -296,30 +296,78 @@ impl<'ast> BoundUnit<'ast> {
     ) -> Option<Resolution> {
         let lin = &self.contracts[contract.index()].linearization;
         for &c in lin.order.iter().skip(1) {
-            match self.contracts[c.index()].members.get(&name) {
-                Some(Resolution::Function(fs)) => {
-                    let visible: Vec<FunctionId> = fs
-                        .iter()
-                        .copied()
-                        .filter(|f| {
-                            self.functions[f.index()].ast.header.visibility()
-                                != Some(ast::Visibility::Private)
-                        })
-                        .collect();
-                    if !visible.is_empty() {
-                        return Some(Resolution::Function(visible));
-                    }
-                }
-                Some(Resolution::StateVar(v)) => {
-                    if self.vars[v.index()].decl.visibility != Some(ast::Visibility::Private) {
-                        return Some(Resolution::StateVar(*v));
-                    }
-                }
-                Some(other) => return Some(other.clone()),
-                None => {}
+            if let Some(member) = self.inheritable_own_member(c, name) {
+                return Some(member);
             }
         }
         None
+    }
+
+    /// Looks up only the inherited members that precede every opaque base in
+    /// all possible completions of an incomplete linearization.
+    pub(crate) fn inherited_member_in_known_prefix(
+        &self,
+        contract: ContractId,
+        name: Symbol,
+    ) -> Option<Resolution> {
+        self.member_in_known_prefix(contract, name, false, &mut Vec::new())
+    }
+
+    fn member_in_known_prefix(
+        &self,
+        contract: ContractId,
+        name: Symbol,
+        include_own: bool,
+        seen: &mut Vec<ContractId>,
+    ) -> Option<Resolution> {
+        if seen.contains(&contract) {
+            return None;
+        }
+        seen.push(contract);
+
+        if include_own {
+            if let Some(member) = self.inheritable_own_member(contract, name) {
+                return Some(member);
+            }
+        }
+
+        let info = &self.contracts[contract.index()];
+        if info.linearization.complete {
+            return self.inherited_member(contract, name);
+        }
+
+        match info.bases.as_slice() {
+            // With one known base, its own surface and its guaranteed prefix
+            // necessarily precede the first opaque ancestor.
+            [BaseRef::InUnit(base)] => self.member_in_known_prefix(*base, name, true, seen),
+            // Solidity gives the rightmost direct base precedence. Its own
+            // member is therefore certain even when a lower part of the C3
+            // merge is opaque; no deeper member is certain because another
+            // direct base can interleave before that ancestor.
+            [.., BaseRef::InUnit(base)] => self.inheritable_own_member(*base, name),
+            _ => None,
+        }
+    }
+
+    fn inheritable_own_member(&self, contract: ContractId, name: Symbol) -> Option<Resolution> {
+        match self.contracts[contract.index()].members.get(&name) {
+            Some(Resolution::Function(fs)) => {
+                let visible: Vec<FunctionId> = fs
+                    .iter()
+                    .copied()
+                    .filter(|f| {
+                        self.functions[f.index()].ast.header.visibility()
+                            != Some(ast::Visibility::Private)
+                    })
+                    .collect();
+                (!visible.is_empty()).then_some(Resolution::Function(visible))
+            }
+            Some(Resolution::StateVar(v)) => (self.vars[v.index()].decl.visibility
+                != Some(ast::Visibility::Private))
+            .then_some(Resolution::StateVar(*v)),
+            Some(other) => Some(other.clone()),
+            None => None,
+        }
     }
 
     /// File-scope-only name lookup (own exports, then import bindings, then the

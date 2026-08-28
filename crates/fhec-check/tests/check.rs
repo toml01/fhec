@@ -1091,8 +1091,6 @@ fn precondition_rejects_an_unresolved_type() {
 /// plain array of encrypted elements, and a plain struct may declare an
 /// encrypted field. The root type alone therefore cannot decide (§1.3).
 ///
-/// `getWallet` names its return on purpose: an *unnamed* return types as
-/// `Unknown`, which is refused for a different reason.
 #[test]
 fn precondition_rejects_a_nested_encrypted_type() {
     let src = "pragma solidity ^0.8.25;\n\
@@ -1433,11 +1431,8 @@ fn precondition_rejects_imported_and_unresolved_calls() {
 /// `msg.sender` is permitted in a `precondition` block (§2.7) even when the
 /// contract inherits from a base the binder cannot see completely (an
 /// external or unresolved import) — the ordinary shape of a real contract.
-/// Regression: the binder resolves `msg` through
-/// `Resolution::Unresolved(UnresolvedReason::IncompleteInheritance)` in that
-/// case, and `pre_ident` used to judge only the direct resolution, refusing
-/// `msg` as "outside this compilation unit" (FHE3015) in every inheriting
-/// contract — precisely the case the feature exists for.
+/// A builtin is a positive file-scope fact, so incomplete inheritance must
+/// not replace it with `Resolution::Unresolved` and cause FHE3015.
 #[test]
 fn precondition_permits_msg_sender_with_an_unresolved_base() {
     let src = "pragma solidity ^0.8.25;\n\
@@ -1779,17 +1774,92 @@ fn a_call_to_a_shared_return_types_as_unknown_at_its_call_site() {
 
 #[test]
 fn a_plain_encrypted_return_still_types_at_its_call_site() {
-    // The regression guard for the rule above: only a `shared(...)` return is
-    // opaque. A *named* encrypted return is what the binder resolves for the
-    // ordinary case, and it must keep lowering as before. (An unnamed plain
-    // return is `Unknown` at a call site today for an unrelated reason — the
-    // binder registers no var for it — which is why the shared-return rule is
-    // a restoration, not a new restriction.)
-    let members = "function take() public returns (euint64 out) { out = b; }\n\
-                   function use() public { b = take() + b; }";
-    assert!(shared_codes(members).is_empty(), "members: {members}");
+    // Only a `shared(...)` return is opaque. Naming an ordinary return is a
+    // Solidity style choice, so both forms must preserve the declared call
+    // type and let an encrypted operator use it.
+    for members in [
+        "function take() public returns (euint64) { return b; }\n\
+         function use() public { b = take() + b; }",
+        "function take() public returns (euint64 out) { out = b; }\n\
+         function use() public { b = take() + b; }",
+    ] {
+        assert!(shared_codes(members).is_empty(), "members: {members}");
+        with_checked(&[("t.fsol", &unit(members))], |c, _| {
+            assert_eq!(c.operator_sites.len(), 1, "members: {members}");
+        });
+    }
+}
+
+#[test]
+fn shared_returns_accept_calls_with_named_or_unnamed_return_parameters() {
+    let members = "function a1(euint64 value) internal returns (euint64) { return value; }\n\
+                   function a2(euint64 value) internal returns (euint64 out) { return value; }\n\
+                   function c1(euint64 value) external returns (shared(msg.sender) euint64) { return a1(value); }\n\
+                   function c2(euint64 value) external returns (shared(msg.sender) euint64) { return a2(value); }";
     with_checked(&[("t.fsol", &unit(members))], |c, _| {
-        assert_eq!(c.operator_sites.len(), 1);
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.shared_return_sites.len(), 2);
+    });
+}
+
+#[test]
+fn incomplete_inheritance_preserves_known_call_types() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+        library L {
+            function pub(euint64 value) internal returns (euint64 out) { out = value; }
+        }
+        contract TClean {
+            function c1(euint64 value) external returns (shared(msg.sender) euint64) {
+                return L.pub(value);
+            }
+        }
+        contract TDirty is ReentrancyGuardTransient {
+            function c1(euint64 value) external returns (shared(msg.sender) euint64) {
+                return L.pub(value);
+            }
+        }
+        contract HelperBase is ReentrancyGuardTransient {
+            function helper(euint64 value) internal returns (euint64) { return value; }
+        }
+        contract Derived is HelperBase {
+            function c1(euint64 value) external returns (shared(msg.sender) euint64) {
+                return helper(value);
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.shared_return_sites.len(), 3);
+    });
+}
+
+#[test]
+fn unseen_base_call_stays_unknown_and_explains_why() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+        contract TDirty is ReentrancyGuardTransient {
+            function c1(euint64 value) external returns (shared(msg.sender) euint64) {
+                return couldBeInherited(value);
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert_eq!(c.diagnostics.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(c.diagnostics[0].code, "FHE2012");
+        assert_eq!(
+            c.diagnostics[0].message,
+            "this function shares `euint64`, but `couldBeInherited` resolves to `Unknown` \
+             because contract `TDirty` inherits `ReentrancyGuardTransient`, which is outside \
+             the compilation unit"
+        );
+        assert!(c.shared_return_sites.is_empty());
     });
 }
 

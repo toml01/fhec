@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+import { ReentrancyGuardTransient } from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+library L {
+    function pub(euint64 value) internal returns (euint64 out) {
+        out = value;
+    }
+}
+
+contract TClean {
+    function libraryCall(euint64 value) external returns (shared(msg.sender) euint64) {
+        return L.pub(value);
+    }
+}
+
+contract TDirty is ReentrancyGuardTransient {
+    // The external base cannot erase the precise file-scope library binding.
+    function libraryCall(euint64 value) external returns (shared(msg.sender) euint64) {
+        return L.pub(value);
+    }
+
+    // This name genuinely may come from the unseen base and must stay Unknown.
+    function unseenBaseCall(euint64 value) external returns (shared(msg.sender) euint64) {
+        return couldBeInherited(value);
+    }
+}
+
+contract HelperBase is ReentrancyGuardTransient {
+    function helper(euint64 value) internal returns (euint64) {
+        return value;
+    }
+}
+
+contract Derived is HelperBase {
+    // The helper is in the known prefix ahead of HelperBase's opaque ancestor.
+    function inheritedHelper(euint64 value) external returns (shared(msg.sender) euint64) {
+        return helper(value);
+    }
+}

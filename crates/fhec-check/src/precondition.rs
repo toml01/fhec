@@ -507,9 +507,9 @@ impl<'ast> FnChecker<'_, 'ast> {
         self.pre_ident_resolution(self.unit.resolve(id).cloned(), id, span);
     }
 
-    /// The body of [`Self::pre_ident`], factored out so an
-    /// [`UnresolvedReason::IncompleteInheritance`] fallback can be judged by
-    /// the same rule as a direct resolution.
+    /// The body of [`Self::pre_ident`], factored out so the file-scope miss
+    /// carried by [`UnresolvedReason::IncompleteInheritance`] can be judged
+    /// by the same rule as a direct unresolved result.
     fn pre_ident_resolution(
         &mut self,
         res: Option<Resolution>,
@@ -544,13 +544,9 @@ impl<'ast> FnChecker<'_, 'ast> {
             }
             // The names used as call/cast callees, and event/error paths.
             Some(Function(_) | Contract(_) | TypeName(_) | Builtin(_) | Event(_) | Error(_)) => {}
-            // A base contract the binder cannot see completely (an external
-            // or unresolved import) MAY declare a member shadowing this
-            // name — but treating that as possible would refuse `msg`,
-            // `block`, and `tx` in every inheriting contract, which is the
-            // ordinary case for a real contract. Judge the file-scope
-            // fallback by the same rule instead, mirroring `trust.rs`'s
-            // identical call for the profile FHE library name.
+            // Preserve the precise reason file-scope lookup missed instead
+            // of replacing it with a generic inheritance failure. Positive
+            // file-scope names have already resolved directly in the binder.
             Some(Unresolved(UnresolvedReason::IncompleteInheritance { fallback, .. })) => {
                 self.pre_ident_resolution(Some(*fallback), id, span);
             }
@@ -795,10 +791,9 @@ impl<'ast> FnChecker<'_, 'ast> {
     /// Why a callee's declared return list disqualifies it, if it does.
     ///
     /// The declared list is checked directly instead of the call's inferred
-    /// type: an *unnamed* encrypted return (`returns (euint64)`, the shape
-    /// every confidential getter uses) resolves to no variable, so the
-    /// inferred type would be `Unknown` and would slip through. A return the
-    /// checker cannot prove plaintext is refused either way (spec §1.3).
+    /// type so tuple returns and every nested declared type are classified
+    /// independently. A return the checker cannot prove plaintext is refused
+    /// either way (spec §1.3).
     fn unusable_return(&self, fids: &[fhec_bind::FunctionId]) -> Option<String> {
         let mut unknown = false;
         for &f in fids {

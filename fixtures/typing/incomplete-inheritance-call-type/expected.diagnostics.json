@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 897,
+      "end_byte": 920,
+      "start_line": 27,
+      "start_col": 16,
+      "end_line": 27,
+      "end_col": 39
+    },
+    "message": "this function shares `euint64`, but `couldBeInherited` resolves to `Unknown` because contract `TDirty` inherits `ReentrancyGuardTransient`, which is outside the compilation unit",
+    "rule": "§2.8"
+  }
+]
