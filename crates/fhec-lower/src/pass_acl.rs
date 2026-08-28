@@ -296,10 +296,10 @@ fn rule_r2<'ast>(
     let needs_insert = args.iter().any(|a| !a.deduped);
     if !needs_insert {
         // Everything is already granted; only apply expression lowering.
-        let replaced: Vec<(Span, String)> = args
+        let replaced: Vec<(Span, String, &str)> = args
             .iter()
             .filter(|a| a.rendered != a.original)
-            .map(|a| (a.span, a.rendered.clone()))
+            .map(|a| (a.span, a.rendered.clone(), "§4.1 operator-lowering"))
             .collect();
         if replaced.is_empty() {
             return Ok(());
@@ -371,11 +371,11 @@ fn rule_r2<'ast>(
         format!("address({temp})")
     };
 
-    let mut replaced: Vec<(Span, String)> = Vec::new();
+    let mut replaced: Vec<(Span, String, &str)> = Vec::new();
     for a in &args {
         if a.deduped {
             if a.rendered != a.original {
-                replaced.push((a.span, a.rendered.clone()));
+                replaced.push((a.span, a.rendered.clone(), "§4.1 operator-lowering"));
             }
             continue;
         }
@@ -391,7 +391,7 @@ fn rule_r2<'ast>(
                 temp,
                 a.rendered
             ));
-            replaced.push((a.span, temp.clone()));
+            replaced.push((a.span, temp.clone(), "§8.2 R2 arg-hoist"));
             temp
         };
         let call = ctx
@@ -428,19 +428,19 @@ fn rule_r2<'ast>(
 fn push_arg_rewrites<'ast>(
     ctx: &Ctx<'_, 'ast>,
     c: &EncryptedArgCall,
-    replaced: &[(Span, String)],
+    replaced: &[(Span, String, &str)],
     plan: &mut FilePlan,
 ) -> Result<bool> {
     if replaced.is_empty() {
         return Ok(false);
     }
-    let inner: Vec<Span> = replaced.iter().map(|(s, _)| *s).collect();
+    let inner: Vec<Span> = replaced.iter().map(|(s, _, _)| *s).collect();
     let straddling = straddling_sites(ctx, c.stmt_span, &inner);
     let subst = |e: &'ast ast::Expr<'ast>| -> Option<String> {
         replaced
             .iter()
-            .find(|(s, _)| *s == e.span)
-            .map(|(_, text)| text.clone())
+            .find(|(s, _, _)| *s == e.span)
+            .map(|(_, text, _)| text.clone())
     };
     for site in &straddling {
         let node = find_expr(ctx, c.function, *site)
@@ -452,14 +452,14 @@ fn push_arg_rewrites<'ast>(
             Provenance::new("§8.2 R2 straddling-site", ctx.range(*site)),
         ));
     }
-    for (span, text) in replaced {
+    for (span, text, rule) in replaced {
         if straddling.iter().any(|s| ctx.contains(*s, *span)) {
             continue; // already inside a rendered site
         }
         plan.push(Patch::replace(
             ctx.range(*span),
             text.clone(),
-            Provenance::new("§8.2 R2 arg-rewrite", ctx.range(*span)),
+            Provenance::new(*rule, ctx.range(*span)),
         ));
     }
     Ok(true)
