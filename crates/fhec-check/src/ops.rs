@@ -859,28 +859,65 @@ impl<'ast> FnChecker<'_, 'ast> {
                 ast::ExprKind::Tuple(rels) if rels.len() == lels.len() => Some(rels),
                 _ => None,
             });
-            for (i, lel) in lels.iter().enumerate() {
-                if let Some(lel) = lel.as_ref().unspan() {
-                    let rel = rels
-                        .and_then(|rels| rels[i].as_ref().unspan())
-                        .map(|v| &**v);
-                    self.assign_tuple_lvalues(lel, rel);
+            if let Some(rels) = rels {
+                for (i, lel) in lels.iter().enumerate() {
+                    if let Some(lel) = lel.as_ref().unspan() {
+                        let rel = rels[i].as_ref().unspan().map(|v| &**v);
+                        self.assign_tuple_lvalues(lel, rel);
+                    }
+                }
+            } else {
+                // The RHS can't be paired component-by-component (anything
+                // other than a literal tuple of matching length — e.g. a
+                // ternary `c ? (x, a) : (a, a)`, or a call). Falling back
+                // to "assigned" here (as if nothing were known) would
+                // silently re-launder an unassigned value one constructor
+                // deeper than the paired-tuple case above already closes.
+                // Instead, union-taint every component: if ANY
+                // pending-unassigned marker exists anywhere in the whole
+                // RHS span, treat every component as possibly unassigned
+                // too (spec §1.3). A call-returning-tuple RHS leaves no
+                // such marker at all (its own exit-point check is where
+                // that hazard is caught), so this is a strict superset of
+                // the previous behavior for that case, not a regression.
+                let taint = rhs.is_some_and(|r| self.rhs_is_unassigned(r));
+                for lel in lels.iter() {
+                    if let Some(lel) = lel.as_ref().unspan() {
+                        self.write_tuple_component(lel, taint);
+                    }
                 }
             }
             return;
         }
 
-        let (lty, lv) = self.analyze_lvalue(lhs);
         // Captured BEFORE the write below, same reasoning as the simple
         // (non-tuple) assignment case: a self-copy component (`(r, x) =
         // (r, y);`) would otherwise see its own fresh write.
-        let rhs_unassigned =
-            matches!(lty, Ty::Encrypted(_)) && rhs.is_some_and(|r| self.rhs_is_unassigned(r));
+        let rhs_unassigned = rhs.is_some_and(|r| self.rhs_is_unassigned(r));
+        self.write_tuple_component(lhs, rhs_unassigned);
+    }
+
+    /// Shared per-tuple-component write: records the definite-assignment
+    /// write, then applies `unassigned` (already decided by the caller —
+    /// either a precise per-component peek, or the union-taint fallback)
+    /// instead of the unconditional Assigned that `record_simple_write`
+    /// alone would leave. Recurses through a nested tuple lvalue so the
+    /// fallback path in `assign_tuple_lvalues` also reaches every leaf.
+    fn write_tuple_component(&mut self, lhs: &'ast ast::Expr<'ast>, unassigned: bool) {
+        if let ast::ExprKind::Tuple(lels) = &lhs.peel_parens().kind {
+            for lel in lels.iter() {
+                if let Some(lel) = lel.as_ref().unspan() {
+                    self.write_tuple_component(lel, unassigned);
+                }
+            }
+            return;
+        }
+        let (lty, lv) = self.analyze_lvalue(lhs);
         // The checker intentionally does not model individual tuple-result
         // types. Solidity checks component compatibility; the checker only
         // needs the target type here to record the definite assignment.
         self.record_simple_write(lhs, &lty, &lv);
-        if rhs_unassigned {
+        if matches!(lty, Ty::Encrypted(_)) && unassigned {
             if let Some(idx) = lv.slot {
                 self.slots[idx].state = AState::Unassigned;
             }

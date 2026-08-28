@@ -1281,6 +1281,114 @@ fn tuple_declaration_initializer_from_assigned_values_stays_clean() {
     });
 }
 
+// ---- external-review round 6: tuple-of-ternary and encrypted-if merge ---
+
+#[test]
+fn tuple_assignment_from_a_ternary_union_taints_every_component() {
+    // The RHS is a ternary, not a literal tuple, so components can't be
+    // paired precisely; both `r` and `other` must be treated as possibly
+    // unassigned rather than silently keeping the old "assume assigned"
+    // default (spec §1.3: when in doubt, flag).
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool c, euint64 a) internal returns (euint64 r, euint64 other) {\n\
+             euint64 x;\n\
+             (r, other) = c ? (x, a) : (a, a);\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 2, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn tuple_assignment_from_a_fully_assigned_ternary_stays_clean() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool c, euint64 a) internal returns (euint64 r, euint64 other) {\n\
+             (r, other) = c ? (a, a) : (a, a);\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn encrypted_if_merge_does_not_launder_a_copy_of_an_unassigned_value() {
+    // `eb` is an ENCRYPTED condition: both arms execute and merge via
+    // `FHE.select`. The then-arm's write is itself a copy of an unassigned
+    // local (`u`) — copy-propagation correctly leaves that arm's `r`
+    // Unassigned, and the merge must not paper over that by forcing
+    // `Assigned` just because the merge statement always runs.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(ebool eb, euint64 a) internal returns (euint64 r) {\n\
+             euint64 u;\n\
+             r = a;\n\
+             if (eb) { r = u; } else { r = a; }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn encrypted_if_merge_with_both_arms_genuinely_assigned_stays_clean() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(ebool eb, euint64 a, euint64 b) internal returns (euint64 r) {\n\
+             r = a;\n\
+             if (eb) { r = b; } else { r = a; }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn encrypted_if_one_arm_write_still_reports_exactly_one_diagnostic() {
+    // Regression guard for fixtures/typing/fhe2007-encrypted-if-one-arm:
+    // only one arm writes (no `else`), so the merge's own "needs a
+    // pre-value" check owns this hazard — the post-merge state must still
+    // be forced Assigned in this shape (not the new two-way join, which is
+    // only for slots BOTH arms explicitly write) to avoid a redundant
+    // second diagnostic through the function's exit check.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           function oneArm(ebool success, euint64 difference) external returns (euint64 res) {\n\
+             if (success) {\n\
+               res = difference;\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
 #[test]
 fn encrypted_branch_write_needs_pre_value() {
     // The merge reads the pre-value, which is possibly uninitialized.

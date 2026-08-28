@@ -1027,8 +1027,15 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 // independently produce the location without first reading its
                 // unassigned incoming value. Keep one deterministic write
                 // span per slot for diagnostics and outer-branch propagation.
-                let mut writes = then_writes;
-                for (slot, span) in else_writes {
+                // Iterated (not moved/consumed): `then_writes`/`else_writes`
+                // are also used below to tell "both arms wrote this slot"
+                // apart from "only one did" when computing the merge's
+                // final state.
+                let mut writes: FxHashMap<usize, Span> = FxHashMap::default();
+                for (&slot, &span) in then_writes.iter() {
+                    writes.entry(slot).or_insert(span);
+                }
+                for (&slot, &span) in else_writes.iter() {
                     writes.entry(slot).or_insert(span);
                 }
                 let mut writes: Vec<(usize, Span)> = writes.into_iter().collect();
@@ -1057,14 +1064,63 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     }
                 }
 
-                // Post-merge: written slots are assigned on every path (the
-                // merge `L = FHE.select(...)` runs unconditionally); everything
-                // else joins the two branch environments.
+                // Post-merge: everything not written by either branch joins
+                // the two branch environments (which, for an untouched slot,
+                // both equal the pre-if state anyway, so this is exactly
+                // that pre-if state).
                 self.restore(&snap);
                 self.join_into(&then_states);
                 self.join_into(&else_states);
                 for (slot, wspan) in writes {
-                    self.slots[slot].state = AState::Assigned;
+                    // A written slot's PRE-if value is never part of the
+                    // merged result — the lowered `L = FHE.select(...)`
+                    // always overwrites it, on both arms — unlike the
+                    // three-way join above (restore-to-snap, then join in
+                    // both arms), which would otherwise drag the pre-if
+                    // state back in for every slot, written or not. So a
+                    // written slot's final state is recomputed here as the
+                    // join of *only* what each arm's own write actually
+                    // produced: `Assigned` only if every arm's contribution
+                    // was itself definitely-assigned. A missing `else` arm
+                    // contributes the pre-if value by construction
+                    // (`else_states` was snapshotted right after restoring
+                    // to `snap`, before any `els` walk), so this still
+                    // correctly falls back to the pre-if value exactly when
+                    // only one arm writes.
+                    //
+                    // This is NOT the same thing as forcing `Assigned`
+                    // unconditionally (the previous, incorrect assumption):
+                    // round 5's copy-propagation can leave an arm's own
+                    // write as `Unassigned` when that arm merely copied an
+                    // unassigned value (`then { r = u; }` where `u` is
+                    // itself unassigned) — `FHE.select` still runs and
+                    // still produces a ciphertext, but mixing in a default
+                    // handle from the unassigned side makes that ciphertext
+                    // meaningless depending on which arm actually ran at
+                    // runtime. Whatever later reads/returns the merged slot
+                    // is where the ordinary FHE2007 machinery now correctly
+                    // fires (spec §6) — no separate diagnostic is needed
+                    // here, and the merge's own "needs a pre-value" check
+                    // above (which this loop does not touch) still covers
+                    // its own, different hazard.
+                    //
+                    // When only ONE arm writes this slot, the other arm's
+                    // contribution really is the pre-if value (already
+                    // reflected in the three-way join above, via
+                    // `then_states`/`else_states` both equalling `snap` on
+                    // the side that never wrote it) — that shape is the
+                    // merge's own "needs a pre-value" hazard above, which
+                    // already owns it; forcing `Assigned` here avoids
+                    // re-flagging the same root cause a second time through
+                    // the function's exit check, preserving existing,
+                    // deliberate behavior for that shape (fixtures/typing/
+                    // fhe2007-encrypted-if-one-arm expects exactly one
+                    // diagnostic, not two, for exactly this reason).
+                    if then_writes.contains_key(&slot) && else_writes.contains_key(&slot) {
+                        self.slots[slot].state = AState::join(then_states[slot], else_states[slot]);
+                    } else {
+                        self.slots[slot].state = AState::Assigned;
+                    }
                     // Nested encrypted ifs: the merge write is itself a write
                     // of the enclosing branch.
                     if self.branch_depth > 0 && self.slots[slot].decl_depth < self.branch_depth {
