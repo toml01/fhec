@@ -529,7 +529,9 @@ FHE.allowThis(<lvalue>);
 FHE.allowSender(<lvalue>);
 ```
 
-immediately after the write statement. When the written slot is keyed by an address-typed expression that is not `msg.sender`, the transpiler MUST additionally emit warning FHE4001 (the sender gains read access to a ciphertext filed under another address — likely confidentiality bug or intended escrow; the author must decide).
+immediately after the write statement.
+
+`FHE.allowThis` is unconditional: it grants the contract access to its own slot and cannot leak. `FHE.allowSender` is a claim about who owns the value. When the written slot is a mapping slot keyed by an address-typed expression that is not `msg.sender`, that claim is false in every operator-style flow — the value belongs to the key, not to the caller — so the transpiler MUST NOT insert `FHE.allowSender` there, and MUST emit warning FHE4001 naming the withheld grant. An author who intends an escrow writes the grant explicitly. Warning about a leak and then writing it is not an option a confidentiality tool has (spec §1.3).
 
 ### §8.2 R2 — encrypted arguments to external calls
 

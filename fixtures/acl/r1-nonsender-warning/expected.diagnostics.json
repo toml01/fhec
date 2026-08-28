@@ -11,7 +11,7 @@
       "end_line": 11,
       "end_col": 22
     },
-    "message": "encrypted write to `balances[who]` is keyed by an address that is not `msg.sender`; the transaction sender gains read access to a ciphertext filed under another address",
+    "message": "encrypted write to `balances[who]` is keyed by an address that is not `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext filed under another address. Add an explicit grant if that is what you intend",
     "rule": "§8.1"
   }
 ]

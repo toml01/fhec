@@ -328,7 +328,10 @@ fn method_syntax_counts_for_dedupe() {
 }
 
 #[test]
-fn non_sender_key_warns() {
+fn non_sender_key_warns_and_withholds_the_sender_grant() {
+    // Spec §8.1: `allowThis` is unconditional, `allowSender` is a claim about
+    // who owns the value and is never guessed for a slot filed under another
+    // address.
     let src = contract("        balances[addr] = a;");
     let out = transpile(&[("t.fsol", &src)]);
     assert!(out
@@ -339,8 +342,28 @@ fn non_sender_key_warns() {
         out.files[0].1,
         contract(
             "        balances[addr] = a;\n\
-             \x20       FHE.allowThis(balances[addr]);\n\
-             \x20       FHE.allowSender(balances[addr]);"
+             \x20       FHE.allowThis(balances[addr]);"
+        )
+    );
+}
+
+#[test]
+fn msg_sender_key_still_receives_both_grants() {
+    let src = contract("        balances[msg.sender] = a;");
+    let out = transpile(&[("t.fsol", &src)]);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(
+        out.files[0].1,
+        contract(
+            "        balances[msg.sender] = a;\n\
+             \x20       FHE.allowThis(balances[msg.sender]);\n\
+             \x20       FHE.allowSender(balances[msg.sender]);"
         )
     );
 }

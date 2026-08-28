@@ -116,31 +116,45 @@ fn rule_r1(
     }
     let lvalue = strip_parens(&ctx.snippet(w.lvalue_span)).to_string();
 
-    if let SlotKind::Mapping {
-        key_is_msg_sender,
-        key_is_address,
-        ..
-    } = &w.slot
-    {
-        if *key_is_address && !*key_is_msg_sender {
-            diags.borrow_mut().push(fhec_check::Diagnostic {
-                code: "FHE4001",
-                severity: Severity::Warning,
-                span: w.lvalue_span,
-                message: format!(
-                    "encrypted write to `{lvalue}` is keyed by an address that is not \
-                     `msg.sender`; the transaction sender gains read access to a ciphertext \
-                     filed under another address"
-                ),
-                fixits: Vec::new(),
-                rule: Some("§8.1"),
-            });
+    // Whether the slot is filed under an address that is not the caller. The
+    // caller must not be handed read access to it (spec §8.1).
+    let filed_under_another = matches!(
+        &w.slot,
+        SlotKind::Mapping {
+            key_is_msg_sender: false,
+            key_is_address: true,
+            ..
         }
+    );
+    if filed_under_another {
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4001",
+            severity: Severity::Warning,
+            span: w.lvalue_span,
+            message: format!(
+                "encrypted write to `{lvalue}` is keyed by an address that is not \
+                 `msg.sender`; the sender grant is withheld here, so the transaction \
+                 sender does not gain read access to a ciphertext filed under another \
+                 address. Add an explicit grant if that is what you intend"
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.1"),
+        });
     }
+
+    // `allowThis` is always right: it grants the contract access to its own
+    // slot. `allowSender` is a claim about who owns the value, and on a slot
+    // filed under another address that claim is a confidentiality leak — so
+    // it is never guessed there (spec §1.3, §8.1).
+    let ops: &[FheOp] = if filed_under_another {
+        &[FheOp::AllowThis]
+    } else {
+        &[FheOp::AllowThis, FheOp::AllowSender]
+    };
 
     let window = forward_window(ctx, w.function, w.stmt_span, &lvalue);
     let mut missing: Vec<FheOp> = Vec::new();
-    for op in [FheOp::AllowThis, FheOp::AllowSender] {
+    for &op in ops {
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
         if !window
             .iter()

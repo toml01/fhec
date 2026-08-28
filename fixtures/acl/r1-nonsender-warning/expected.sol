@@ -10,6 +10,5 @@ contract NonSenderKey {
     function f(address who) public {
         balances[who] = a;
         FHE.allowThis(balances[who]);
-        FHE.allowSender(balances[who]);
     }
 }
