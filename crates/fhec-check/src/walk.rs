@@ -782,17 +782,52 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 // it; a `break`/`return` inside the body skips it. A
                 // `continue` also runs `next` before `cond` is re-checked in
                 // real Solidity semantics — this typing (and its assignment
-                // effects) is not separately re-applied to each `continue`
-                // candidate captured below, only to the plain-fallthrough
-                // candidate: a narrow, safe-direction (over-strict, not a
-                // miss) precision gap, since a `continue` candidate can only
-                // end up *more* conservative than reality this way.
-                if !body_terminated {
+                // effects) is not separately re-applied to each individual
+                // `continue` candidate captured below, only ever computed
+                // once, here: a narrow, safe-direction (over-strict, not a
+                // miss) precision gap for THOSE candidates' own values,
+                // since a `continue` candidate can only end up *more*
+                // conservative than reality this way (spec §1.3).
+                //
+                // But `next` must still be visited at least once whenever a
+                // `continue` can reach it — i.e. whenever this loop's
+                // `continue` list (captured while walking `body` above) is
+                // non-empty — even when `body_terminated` (every body path
+                // takes `continue`/`break`/`return`, so the plain-
+                // fallthrough branch below never runs). Otherwise `next`'s
+                // own diagnostics (an uninitialized encrypted read inside
+                // it, or an encrypted loop-control expression) go
+                // completely unchecked on every path through this loop, a
+                // real miss rather than merely the over-strict gap above
+                // (issue #90, gap 2). Peeked from the still-open frame
+                // before it's popped below; typed exactly once, in a single
+                // `if`, so `next`'s own diagnostics never fire twice even
+                // when both conditions hold at once.
+                let next_reachable = !body_terminated
+                    || self
+                        .loop_continues
+                        .last()
+                        .is_some_and(|frame| !frame.is_empty());
+                if next_reachable {
                     if let Some(next) = next {
                         let ty = self.type_expr(next);
                         self.reject_encrypted_loop(&ty, next.span);
                     }
                 }
+                // `body_states` is snapshotted AFTER the `next_reachable`
+                // typing above, so when `!body_terminated` it correctly
+                // includes whatever `next` just assigned — unchanged from
+                // before. When `body_terminated` is true, `body_states` is
+                // still excluded from `candidates` below exactly as before:
+                // the newly-added `next_reachable` typing above runs purely
+                // for `next`'s own diagnostics and `pending`-marker side
+                // effects in that case, not to manufacture a fallthrough
+                // candidate that cannot really occur (every body path
+                // terminated, so control never reaches a plain "ran the
+                // body, now falls through to `next`" point at all — only
+                // each individual `continue`/`break` candidate below does,
+                // and those keep their own pre-`next` snapshot per the
+                // precision-gap note above).
                 let body_states = self.snapshot();
                 let breaks = self.loop_breaks.pop().unwrap_or_default();
                 let continues = self.loop_continues.pop().unwrap_or_default();

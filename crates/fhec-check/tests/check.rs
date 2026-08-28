@@ -706,6 +706,94 @@ fn for_loop_zero_trip_does_not_count_the_increment_as_having_run() {
     });
 }
 
+// ---- issue #90 gap 2: `for`'s `next` on an all-`continue` body ------------
+
+#[test]
+fn for_next_is_typed_even_when_every_body_path_continues() {
+    // Every path through the body takes `continue`, so `body_terminated` is
+    // true and the plain-fallthrough branch that normally types `next`
+    // never runs. Before issue #90's fix, `next` was then never typed at
+    // all on this shape — not even for its own diagnostics — so `c`'s
+    // uninitialized read inside it went completely unchecked. `next`'s own
+    // ENCRYPTED_LOOP check (its assignment expression's type is the
+    // encrypted target's type) was equally skipped. Fixed: `next` is now
+    // typed once whenever this loop's `continue` list is non-empty, so both
+    // fire — `c`'s read (FHE2007) and `next`'s own ENCRYPTED_LOOP (FHE3021)
+    // — in addition to the pre-existing "named return `r` not assigned on
+    // every path" FHE2007 (still flagged either way, since a `for` loop's
+    // mandatory zero-trip candidate alone already forces that).
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(euint64 a) internal returns (euint64 r) {\n\
+             euint64 c;\n\
+             for (uint256 i = 0; i < 3; r = a + c) {\n\
+               continue;\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let mut codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        codes.sort();
+        assert_eq!(
+            codes,
+            vec!["FHE2007", "FHE2007", "FHE3021"],
+            "{:?}",
+            c.diagnostics
+        );
+    });
+}
+
+#[test]
+fn for_next_typing_does_not_double_fire_when_body_also_falls_through() {
+    // Positive/regression control for the fix above: when the body has BOTH
+    // a `continue` path and a genuine fallthrough path (an `if` with no
+    // `else`), `next` was already typed via the pre-existing
+    // `!body_terminated` branch — the new "any `continue` reaches `next`"
+    // condition is also true here, so this exercises the overlap. `next`'s
+    // own diagnostics (ENCRYPTED_LOOP here) must still fire exactly once,
+    // not twice, confirmed by exact diagnostic count.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a) internal returns (euint64 r) {\n\
+             for (uint256 i = 0; i < 3; r = a) {\n\
+               if (cond) { continue; }\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let mut codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        codes.sort();
+        assert_eq!(codes, vec!["FHE2007", "FHE3021"], "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn for_loop_mixed_continue_and_fallthrough_assignment_stays_clean() {
+    // Positive control: `r` is assigned before the loop, the `continue`
+    // path never touches it (so it stays whatever it already was), and the
+    // fallthrough path re-assigns it from a definitely-assigned parameter.
+    // Every reachable exit — the mandatory zero-trip candidate, every
+    // `continue` candidate, and the fallthrough — sees `r` assigned, so
+    // typing `next` (a plain, non-encrypted counter increment here) on the
+    // overlap of both conditions must not introduce any new diagnostic.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a, euint64 b) internal returns (euint64 r) {\n\
+             r = b;\n\
+             for (uint256 i = 0; i < 3; i = i + 1) {\n\
+               if (cond) { continue; }\n\
+               r = a;\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
 #[test]
 fn modifier_with_early_return_before_placeholder_still_flags_the_guarded_function() {
     // The function body itself assigns `res` on every path, but the
