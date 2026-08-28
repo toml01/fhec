@@ -25,17 +25,17 @@ import {
  * the ERC-7201 namespaced struct (the upgradeable, namespaced-storage variant
  * stays with the plain-Solidity reference).
  *
- * What the dialect removes relative to the reference:
- * - `externalEuint64` + `bytes inputProof` parameter pairs and their
- *   `FHE.asEuint64(hash, proof)` verification calls become `in euint64`
- *   parameters (`confidentialTransfer`, `confidentialTransferFrom`);
+ * Dialect syntax used below:
+ * - ordinary external inputs use `in euint64`; positioned-proof inputs use
+ *   `in(inputProof) euint64`;
+ * - shared inputs use `in shared euint64`, and directed shared outputs use
+ *   `shared(msg.sender) euint64`;
+ * - a `precondition` block runs before input proof verification, so the
+ *   operator check keeps its upstream position in the From overloads;
  * - the {FHESafeMath} library disappears: its checked arithmetic is written
  *   inline in `_update` with encrypted operators (`+`, `-`, `>=`) and
  *   encrypted ternaries (`cond ? a : b`), which lower to `FHE.add`/`FHE.sub`/
  *   `FHE.gte`/`FHE.select`;
- * - the AndCall variants keep the explicit external+proof form on purpose:
- *   ERC-7984 fixes their parameter order as (…, encryptedAmount, inputProof,
- *   data), while the sugar always appends the proof last.
  *
  * ACL policy stays fully explicit (this project builds with `acl.mode =
  * "suggest"`): FHERC20 grants balance handles to the affected account, not to
@@ -176,84 +176,80 @@ contract FHERC20 is IFHERC20, ERC165, ReentrancyGuardTransient {
     /// (address to, externalEuint64 encryptedAmount, bytes inputProof).
     function confidentialTransfer(address to, externalEuint64 encryptedAmount_input, bytes memory inputProof) public nonReentrant returns (sharedEuint64) {
         euint64 encryptedAmount = FHE.asEuint64(encryptedAmount_input, inputProof);
-        euint64 transferred = _transfer(msg.sender, to, encryptedAmount);
-        return FHE.shareEuint64(transferred, msg.sender);
+        return FHE.shareEuint64(_transfer(msg.sender, to, encryptedAmount), msg.sender);
     }
 
-    function confidentialTransfer(address to, sharedEuint64 sharedAmount) public nonReentrant returns (sharedEuint64) {
-        euint64 amount = FHE.receiveEuint64Param(sharedAmount);
-        euint64 transferred = _transfer(msg.sender, to, amount);
-        return FHE.shareEuint64(transferred, msg.sender);
+    function confidentialTransfer(address to, sharedEuint64 amount_shared) external nonReentrant returns (sharedEuint64) {
+        euint64 amount = FHE.receiveEuint64Param(amount_shared);
+        return FHE.shareEuint64(_transfer(msg.sender, to, amount), msg.sender);
     }
 
-    /// @dev `in euint64` sugar; lowered signature matches ERC-7984.
+    /// @dev A precondition preserves operator-check-before-proof-verification.
     function confidentialTransferFrom(
         address from,
         address to,
         externalEuint64 encryptedAmount_input
     , bytes memory inputProof) public nonReentrant returns (sharedEuint64) {
+        {
+            if (!isOperator(from, msg.sender)) revert FHERC20UnauthorizedSpender(from, msg.sender);
+        }
         euint64 encryptedAmount = FHE.asEuint64(encryptedAmount_input, inputProof);
-        if (!isOperator(from, msg.sender)) revert FHERC20UnauthorizedSpender(from, msg.sender);
-        euint64 transferred = _transfer(from, to, encryptedAmount);
-        return FHE.shareEuint64(transferred, msg.sender);
+        return FHE.shareEuint64(_transfer(from, to, encryptedAmount), msg.sender);
     }
 
     function confidentialTransferFrom(
         address from,
         address to,
-        sharedEuint64 sharedAmount
-    ) public nonReentrant returns (sharedEuint64) {
-        euint64 amount = FHE.receiveEuint64Param(sharedAmount);
+        sharedEuint64 amount_shared
+    ) external nonReentrant returns (sharedEuint64) {
+        euint64 amount = FHE.receiveEuint64Param(amount_shared);
         if (!isOperator(from, msg.sender)) revert FHERC20UnauthorizedSpender(from, msg.sender);
-        euint64 transferred = _transfer(from, to, amount);
-        return FHE.shareEuint64(transferred, msg.sender);
-    }
-
-    /// @dev No sugar here: ERC-7984 fixes the order (…, inputProof, data),
-    /// while the `in` sugar always appends the proof as the LAST parameter.
-    function confidentialTransferAndCall(
-        address to,
-        externalEuint64 encryptedAmount,
-        bytes calldata inputProof,
-        bytes calldata data
-    ) public nonReentrant returns (sharedEuint64) {
-        euint64 transferred = _transferAndCall(msg.sender, to, FHE.asEuint64(encryptedAmount, inputProof), data);
-        return FHE.shareEuint64(transferred, msg.sender);
+        return FHE.shareEuint64(_transfer(from, to, amount), msg.sender);
     }
 
     function confidentialTransferAndCall(
         address to,
-        sharedEuint64 sharedAmount,
-        bytes calldata data
-    ) public nonReentrant returns (sharedEuint64) {
-        euint64 amount = FHE.receiveEuint64Param(sharedAmount);
-        euint64 transferred = _transferAndCall(msg.sender, to, amount, data);
-        return FHE.shareEuint64(transferred, msg.sender);
-    }
-
-    /// @dev No sugar: see {confidentialTransferAndCall}.
-    function confidentialTransferFromAndCall(
-        address from,
-        address to,
-        externalEuint64 encryptedAmount,
+        externalEuint64 encryptedAmount_input,
         bytes calldata inputProof,
         bytes calldata data
     ) public nonReentrant returns (sharedEuint64) {
-        if (!isOperator(from, msg.sender)) revert FHERC20UnauthorizedSpender(from, msg.sender);
-        euint64 transferred = _transferAndCall(from, to, FHE.asEuint64(encryptedAmount, inputProof), data);
-        return FHE.shareEuint64(transferred, msg.sender);
+        euint64 encryptedAmount = FHE.asEuint64(encryptedAmount_input, inputProof);
+        return FHE.shareEuint64(_transferAndCall(msg.sender, to, encryptedAmount, data), msg.sender);
+    }
+
+    function confidentialTransferAndCall(
+        address to,
+        sharedEuint64 amount_shared,
+        bytes calldata data
+    ) external nonReentrant returns (sharedEuint64) {
+        euint64 amount = FHE.receiveEuint64Param(amount_shared);
+        return FHE.shareEuint64(_transferAndCall(msg.sender, to, amount, data), msg.sender);
+    }
+
+    /// @dev A precondition preserves operator-check-before-proof-verification.
+    function confidentialTransferFromAndCall(
+        address from,
+        address to,
+        externalEuint64 encryptedAmount_input,
+        bytes calldata inputProof,
+        bytes calldata data
+    ) public nonReentrant returns (sharedEuint64) {
+        {
+            if (!isOperator(from, msg.sender)) revert FHERC20UnauthorizedSpender(from, msg.sender);
+        }
+        euint64 encryptedAmount = FHE.asEuint64(encryptedAmount_input, inputProof);
+        return FHE.shareEuint64(_transferAndCall(from, to, encryptedAmount, data), msg.sender);
     }
 
     function confidentialTransferFromAndCall(
         address from,
         address to,
-        sharedEuint64 sharedAmount,
+        sharedEuint64 amount_shared,
         bytes calldata data
-    ) public nonReentrant returns (sharedEuint64) {
-        euint64 amount = FHE.receiveEuint64Param(sharedAmount);
+    ) external nonReentrant returns (sharedEuint64) {
+        euint64 amount = FHE.receiveEuint64Param(amount_shared);
         if (!isOperator(from, msg.sender)) revert FHERC20UnauthorizedSpender(from, msg.sender);
-        euint64 transferred = _transferAndCall(from, to, amount, data);
-        return FHE.shareEuint64(transferred, msg.sender);
+        return FHE.shareEuint64(_transferAndCall(from, to, amount, data), msg.sender);
     }
 
     // =========================================================================

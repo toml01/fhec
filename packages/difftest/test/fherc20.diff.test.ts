@@ -6,7 +6,6 @@ import { expect } from 'chai';
 import { deployMockEnvironment, type MockEnvironment } from '../src/mocks';
 import {
   assertDifferentiallyEquivalent,
-  runDifferential,
   type DifferentialResult,
   type RunResult,
   type Scenario,
@@ -20,8 +19,8 @@ import {
   OPERATOR_UNTIL,
   makeFherc20ArithmeticScenario,
   makeFherc20CallbackScenario,
+  makeFherc20CompoundInvalidOrderingScenario,
   makeFherc20CoreScenario,
-  makeFherc20ExpectedDivergenceScenario,
   makeFherc20SharedScenario,
   type Fherc20Accounts,
 } from '../scenarios/fherc20';
@@ -94,9 +93,10 @@ async function deployTokenPair(): Promise<{ reference: Contract; generated: Cont
 
 /**
  * The flagship pair is the current fhec output versus the unmodified upstream
- * FHERC20. Strict scenarios compare plaintexts, ACL, indicators, and revert
- * identity without comparing ciphertext handles. One baseline ordering gap is
- * characterized separately and remains a real compareRuns divergence.
+ * FHERC20. Every scenario is strict: it compares plaintexts, ACL, indicators,
+ * and revert identity without comparing ciphertext handles. No divergence
+ * remains — the `precondition` block closed the last ordering gap, so all eight
+ * transfer overloads now agree on error identity as well as on effect.
  */
 describe('differential :: transpiled FHERC20 (dialect) vs upstream fhenix-confidential-contracts', () => {
   let env: MockEnvironment;
@@ -343,34 +343,21 @@ describe('differential :: transpiled FHERC20 (dialect) vs upstream fhenix-confid
     expect(final.values.driverIsOperator).to.equal('true');
   });
 
-  it('characterizes exactly the one basic From compound-invalid ordering divergence', async function () {
+  it('matches basic From compound-invalid ordering, operator error first on both sides', async function () {
     this.timeout(240_000);
     const { reference, generated } = await deployTokenPair();
-    const scenario = makeFherc20ExpectedDivergenceScenario(accounts);
-    const result = await runDifferential(env, reference, generated, scenario, {
+    const scenario = makeFherc20CompoundInvalidOrderingScenario(accounts);
+    const result = await assertDifferentiallyEquivalent(env, reference, generated, scenario, {
       labelA: LABELS.a,
       labelB: LABELS.b,
     });
 
-    expect(result.equivalent).to.equal(false);
-    expect(result.a.steps).to.have.length(1);
-    expect(result.b.steps).to.have.length(1);
-    expect(result.a.steps[0].expectationMet).to.equal(true);
-    expect(result.b.steps[0].expectationMet).to.equal(true);
+    assertStrictResult(result, scenario, { plaintexts: [], acl: [], values: [] });
+
+    // The `precondition` block keeps the operator check ahead of proof
+    // verification, so both sides report the operator error, not `InvalidSigner`.
     expect(result.a.steps[0].revertKey).to.equal('FHERC20UnauthorizedSpender');
-    expect(result.b.steps[0].revertKey).to.equal('InvalidSigner');
-    expect(result.divergences).to.have.length(1);
-    expect(result.divergences[0]).to.include({
-      kind: 'revert',
-      where: 'step 0 (unauthorized basic From with proof bound to wrong consumer)',
-      message: 'both reverted, but with different errors',
-    });
-    expect(result.divergences[0].a).to.include('FHERC20UnauthorizedSpender');
-    expect(result.divergences[0].b).to.include('InvalidSigner');
-    expect(result.a.snapshots.map((snapshot) => snapshot.after)).to.deep.equal([
-      'initial',
-      'step 0 (unauthorized basic From with proof bound to wrong consumer)',
-    ]);
+    expect(result.b.steps[0].revertKey).to.equal('FHERC20UnauthorizedSpender');
     expect(result.a.snapshots[0].plaintexts).to.deep.equal({});
     expect(result.a.snapshots[0].acl).to.deep.equal({});
     expect(result.a.snapshots[0].values).to.deep.equal({});

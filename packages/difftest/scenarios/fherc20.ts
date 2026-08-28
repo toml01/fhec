@@ -386,8 +386,14 @@ export function makeFherc20SharedScenario(wiring: SharedWiring): Scenario {
   };
 }
 
-/** The one known PR #26 baseline divergence: basic external From is proof-first only on generated output. */
-export function makeFherc20ExpectedDivergenceScenario(wiring: Fherc20Accounts): Scenario {
+/**
+ * Basic external From with BOTH an unauthorized operator and a proof bound to
+ * the wrong consumer. The order of the two failures is observable, so this
+ * pinned the one old baseline divergence: generated output used to verify the
+ * proof first and report `InvalidSigner`. A `precondition` block now keeps the
+ * operator check first, and both sides report `FHERC20UnauthorizedSpender`.
+ */
+export function makeFherc20CompoundInvalidOrderingScenario(wiring: Fherc20Accounts): Scenario {
   return {
     name: 'FHERC20 basic From unauthorized plus wrong-consumer proof ordering',
     steps: [
