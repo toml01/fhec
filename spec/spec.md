@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.6.4 |
+| **Version** | 0.6.5 |
 | **Status** | Draft |
 | **Date** | 2026-08-28 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -33,7 +33,7 @@ When the transpiler cannot determine with certainty that a rewrite is semantics-
 
 *Rationale (informative):* the CoFHE `FHE.select` operation substitutes default values (`asEbool(false)`, `asEuintN(0)`) for uninitialized ciphertext handles instead of reverting. A miscompilation therefore tends to produce *wrong ciphertexts*, not reverts; the error is silent and may be irreversible. Refusal is always safer than guessing.
 
-Every rewrite the transpiler emits writes the literal identifier `FHE` (spec §1.5) expecting it to resolve to the profile library at the point the generated call lands. A state variable, local, parameter, inherited member, or member of a base outside the compilation unit named `FHE` can shadow it there and silently retarget the call and any ACL grant it carries. The transpiler MUST verify, for every function it writes a generated call into, that `FHE` resolves to the profile library at that function's scope, and refuse with FHE1022 otherwise — the same collision-refuses-rather-than-renames precedent as FHE1011 and FHE1016.
+Every rewrite the transpiler emits writes the literal identifier `FHE` (spec §1.5) — and, for the batched `in`-sugar materializer (§2.3), `Impl`, `Utils`, and `UnsignedEncryptedInput` — expecting each to resolve to the profile module at the point the generated call lands. A state variable, local, parameter, inherited member, or member of a base outside the compilation unit can shadow one of these names there and silently retarget the call and any ACL grant it carries; an unconfirmed plain import (of a file that is not the profile) creates the same risk, since its contents are invisible to the binder. The transpiler MUST verify, for every function it writes a generated call into, that each identifier the call uses resolves to the trusted profile module at that function's scope, and refuse with FHE1022 otherwise — the same collision-refuses-rather-than-renames precedent as FHE1011 and FHE1016. The one narrow exception (spec §1.5, the incomplete-inheritance trust rule): when an unseen base leaves the resolution ambiguous but the file also positively imports the profile module directly, the explicit import is trusted rather than refusing every inheriting contract on the unseen base's mere possibility of shadowing.
 
 ### §1.4 The no-op guarantee
 
@@ -752,3 +752,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.6.2 (2026-08-28)** — FHE1003 carries a `safe: true` fix-it when swapping the dialect extension of a relative import names a discovered unit file.
 - **0.6.3 (2026-08-28)** — §5.2 permits rendering an `if`/`else` whose arms are each a single assignment of the same identifier as one `FHE.select` with no condition or branch temporaries, when the operands are free of side effects.
 - **0.6.4 (2026-08-28)** — §1.3 adds the emit-time trust rule: the transpiler MUST verify `FHE` resolves to the profile library at the scope of every function it writes a generated call into, and refuse with FHE1022 (new code) when a state variable, local, parameter, inherited member, or unseen-base member shadows it. Closes the gap where the checker's trust rule (§1.5) validated author-written reads of `FHE` but the lowerer never checked what it was about to write.
+- **0.6.5 (2026-08-28)** — §1.3's emit-time trust rule is corrected and widened. Corrected: an unseen base or an unconfirmed plain import (`Unresolved(IncompleteInheritance)`/`Unresolved(MaybeExternal)`) now refuses with FHE1022 like any other shadow, unless positively trusted through the explicit-profile-import exception; only a provable total absence of any binding (`Unresolved(NotFound)`) is exempt, since that fails loudly at solc instead of silently. Widened: the same check now also covers `Impl`, `Utils`, and `UnsignedEncryptedInput`, the identifiers the batched `in`-sugar materializer (§2.3) writes when a function has more than one `in` parameter.

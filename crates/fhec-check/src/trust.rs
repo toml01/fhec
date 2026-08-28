@@ -78,9 +78,15 @@ impl Trust {
             .is_some_and(|p| spec.starts_with(p.as_str()))
     }
 
-    /// Whether a resolution for a name written `text` reaches the profile
-    /// library through the trust rule.
-    fn resolution_trusted(&self, res: &Resolution) -> bool {
+    /// Whether a resolution reaches a trusted profile-module import,
+    /// independent of what name produced it (external-import-specifier
+    /// match, exposure through a plain import of the profile, or an
+    /// incomplete-inheritance fallback that itself resolves this way).
+    /// `is_fhe_library`'s rule 4 (in-unit library declaration) is layered on
+    /// top of this for `FHE` specifically; this alone is what `emit_trust`
+    /// reuses for the other generated-only names (`Impl`, `Utils`,
+    /// `UnsignedEncryptedInput`) that have no rule-4 equivalent.
+    pub(crate) fn resolution_trusted(&self, res: &Resolution) -> bool {
         match res {
             Resolution::External { specifier, .. } => self.specifier_trusted(specifier),
             Resolution::Unresolved(UnresolvedReason::MaybeExternal { specifiers }) => {
