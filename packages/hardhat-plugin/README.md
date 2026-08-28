@@ -95,8 +95,9 @@ await ethers.getContractFactory(
 
 This works for `hre.artifacts.readArtifact` / `readArtifactSync` /
 `artifactExists` / `getBuildInfo` / `getBuildInfoSync` /
-`formArtifactPathFromFullyQualifiedName`. The lookup uses
-`generated/.fhec/manifest.json`, so it only works once you have run
+`formArtifactPathFromFullyQualifiedName`, and for `solidity.overrides` keys
+(rewritten in place at config load, with a console warning). The lookup
+uses `generated/.fhec/manifest.json`, so it only works once you have run
 `hardhat compile` at least once (the manifest is written there); before
 that, or for a path the manifest does not know about, the name you gave is
 passed straight through to Hardhat unchanged — you get Hardhat's normal

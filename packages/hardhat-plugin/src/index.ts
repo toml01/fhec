@@ -12,10 +12,7 @@ import type { HardhatConfig, HardhatUserConfig } from "hardhat/types";
 
 import { wrapArtifacts } from "./artifacts";
 import { runFhecBuild } from "./build";
-import {
-  formatOverrideWarning,
-  rewriteSolidityOverrides,
-} from "./overrides";
+import { formatOverrideWarning, rewriteSolidityOverrides } from "./overrides";
 import { loadManifest, remapSolcOutput, type RemapContext } from "./remap";
 import { loadFhecToml, resolveTomlPath } from "./toml";
 import {
@@ -33,7 +30,7 @@ export { parseFhecToml, findConfig, resolveTomlPath } from "./toml";
 export { remapRange, matchManifestFile, displaySourcePath, remapSolcOutput } from "./remap";
 export { versionSatisfies, parseSemver } from "./version";
 export {
-  mapSrcKeyToOut,
+  mapOverrideKey,
   rewriteSolidityOverrides,
   formatOverrideWarning,
 } from "./overrides";
@@ -71,16 +68,19 @@ extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) =>
       resolved.outDir = parsed.out;
       resolved.profileVersion = parsed.version;
       config.paths.sources = path.resolve(config.paths.root, parsed.out);
-      const overrides = config.solidity?.overrides;
-      if (overrides !== undefined) {
-        const notices = rewriteSolidityOverrides(
-          overrides,
-          parsed.src,
-          parsed.out,
-        );
-        if (notices.length > 0) {
-          console.warn(formatOverrideWarning(notices, parsed.src, parsed.out));
-        }
+
+      // The manifest from a previous `fhec build` may already be on disk;
+      // if not, `.fsol` override keys are left alone (see overrides.ts),
+      // and plain `.sol` keys are still moved to `out/`.
+      const manifest = loadManifest(config.paths.sources);
+      const notices = rewriteSolidityOverrides(
+        config.solidity.overrides,
+        parsed.src,
+        parsed.out,
+        manifest,
+      );
+      if (notices.length > 0) {
+        console.warn(formatOverrideWarning(notices, parsed.src, parsed.out));
       }
     }
   }
