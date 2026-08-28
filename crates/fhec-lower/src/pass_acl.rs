@@ -312,7 +312,7 @@ fn rule_r2<'ast>(
                       encrypted argument; the callee must have been granted access elsewhere"
                 .to_string(),
             fixits: Vec::new(),
-            rule: Some("§8.2"),
+            rule: Some("§8.4"),
         });
         return Ok(());
     }

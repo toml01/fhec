@@ -12,6 +12,6 @@
       "end_col": 29
     },
     "message": "a `view` or `pure` function cannot grant ACL access to this call's encrypted argument; the callee must have been granted access elsewhere",
-    "rule": "§8.2"
+    "rule": "§8.4"
   }
 ]
