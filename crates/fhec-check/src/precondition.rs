@@ -544,9 +544,10 @@ impl<'ast> FnChecker<'_, 'ast> {
             }
             // The names used as call/cast callees, and event/error paths.
             Some(Function(_) | Contract(_) | TypeName(_) | Builtin(_) | Event(_) | Error(_)) => {}
-            // Preserve the precise reason file-scope lookup missed instead
-            // of replacing it with a generic inheritance failure. Positive
-            // file-scope names have already resolved directly in the binder.
+            // Judge the name by what file scope would have said, rather than
+            // by the generic inheritance failure. This is an explicit policy:
+            // the binder deliberately does not resolve that fallback, because
+            // an unseen base can shadow the name.
             Some(Unresolved(UnresolvedReason::IncompleteInheritance { fallback, .. })) => {
                 self.pre_ident_resolution(Some(*fallback), id, span);
             }

@@ -2205,3 +2205,30 @@ fn a_complete_selective_import_is_accepted() {
     let codes = codes_for_source(src);
     assert!(codes.is_empty(), "{codes:?}");
 }
+
+#[test]
+fn an_unmodelled_profile_call_under_an_unseen_base_stays_an_error() {
+    // The `Unknown` here comes from the profile not modelling the operation,
+    // not from the unreadable base, and solc will not catch it — so the
+    // FHE2012 warning must not extend to it (spec §2.8 restriction 8).
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+        contract C is ReentrancyGuardTransient {
+            function f(euint64 x) external returns (shared(msg.sender) euint64) {
+                return FHE.thisOpIsNotModelled(x);
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE2012")
+            .unwrap_or_else(|| panic!("expected FHE2012, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Error);
+        assert!(c.shared_return_sites.is_empty());
+    });
+}

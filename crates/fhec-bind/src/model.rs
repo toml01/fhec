@@ -65,10 +65,12 @@ pub enum UnresolvedReason {
     IncompleteInheritance {
         /// The contract whose inherited surface is incomplete.
         contract: ContractId,
-        /// The unresolved result of file-scope lookup. Positive file-scope
-        /// bindings resolve directly; this preserves the reason for the miss
-        /// so an explicit checker policy can still inspect it (e.g. trusting
-        /// exposure from a profile-pinned plain import).
+        /// What file-scope lookup would have answered, positive or not.
+        ///
+        /// It is NOT the resolution: an inherited member shadows a file-scope
+        /// name, so using it as one would be a guess. Only an explicit policy
+        /// may inspect it — trusting exposure from a profile-pinned import
+        /// ([`crate`] users: `fhec-check`'s `trust` and `precondition`).
         fallback: Box<Resolution>,
     },
     /// The name was bound by an import the binder could not resolve.

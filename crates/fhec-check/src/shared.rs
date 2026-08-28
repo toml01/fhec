@@ -534,7 +534,9 @@ fn scan_returns<'ast>(
                 // solc as a type error on `FHE.shareT(...)`, never as a
                 // silent ciphertext. Warn and proceed rather than refuse
                 // every contract that inherits from a package.
-                None | Some(Ty::Unknown) if incomplete_inheritance_call(unit, e).is_some() => {
+                None | Some(Ty::Unknown)
+                    if incomplete_inheritance_call(unit, trust, e).is_some() =>
+                {
                     return_exprs.push(e.span);
                     out.diagnostics.push(
                         Diagnostic::warning(
@@ -544,7 +546,7 @@ fn scan_returns<'ast>(
                                 "this function shares `{}`, but {}; the rewrite assumes the \
                                  declared type, and solc rejects the output if that is wrong",
                                 ety.solidity_name(),
-                                describe_mismatch(unit, e, recorded)
+                                describe_mismatch(unit, trust, e, recorded)
                             ),
                         )
                         .with_rule(RULE),
@@ -559,7 +561,7 @@ fn scan_returns<'ast>(
                             format!(
                                 "this function shares `{}`, but {}",
                                 ety.solidity_name(),
-                                describe_mismatch(unit, e, other)
+                                describe_mismatch(unit, trust, e, other)
                             ),
                         )
                         .with_rule(RULE),
@@ -844,26 +846,45 @@ fn supports_shared(
     }
 }
 
-fn describe_mismatch(unit: &BoundUnit<'_>, expr: &ast::Expr<'_>, ty: Option<&Ty>) -> String {
+fn describe_mismatch(
+    unit: &BoundUnit<'_>,
+    trust: &Trust,
+    expr: &ast::Expr<'_>,
+    ty: Option<&Ty>,
+) -> String {
     match ty {
         Some(Ty::Encrypted(t)) => {
             format!("the returned expression is `{}`", t.solidity_name())
         }
         Some(Ty::Plain(_)) => "the returned expression is a plaintext value".to_string(),
-        _ => incomplete_inheritance_call(unit, expr).unwrap_or_else(|| {
+        _ => incomplete_inheritance_call(unit, trust, expr).unwrap_or_else(|| {
             "the returned expression is of a type the checker cannot prove is that encrypted type"
                 .to_string()
         }),
     }
 }
 
-fn incomplete_inheritance_call(unit: &BoundUnit<'_>, expr: &ast::Expr<'_>) -> Option<String> {
+/// The FHE2012 explanation for a call whose callee this unit cannot see past
+/// an incomplete inheritance surface.
+///
+/// `trust` is consulted so a call the checker types *through the profile
+/// library* never qualifies: an `Unknown` there means the profile does not
+/// model that operation, which the unreadable surface did not cause and which
+/// solc will not catch. Only a callee the unit genuinely cannot resolve does.
+fn incomplete_inheritance_call(
+    unit: &BoundUnit<'_>,
+    trust: &Trust,
+    expr: &ast::Expr<'_>,
+) -> Option<String> {
     let ast::ExprKind::Call(callee, _) = &expr.peel_parens().kind else {
         return None;
     };
     let (name, root) = callee_path(callee)?;
-    let Resolution::Unresolved(UnresolvedReason::IncompleteInheritance { contract, .. }) =
-        unit.resolve(root)?
+    let res = unit.resolve(root)?;
+    if trust.is_fhe_library(unit, root.as_str(), res) {
+        return None;
+    }
+    let Resolution::Unresolved(UnresolvedReason::IncompleteInheritance { contract, .. }) = res
     else {
         return None;
     };

@@ -282,8 +282,6 @@ Several shared inputs of one function receive **independently**, one statement e
 
 On a **bodiless** declaration (an interface member or an abstract function) the expansion generates no local, so the parameter keeps the author's name and only its type changes. That name is ABI-visible: on a published interface it is what integrators read and what named-argument call sites bind to, and a signature-only rewrite must not change it.
 
-FHE2012 is an **error** when the returned expression has a type the checker proved is not the declared one. It is a **warning** when the checker could not prove any type *and* the only obstacle is an inherited surface outside the compilation unit (§1.3). The rewrite takes the encrypted type from the declared return, never from the expression, so a wrong assumption reaches solc as a type error on the generated `share` call rather than as a wrong ciphertext. Refusing every contract that inherits from a package would cost more than the warning does.
-
 **⚠ Draft decision (generated name):** the wire parameter is named `<name>_shared`. If that identifier is already used anywhere in the function's scope, the transpiler MUST reject with FHE1016 rather than rename silently.
 
 #### Shared return — `returns (shared(recipient) eT)`
@@ -309,6 +307,10 @@ The returned expression is wrapped **where it stands**, never hoisted, so it is 
 6. **⚠ Draft decision (braced returns):** a `return` of a shared value MUST sit inside a braced block, not as the bare body of an `if`/`else`/`for`/`while`/`do`. ACL insertion places grant *statements* before the statement they serve, which a braceless branch body cannot hold; requiring braces keeps the construct clear of that shape.
 7. **⚠ Draft decision (no assignment in the returned expression):** the returned expression MUST NOT contain an assignment or `++`/`--`. An encrypted assignment inside a `return` would state a §8.1 R1 storage-write fact anchored on the `return` statement, whose grant belongs *after* a statement that has already left the function. Assign in its own statement and return the variable.
 8. The returned expression MUST type as exactly the declared `eT`; anything else — a different encrypted type, a plaintext value, or a type the checker cannot prove — is FHE2012.
+
+   FHE2012 is an **error**, and states no site, in every case except one: it is a **warning**, and the site is still stated, when the checker could not prove any type *and* the only obstacle is a call whose callee this unit cannot see past an incomplete inheritance surface. The rewrite takes the encrypted type from the *declared* return, never from the expression, so a wrong assumption reaches solc as a type error on the generated `share` call — the profile declares one `shareT` signature per encrypted type, with no competing overload. Refusing every contract that inherits from a package would cost more than the warning does.
+
+   The warning does not extend to a call the checker types through the profile library: an `Unknown` there comes from an operation the profile does not model, not from the unreadable surface, and stays an error.
 9. **⚠ Draft decision (no rewrite site under an R2 statement):** when the `return` sits in — or *is* — a statement an R2 grant (§8.2) anchors on, the returned expression MUST NOT contain any rewrite site of its own. R2 renders its own call site and claims the statement; the operator pass then skips the whole claimed span. While R3 applied, its whole-statement re-render happened to cover the returned expression as well, and a shared return replaces R3, so nothing does any more. The typical shape is a `return` inside a `try` clause whose header calls out with an encrypted argument. Compute the value in its own statement and return the variable.
 
 Restrictions 6, 7, and 9 are conservative refusals, not statements about what is expressible in principle.
@@ -639,7 +641,7 @@ Assigned in this version:
 | FHE2009 | error | condition-not-ebool (§3.3) |
 | FHE2010 | error | encrypted-op-in-view-or-pure (§3.4) |
 | FHE2011 | error | inc-dec-value-used (§4.2) |
-| FHE2012 | error | shared-boundary-type-mismatch (§2.8) |
+| FHE2012 | error / warning | shared-boundary-type-mismatch (§2.8) — warning only for the incomplete-inheritance case in restriction 8 |
 | FHE3001 | error | return-in-encrypted-branch |
 | FHE3002 | error | break-continue-in-encrypted-branch |
 | FHE3003 | error | revert-family-in-encrypted-branch |
