@@ -300,7 +300,7 @@ The returned expression is wrapped **where it stands**, never hoisted, so it is 
 **Restrictions.** Every violation is FHE1015 unless noted.
 
 1. The host must be a `function` that is `public` or `external` and neither `view` nor `pure`.
-2. **⚠ Draft decision (recipient):** the recipient MUST be exactly the expression `msg.sender`. Another expression is refused even when it would evaluate to the caller's address, because the transpiler cannot prove that (§1.3). Other recipients are a later revision.
+2. **⚠ Draft decision (recipient):** the recipient MUST be exactly the expression `msg.sender`, where `msg` resolves to the Solidity builtin — not merely an expression spelled that way. Another expression is refused even when it would evaluate to the caller's address, because the transpiler cannot prove that (§1.3). Because the rewrite re-emits the literal text `msg.sender` at every `return`, a function that declares anything named `msg` anywhere in its body — a local, a `for`-init declaration, or a `try`/`catch` binder — is refused outright too: Solidity's block scoping would let such a declaration shadow the builtin from its declaration point onward. Other recipients are a later revision.
 3. The shared return MUST be the only return value of its function and MUST be unnamed. Tuples, a named fallthrough return, and lists mixing a shared return with a plain or encrypted one are all refused.
 4. `shared(...)` must be followed by an encrypted type, and the `in` marker has no meaning on a return type. The declaration takes no data location, for the reason given in shared-input restriction 7.
 5. Every `return` in the body MUST be an explicit valued `return expr;`. A bare `return;` is refused.

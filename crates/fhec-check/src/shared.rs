@@ -70,6 +70,89 @@ const WIRE_SUFFIX: &str = "_shared";
 /// The one recipient expression this MVP accepts.
 const RECIPIENT: &str = "msg.sender";
 
+/// Whether an expression is `msg.sender` where `msg` *resolves* to the
+/// Solidity builtin, not merely an expression spelled that way.
+///
+/// Structural spelling is not enough: a parameter, local, or struct field
+/// literally named `msg` shadows the builtin, and the checker must not
+/// accept a shadowed `msg.sender` as the recipient. Doing so would let the
+/// lowerer's fixed `msg.sender` re-emission (spec §2.8) resolve, in the
+/// generated Solidity, to whatever the shadowing declaration is — a
+/// caller-controlled value in the worst case (issue #61). Requiring the
+/// resolution, not the text, is the only way to keep the transpiler's proof
+/// that no other expression evaluates to the real caller (restriction 2).
+///
+/// Under an incomplete linearization (an unseen base), `msg` degrades to
+/// [`UnresolvedReason::IncompleteInheritance`] like any other name that is
+/// not the contract's own member — an unseen base could in principle also
+/// declare a member named `msg`. Requiring `Resolution::Builtin` outright
+/// would then refuse `shared(msg.sender)` in every contract that inherits
+/// from a package, which is the dominant real-world shape (spec §2.8 already
+/// has fixture/test coverage for it). This module follows the same narrow,
+/// established policy as `precondition.rs`'s `callee_resolution` for
+/// `require`: trust the `fallback` — what file scope alone would have
+/// answered — exactly when it says `Builtin`, and only then. A base that
+/// truly shadows `msg` defeats this, the same general hazard already
+/// documented there.
+fn resolves_to_msg_sender(unit: &BoundUnit<'_>, e: &ast::Expr<'_>) -> bool {
+    let ast::ExprKind::Member(base, member) = &e.peel_parens().kind else {
+        return false;
+    };
+    if member.as_str() != "sender" {
+        return false;
+    }
+    let ast::ExprKind::Ident(id) = &base.peel_parens().kind else {
+        return false;
+    };
+    let is_msg_builtin = |r: &Resolution| matches!(r, Resolution::Builtin(b) if b.0 == "msg");
+    match unit.resolve(*id) {
+        Some(r) if is_msg_builtin(r) => true,
+        Some(Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
+            fallback, ..
+        })) => is_msg_builtin(fallback),
+        _ => false,
+    }
+}
+
+/// The span of the first local declaration named `msg` anywhere in `body`,
+/// if any — a plain local, a tuple-declaration component, a `for`-init
+/// declaration, or a `try`/`catch` binder. Any of these is a *declaration*
+/// that shadows the `msg` builtin (Solidity scoping); a plain *use* of the
+/// name (an ordinary identifier expression) does not, and must not trip
+/// this, or a legitimate `shared(msg.sender)` return would refuse itself by
+/// finding its own header recipient.
+///
+/// Deliberately does not track which declarations are actually in scope at
+/// which `return`: see the call site in [`scan_returns`] for why the
+/// over-approximation (refuse on any declaration in the body, not just one
+/// that provably reaches a `return`) is the conservative and simple choice.
+fn body_shadows_msg<'ast>(body: &'ast ast::Block<'ast>) -> Option<Span> {
+    use ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Search;
+    impl<'ast> Visit<'ast> for Search {
+        type BreakValue = Span;
+
+        fn visit_variable_definition(
+            &mut self,
+            var: &'ast ast::VariableDefinition<'ast>,
+        ) -> ControlFlow<Self::BreakValue> {
+            if let Some(name) = var.name {
+                if name.as_str() == "msg" {
+                    return ControlFlow::Break(name.span);
+                }
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    match Search.visit_block(body) {
+        ControlFlow::Break(span) => Some(span),
+        ControlFlow::Continue(()) => None,
+    }
+}
+
 /// Checks every shared-boundary marker of the unit and states the legal sites.
 ///
 /// Runs *after* the per-function walk: the shared-return type rule (FHE2012)
@@ -421,7 +504,7 @@ fn scan_returns<'ast>(
                 format!("a shared return must name its recipient: `shared({RECIPIENT}) eT`"),
             );
         }
-        Some(e) if !fhec_syntax::is_msg_sender(e) => {
+        Some(e) if !resolves_to_msg_sender(unit, e) => {
             return bad_position(
                 out,
                 e.span,
@@ -432,6 +515,33 @@ fn scan_returns<'ast>(
             );
         }
         Some(_) => {}
+    }
+    // The header recipient resolves to the builtin at the point it is
+    // checked (params and named returns in scope, nothing declared in the
+    // body yet). But the lowerer does not carry that resolution forward: it
+    // re-emits the literal text `msg.sender` fresh at every `return`
+    // (spec §2.8's rewrite). A local, a `for`-init declaration, or a
+    // `try`/`catch` binder named `msg` anywhere in the body shadows the
+    // builtin in Solidity from its declaration point onward, which would
+    // flip a later re-emitted `msg.sender` to read the shadowing
+    // declaration instead of the real transaction sender (issue #61 follow
+    // up). Working out exactly which `return`s a given declaration reaches
+    // needs the same per-statement reachability analysis this module
+    // elsewhere avoids, so this refuses the whole function instead of
+    // guessing (§1.3) — a function legitimately declaring something named
+    // `msg` is not a real-world shape worth the extra precision for.
+    if let Some(body) = &f.ast.body {
+        if let Some(shadow_span) = body_shadows_msg(body) {
+            return bad_position(
+                out,
+                shadow_span,
+                "this function declares a local named `msg`, which shadows the builtin from \
+                 here onward; the shared return's recipient, `msg.sender`, is re-emitted at \
+                 every `return` and would then read this declaration instead of the real \
+                 transaction sender — rename it"
+                    .to_string(),
+            );
+        }
     }
     if decl.in_sugar.is_some() {
         return bad_position(

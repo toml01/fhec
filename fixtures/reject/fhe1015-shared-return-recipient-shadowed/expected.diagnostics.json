@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 634,
+      "end_byte": 644,
+      "start_line": 19,
+      "start_col": 57,
+      "end_line": 19,
+      "end_col": 67
+    },
+    "message": "the only recipient this version accepts is `msg.sender`; the transpiler cannot prove another expression names the caller",
+    "rule": "§2.8"
+  }
+]
