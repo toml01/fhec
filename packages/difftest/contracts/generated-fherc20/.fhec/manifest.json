@@ -9,188 +9,606 @@
       "mappings": [
         {
           "output_range": [
-            7530,
-            7567
-          ],
-          "source_range": [
-            7530,
-            7556
-          ],
-          "rule": "§2.3 in-sugar-param"
-        },
-        {
-          "output_range": [
-            7567,
-            7592
-          ],
-          "source_range": [
-            7556,
-            7556
-          ],
-          "rule": "§2.3 in-sugar-proof-param"
-        },
-        {
-          "output_range": [
-            7639,
-            7723
-          ],
-          "source_range": [
-            7603,
+            7566,
             7603
           ],
-          "rule": "§2.3 in-sugar-conversion"
-        },
-        {
-          "output_range": [
-            8335,
-            8372
-          ],
           "source_range": [
-            8215,
-            8241
+            7566,
+            7592
           ],
           "rule": "§2.3 in-sugar-param"
         },
         {
           "output_range": [
-            8377,
-            8402
+            7603,
+            7628
           ],
           "source_range": [
-            8246,
-            8246
+            7592,
+            7592
           ],
           "rule": "§2.3 in-sugar-proof-param"
         },
         {
           "output_range": [
-            8449,
-            8533
+            7659,
+            7672
           ],
           "source_range": [
-            8293,
-            8293
+            7623,
+            7649
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            7675,
+            7759
+          ],
+          "source_range": [
+            7652,
+            7652
           ],
           "rule": "§2.3 in-sugar-conversion"
         },
         {
           "output_range": [
-            13801,
-            13863
+            7775,
+            7792
           ],
           "source_range": [
+            7668,
+            7668
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            7834,
+            7847
+          ],
+          "source_range": [
+            7710,
+            7710
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            7902,
+            7929
+          ],
+          "source_range": [
+            7765,
+            7789
+          ],
+          "rule": "§2.8 shared-input-param"
+        },
+        {
+          "output_range": [
+            7962,
+            7975
+          ],
+          "source_range": [
+            7822,
+            7848
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            7978,
+            8043
+          ],
+          "source_range": [
+            7851,
+            7851
+          ],
+          "rule": "§2.8 shared-input-receive"
+        },
+        {
+          "output_range": [
+            8059,
+            8076
+          ],
+          "source_range": [
+            7867,
+            7867
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            8109,
+            8122
+          ],
+          "source_range": [
+            7900,
+            7900
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            8300,
+            8337
+          ],
+          "source_range": [
+            8078,
+            8104
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            8342,
+            8367
+          ],
+          "source_range": [
+            8109,
+            8109
+          ],
+          "rule": "§2.3 in-sugar-proof-param"
+        },
+        {
+          "output_range": [
+            8398,
+            8411
+          ],
+          "source_range": [
+            8140,
+            8166
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            8423,
+            8423
+          ],
+          "source_range": [
+            8178,
+            8191
+          ],
+          "rule": "§2.7 precondition-marker"
+        },
+        {
+          "output_range": [
+            8534,
+            8618
+          ],
+          "source_range": [
+            8302,
+            8302
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            8634,
+            8651
+          ],
+          "source_range": [
+            8318,
+            8318
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            8687,
+            8700
+          ],
+          "source_range": [
+            8354,
+            8354
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            8798,
+            8825
+          ],
+          "source_range": [
+            8452,
+            8476
+          ],
+          "rule": "§2.8 shared-input-param"
+        },
+        {
+          "output_range": [
+            8863,
+            8876
+          ],
+          "source_range": [
+            8514,
+            8540
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            8879,
+            8944
+          ],
+          "source_range": [
+            8543,
+            8543
+          ],
+          "rule": "§2.8 shared-input-receive"
+        },
+        {
+          "output_range": [
+            9056,
+            9073
+          ],
+          "source_range": [
+            8655,
+            8655
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            9100,
+            9113
+          ],
+          "source_range": [
+            8682,
+            8682
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            9192,
+            9229
+          ],
+          "source_range": [
+            8761,
+            8799
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            9329,
+            9342
+          ],
+          "source_range": [
+            8899,
+            8925
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            9345,
+            9429
+          ],
+          "source_range": [
+            8928,
+            8928
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            9445,
+            9462
+          ],
+          "source_range": [
+            8944,
+            8944
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            9517,
+            9530
+          ],
+          "source_range": [
+            8999,
+            8999
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            9609,
+            9636
+          ],
+          "source_range": [
+            9078,
+            9102
+          ],
+          "rule": "§2.8 shared-input-param"
+        },
+        {
+          "output_range": [
+            9703,
+            9716
+          ],
+          "source_range": [
+            9169,
+            9195
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            9719,
+            9784
+          ],
+          "source_range": [
+            9198,
+            9198
+          ],
+          "rule": "§2.8 shared-input-receive"
+        },
+        {
+          "output_range": [
+            9800,
+            9817
+          ],
+          "source_range": [
+            9214,
+            9214
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            9863,
+            9876
+          ],
+          "source_range": [
+            9260,
+            9260
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            10061,
+            10098
+          ],
+          "source_range": [
+            9445,
+            9483
+          ],
+          "rule": "§2.3 in-sugar-param"
+        },
+        {
+          "output_range": [
+            10198,
+            10211
+          ],
+          "source_range": [
+            9583,
+            9609
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            10223,
+            10223
+          ],
+          "source_range": [
+            9621,
+            9634
+          ],
+          "rule": "§2.7 precondition-marker"
+        },
+        {
+          "output_range": [
+            10334,
+            10418
+          ],
+          "source_range": [
+            9745,
+            9745
+          ],
+          "rule": "§2.3 in-sugar-conversion"
+        },
+        {
+          "output_range": [
+            10434,
+            10451
+          ],
+          "source_range": [
+            9761,
+            9761
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            10500,
+            10513
+          ],
+          "source_range": [
+            9810,
+            9810
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            10618,
+            10645
+          ],
+          "source_range": [
+            9915,
+            9939
+          ],
+          "rule": "§2.8 shared-input-param"
+        },
+        {
+          "output_range": [
+            10712,
+            10725
+          ],
+          "source_range": [
+            10006,
+            10032
+          ],
+          "rule": "§2.8 shared-return-type"
+        },
+        {
+          "output_range": [
+            10728,
+            10793
+          ],
+          "source_range": [
+            10035,
+            10035
+          ],
+          "rule": "§2.8 shared-input-receive"
+        },
+        {
+          "output_range": [
+            10905,
+            10922
+          ],
+          "source_range": [
+            10147,
+            10147
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
+            10962,
+            10975
+          ],
+          "source_range": [
+            10187,
+            10187
+          ],
+          "rule": "§2.8 shared-return-share"
+        },
+        {
+          "output_range": [
             13561,
-            13598
+            13623
+          ],
+          "source_range": [
+            12773,
+            12810
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            13873,
-            13908
+            13633,
+            13668
           ],
           "source_range": [
-            13608,
-            13635
+            12820,
+            12847
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            15100,
-            15129
+            14860,
+            14889
           ],
           "source_range": [
-            14827,
-            14848
+            14039,
+            14060
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            15147,
-            15189
+            14907,
+            14949
           ],
           "source_range": [
-            14866,
-            14901
+            14078,
+            14113
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            15207,
-            15266
+            14967,
+            15026
           ],
           "source_range": [
-            14919,
-            14968
+            14131,
+            14180
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            15415,
-            15474
+            15175,
+            15234
           ],
           "source_range": [
-            15117,
-            15151
+            14329,
+            14363
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            15722,
-            15750
-          ],
-          "source_range": [
-            15399,
-            15420
-          ],
-          "rule": "§4.1 operator-lowering"
-        },
-        {
-          "output_range": [
-            15764,
-            15823
-          ],
-          "source_range": [
-            15434,
-            15468
-          ],
-          "rule": "§4.1 operator-lowering"
-        },
-        {
-          "output_range": [
-            15837,
-            15888
-          ],
-          "source_range": [
             15482,
-            15525
+            15510
+          ],
+          "source_range": [
+            14611,
+            14632
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            16250,
-            16299
+            15524,
+            15583
           ],
           "source_range": [
-            15887,
-            15928
+            14646,
+            14680
           ],
           "rule": "§4.1 operator-lowering"
         },
         {
           "output_range": [
-            16451,
-            16502
+            15597,
+            15648
           ],
           "source_range": [
-            16080,
-            16123
+            14694,
+            14737
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            16010,
+            16059
+          ],
+          "source_range": [
+            15099,
+            15140
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            16211,
+            16262
+          ],
+          "source_range": [
+            15292,
+            15335
           ],
           "rule": "§4.1 operator-lowering"
         }
