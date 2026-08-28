@@ -756,9 +756,17 @@ impl<'ast> Binder<'ast> {
         for vi in 0..self.unit.vars.len() {
             let (file, contract, decl) = {
                 let v = &self.unit.vars[vi];
+                // A param/return/struct-field type is written in the scope
+                // of its owning function or struct, not just the file: a
+                // library- or contract-nested type name (e.g. `D storage d`
+                // where `struct D` is declared inside the same library)
+                // only resolves via that owner's contract scope (issue
+                // #92). File-level owners (`FileConst`) have no such scope.
                 let contract = match v.owner {
                     VarOwner::State(c) => Some(c),
-                    _ => None,
+                    VarOwner::Param(f) | VarOwner::Return(f) => self.unit.function(f).contract,
+                    VarOwner::StructField(t) => self.unit.type_decl(t).contract,
+                    VarOwner::FileConst(_) | VarOwner::Local(_) => None,
                 };
                 (v.file, contract, v.decl)
             };

@@ -38,6 +38,28 @@ pub(crate) fn declared_ty<'ast>(unit: &BoundUnit<'ast>, trust: &Trust, ty: &ast:
 }
 
 /// Types a resolved single-segment custom type name.
+///
+/// `res` is unwrapped through `Unresolved(IncompleteInheritance)` first
+/// (same as `Trust::encrypted_type`/`external_input_type` above, via the
+/// same `Trust::unwrap_fallback` helper): an unseen/external base in a
+/// contract's linearization makes every name resolved through that
+/// contract's scope come back wrapped, even when the name is a struct/enum
+/// declared right there in the same unit. Matching on the wrapper directly
+/// would silently fall through to `Ty::Unknown` below, which is exactly the
+/// silent-under-grant hazard R1 must not have (issue #92): a struct/enum
+/// declared in a contract or library that also inherits an unseen base
+/// would then never type as its real declared type, at any position
+/// (parameter, return, another struct's field), so an encrypted write
+/// through one of its fields would state no ACL fact at all rather than
+/// the FHE4001-or-grant one it should.
+///
+/// The unwrap trusts what file scope would have said when an unseen base
+/// *could* redeclare `name` — the same tradeoff `Trust::unwrap_fallback`
+/// already accepts for `FHE`/encrypted-type names. A genuine mismatch (the
+/// unseen base actually declares a different, incompatible `D`) fails
+/// loudly at the solc gate (a struct-shape/field mismatch), not silently:
+/// the prime directive (spec §1.3) is about never miscompiling silently,
+/// and a solc-level type error is exactly the opposite of silent.
 pub(crate) fn custom_ty(unit: &BoundUnit<'_>, trust: &Trust, name: &str, res: &Resolution) -> Ty {
     if let Some(ety) = trust.encrypted_type(unit, name, res) {
         return Ty::Encrypted(ety);
@@ -45,7 +67,7 @@ pub(crate) fn custom_ty(unit: &BoundUnit<'_>, trust: &Trust, name: &str, res: &R
     if let Some(ety) = trust.external_input_type(unit, name, res) {
         return Ty::Plain(PlainTy::ExternalInput(ety));
     }
-    match res {
+    match Trust::unwrap_fallback(res) {
         Resolution::TypeName(id) => match &unit.type_decl(*id).kind {
             TypeDeclKind::Struct(_) => Ty::Plain(PlainTy::Struct(*id)),
             TypeDeclKind::Enum(_) => Ty::Plain(PlainTy::Enum(*id)),

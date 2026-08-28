@@ -114,7 +114,7 @@ impl Trust {
     /// case — the binder cannot resolve the fallback itself precisely
     /// because an unseen base *could* shadow it, so every caller that wants
     /// to recognize a specific trusted shape underneath must unwrap first.
-    fn unwrap_fallback(res: &Resolution) -> &Resolution {
+    pub(crate) fn unwrap_fallback(res: &Resolution) -> &Resolution {
         match res {
             Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
                 fallback, ..

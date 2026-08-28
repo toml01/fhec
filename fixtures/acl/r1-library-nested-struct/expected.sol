@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A struct declared INSIDE the same library as the function that writes
+// through it (the diamond-storage idiom real confidential-token libraries
+// use) must be recognized by R1 exactly like a file-scope struct (issue
+// #92): the struct field carries no owner key, so the write's owner is not
+// provably `msg.sender`, and the sender grant is withheld with FHE4001.
+library L {
+    struct D {
+        euint64 bal;
+    }
+
+    function f(D storage d, euint64 v) public {
+        d.bal = v;
+        FHE.allowThis(d.bal);
+    }
+}
