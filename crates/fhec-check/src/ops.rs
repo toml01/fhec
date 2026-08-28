@@ -799,14 +799,19 @@ impl<'ast> FnChecker<'_, 'ast> {
 
         match op {
             None => {
+                // Captured BEFORE the write below: `simple_assign` marks
+                // the target Assigned, and for a self-copy (`r = r;`) the
+                // target and the RHS are the SAME slot, so checking after
+                // the write would just see the write's own fresh state.
+                let rhs_unassigned = matches!(lty, Ty::Encrypted(_)) && self.rhs_is_unassigned(rhs);
                 self.simple_assign(lhs, rhs.span, &rty, &lty, &lv);
-                // A bare copy from an encrypted local/named-return that is
-                // itself not definitely assigned propagates that unassigned
-                // status to the target, rather than unconditionally
-                // becoming Assigned — otherwise the copy silently launders
-                // an uninitialized handle (spec §6; issue #82's hazard
-                // class, one function-local hop earlier).
-                if matches!(lty, Ty::Encrypted(_)) && self.rhs_is_unassigned_slot(rhs) {
+                // A copy from an encrypted expression that is itself not
+                // definitely assigned propagates that unassigned status to
+                // the target, rather than unconditionally becoming
+                // Assigned — otherwise the copy silently launders an
+                // uninitialized handle (spec §6; issue #82's hazard class,
+                // one function-local hop earlier).
+                if rhs_unassigned {
                     if let Some(idx) = lv.slot {
                         self.slots[idx].state = AState::Unassigned;
                     }
@@ -866,33 +871,20 @@ impl<'ast> FnChecker<'_, 'ast> {
         }
 
         let (lty, lv) = self.analyze_lvalue(lhs);
+        // Captured BEFORE the write below, same reasoning as the simple
+        // (non-tuple) assignment case: a self-copy component (`(r, x) =
+        // (r, y);`) would otherwise see its own fresh write.
+        let rhs_unassigned =
+            matches!(lty, Ty::Encrypted(_)) && rhs.is_some_and(|r| self.rhs_is_unassigned(r));
         // The checker intentionally does not model individual tuple-result
         // types. Solidity checks component compatibility; the checker only
         // needs the target type here to record the definite assignment.
         self.record_simple_write(lhs, &lty, &lv);
-        if matches!(lty, Ty::Encrypted(_)) && rhs.is_some_and(|r| self.rhs_is_unassigned_slot(r)) {
+        if rhs_unassigned {
             if let Some(idx) = lv.slot {
                 self.slots[idx].state = AState::Unassigned;
             }
         }
-    }
-
-    /// Whether `rhs` (peeled of parens) is a bare reference to a tracked
-    /// local/parameter/named-return that is not currently definitely
-    /// assigned. Used to propagate an uninitialized handle through a copy
-    /// (`r = x;`) instead of unconditionally marking the copy's target
-    /// assigned.
-    fn rhs_is_unassigned_slot(&self, rhs: &'ast ast::Expr<'ast>) -> bool {
-        let ast::ExprKind::Ident(id) = &rhs.peel_parens().kind else {
-            return false;
-        };
-        let Some(Resolution::Local(_) | Resolution::Param(_)) = self.unit.resolve(*id) else {
-            return false;
-        };
-        let Some(idx) = self.slot_of(id.as_str()) else {
-            return false;
-        };
-        self.slots[idx].encrypted.is_some() && self.slots[idx].state != AState::Assigned
     }
 
     /// Shared simple-assignment checks and write bookkeeping.

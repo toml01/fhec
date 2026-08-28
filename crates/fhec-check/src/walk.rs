@@ -470,6 +470,32 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
         }
     }
 
+    /// Whether typing `rhs` left a not-yet-flagged "possibly uninitialized
+    /// encrypted read" marker anywhere within its span in [`Self::pending`]
+    /// — a bare reference to an unassigned tracked local/parameter/named-
+    /// return, or an unassigned arm reachable through a ternary/short-
+    /// circuit join. Used, by both assignment (`r = x;`, `(r, y) = (x,
+    /// z);`) and declaration-initializer handling, to propagate an
+    /// uninitialized handle through a copy instead of unconditionally
+    /// marking the copy's target assigned (spec §6; issue #82's hazard
+    /// class, one function-local hop earlier).
+    ///
+    /// A read-only peek: unlike [`Self::flag_uninit_in`], this never
+    /// consumes the marker or emits a diagnostic on its own — whatever
+    /// later actually uses the copy (a return, an operand, the function's
+    /// exit check) is where the real diagnostic belongs, correctly
+    /// targeted. Callers MUST evaluate this before performing the copy's
+    /// own write: the write does not touch `pending`, but if the RHS is a
+    /// self-copy (`r = r;`) sharing the target's own slot, reading current
+    /// slot *state* after the write would just see the write's own fresh
+    /// value — checking `pending` (populated once, at type time, before
+    /// any write) instead of slot state sidesteps that ordering hazard.
+    pub(crate) fn rhs_is_unassigned(&self, rhs: &'ast ast::Expr<'ast>) -> bool {
+        self.pending
+            .iter()
+            .any(|&(_, span)| span_within(span, rhs.span))
+    }
+
     pub(crate) fn error(&mut self, code: &'static str, span: Span, msg: impl Into<String>) {
         self.out
             .diagnostics
@@ -543,9 +569,28 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             DeclSingle(v) => self.decl_single(v),
             DeclMulti(vars, rhs) => {
                 self.type_expr(rhs);
-                for v in vars.iter() {
+                // When `rhs` is itself an explicit tuple literal of the
+                // same shape (`(euint64 y, euint64 z) = (x, b);`), pair
+                // each declared component with its RHS element so an
+                // unassigned one propagates instead of unconditionally
+                // becoming Assigned (spec §6) — same technique as
+                // `assign_tuple_lvalues`. A call-returning-tuple RHS (`(y,
+                // z) = f();`) has no per-component identity to inspect
+                // here; that hazard is caught at the callee's own exit
+                // points instead.
+                let rels = match &rhs.peel_parens().kind {
+                    ast::ExprKind::Tuple(rels) if rels.len() == vars.len() => Some(rels),
+                    _ => None,
+                };
+                for (i, v) in vars.iter().enumerate() {
                     if let Some(v) = v.as_ref().unspan() {
-                        self.decl_var(v, true);
+                        let rel = rels
+                            .and_then(|rels| rels[i].as_ref().unspan())
+                            .map(|e| &**e);
+                        let decl = declared_ty(self.unit, self.trust, &v.ty);
+                        let assigned = !(matches!(decl, Ty::Encrypted(_))
+                            && rel.is_some_and(|r| self.rhs_is_unassigned(r)));
+                        self.decl_var(v, assigned);
                     }
                 }
             }
@@ -890,15 +935,23 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                  constructor parameter lists",
             );
         }
-        self.decl_var(v, v.initializer.is_some());
-        if let Some(init) = &v.initializer {
-            // Typed before decl_var? Order: initializer executes before the
-            // variable exists; but decl_var only registers the slot, and
-            // shadowing within the initializer of the same name is illegal
-            // Solidity anyway. Type it now for sites/facts.
-            let init_ty = self.type_expr(init);
-            let decl = declared_ty(self.unit, self.trust, &v.ty);
-            if decl == Ty::Plain(PlainTy::Bool) && init_ty == Ty::Encrypted(EType::Ebool) {
+        // Typed before decl_var: an initializer executes before the
+        // variable exists, and shadowing within it via the same name is
+        // illegal Solidity anyway — but typing it first also lets a copy
+        // from an unassigned encrypted expression (`euint64 y = x;`)
+        // propagate that status to `y`, instead of unconditionally
+        // becoming Assigned (spec §6; issue #82's hazard class).
+        let decl = declared_ty(self.unit, self.trust, &v.ty);
+        let init_ty = v.initializer.as_ref().map(|init| self.type_expr(init));
+        let assigned = match (&v.initializer, &init_ty) {
+            (Some(init), Some(_)) => {
+                !(matches!(decl, Ty::Encrypted(_)) && self.rhs_is_unassigned(init))
+            }
+            _ => false,
+        };
+        self.decl_var(v, assigned);
+        if let (Some(init), Some(init_ty)) = (&v.initializer, &init_ty) {
+            if decl == Ty::Plain(PlainTy::Bool) && *init_ty == Ty::Encrypted(EType::Ebool) {
                 self.error(
                     codes::EBOOL_AS_BOOL,
                     init.span,
