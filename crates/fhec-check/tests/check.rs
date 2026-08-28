@@ -1618,6 +1618,37 @@ fn shared_return_states_one_site_per_function_and_suppresses_r3() {
 }
 
 #[test]
+fn a_shared_return_recipient_shadowed_by_a_parameter_named_msg_is_refused() {
+    // Regression for issue #61: the recipient must *resolve* to the Solidity
+    // builtin, not merely be spelled `msg.sender`. A parameter literally
+    // named `msg` shadows the builtin, so `msg.sender` here is a
+    // caller-controlled struct field, not the transaction sender.
+    let src = unit(
+        "struct Msg { address sender; }\n\
+         function f(Msg memory msg) external returns (shared(msg.sender) euint64) {\n\
+           return b;\n\
+         }",
+    );
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE1015")
+            .unwrap_or_else(|| panic!("expected FHE1015, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Error);
+        assert_eq!(
+            d.message,
+            "the only recipient this version accepts is `msg.sender`; the transpiler cannot \
+             prove another expression names the caller"
+        );
+        assert!(
+            c.shared_return_sites.is_empty(),
+            "a shadowed recipient must not become a legal site"
+        );
+    });
+}
+
+#[test]
 fn an_ordinary_encrypted_return_still_states_an_r3_fact() {
     // Guards the suppression above against over-reach.
     let src = unit("function g() public returns (euint64) { return b; }");
