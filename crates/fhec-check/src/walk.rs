@@ -187,6 +187,23 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             }
         }
         // Named returns behave as locals that start unassigned (spec §6).
+        //
+        // Known gap, pre-existing and not specific to named returns:
+        // `declared_ty` (crates/fhec-check/src/decl.rs) types every
+        // qualified path (`Lib.Type`, any `segments.len() != 1`) as
+        // `Unknown`, by deliberate design across the whole checker (spec
+        // §3.2: `Unknown` is silent everywhere, not conservatively
+        // flagged). A named return declared via a qualified path to an
+        // encrypted type (e.g. `returns (Fhe.euint64 r)`) therefore never
+        // reaches `named_returns` at all — this exit-point check silently
+        // does not apply to it, exactly like every other checker pass that
+        // reads a qualified type. Fixing this only for named-return
+        // registration would leave the rest of the checker (operators,
+        // ACL, assignment tracking on that same variable) still blind to
+        // it, which is inconsistent; a real fix belongs in `declared_ty`
+        // itself and is out of scope here. Unqualified encrypted-type names
+        // (`euint64`, `ebool`, ...) are how every real CoFHE Solidity
+        // program spells these types, so this is expected to be rare.
         for &r in &f.returns {
             let v = self.unit.var(r);
             let ty = declared_ty(self.unit, self.trust, &v.decl.ty);
@@ -198,31 +215,40 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 }
             }
         }
-        // A modifier attached to this function that can `return;` before its
-        // `_;` placeholder skips the function body entirely on that path:
-        // whatever the body would have assigned never runs. Detected
-        // conservatively and unconditionally (regardless of what the body
-        // itself does below) — issue #82's hazard class again, just crossing
-        // a modifier boundary instead of a callee boundary.
-        if !self.named_returns.is_empty() && self.has_risky_modifier() {
-            for &(slot, decl_span) in &self.named_returns.clone() {
-                if !self.flagged.contains(&(slot, decl_span)) {
-                    self.flagged.push((slot, decl_span));
-                    self.out.diagnostics.push(
-                        Diagnostic::error(
-                            codes::POSSIBLY_UNINITIALIZED,
-                            decl_span,
-                            "a modifier attached to this function may skip its `_;` \
-                             placeholder on some path — by returning before it, or by \
-                             falling off the end without ever reaching it — which skips \
-                             the function body on that path; this encrypted named \
-                             return would then cross the call boundary unassigned, the \
-                             same CoFHE default-ciphertext hazard as an unassigned \
-                             encrypted variable",
-                        )
-                        .with_rule("§6"),
-                    );
-                }
+        if !self.named_returns.is_empty() {
+            // A modifier attached to this function that can `return;`
+            // before its `_;` placeholder skips the function body entirely
+            // on that path: whatever the body would have assigned never
+            // runs. Detected conservatively and unconditionally (regardless
+            // of what the body itself does below) — issue #82's hazard
+            // class again, just crossing a modifier boundary instead of a
+            // callee boundary.
+            if self.has_risky_modifier() {
+                self.flag_all_named_returns(
+                    "a modifier attached to this function may skip its `_;` \
+                     placeholder on some path — by returning before it, or by \
+                     falling off the end without ever reaching it — which skips \
+                     the function body on that path; this encrypted named \
+                     return would then cross the call boundary unassigned, the \
+                     same CoFHE default-ciphertext hazard as an unassigned \
+                     encrypted variable",
+                );
+            }
+            // This analysis does not parse Yul: an inline-assembly block
+            // may `return`/`stop`/`revert` and exit the function right
+            // there, which would make code textually after it (that would
+            // otherwise assign a named return) unreachable — but nothing
+            // here can tell. Rather than modeling Yul control flow,
+            // conservatively fail closed whenever the body contains
+            // inline assembly anywhere (spec §1.3).
+            if f.ast.body.as_ref().is_some_and(contains_assembly) {
+                self.flag_all_named_returns(
+                    "this function contains inline assembly, whose control flow this \
+                     checker does not analyze; an assembly `return`/`stop`/`revert` \
+                     could exit before code that would otherwise assign this \
+                     encrypted named return runs, so it is conservatively flagged \
+                     rather than trusted",
+                );
             }
         }
         let Some(body) = &f.ast.body else { return };
@@ -231,6 +257,26 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
         // body's last straight-line statement was itself a terminator.
         if !self.terminated {
             self.check_named_returns_unassigned();
+        }
+    }
+
+    /// Unconditionally flags every encrypted named return of this function
+    /// with `message`, for a hazard this analysis cannot rule out just by
+    /// examining the body's own control flow (an unanalyzable modifier or
+    /// inline assembly). Idempotent: already-flagged slots are skipped.
+    fn flag_all_named_returns(&mut self, message: &str) {
+        for &(slot, decl_span) in &self.named_returns.clone() {
+            if !self.flagged.contains(&(slot, decl_span)) {
+                self.flagged.push((slot, decl_span));
+                self.out.diagnostics.push(
+                    Diagnostic::error(
+                        codes::POSSIBLY_UNINITIALIZED,
+                        decl_span,
+                        message.to_string(),
+                    )
+                    .with_rule("§6"),
+                );
+            }
         }
     }
 
@@ -303,17 +349,17 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
         self.scopes.iter().rev().find_map(|s| s.get(name).copied())
     }
 
-    fn snapshot(&self) -> Vec<AState> {
+    pub(crate) fn snapshot(&self) -> Vec<AState> {
         self.slots.iter().map(|s| s.state).collect()
     }
 
-    fn restore(&mut self, snap: &[AState]) {
+    pub(crate) fn restore(&mut self, snap: &[AState]) {
         for (i, st) in snap.iter().enumerate() {
             self.slots[i].state = *st;
         }
     }
 
-    fn join_into(&mut self, snap: &[AState]) {
+    pub(crate) fn join_into(&mut self, snap: &[AState]) {
         for (i, st) in snap.iter().enumerate() {
             self.slots[i].state = AState::join(self.slots[i].state, *st);
         }
@@ -327,7 +373,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
     /// caller; its state must not pollute the join. Empty `candidates` means
     /// nothing reaches this point — state is moot, and the caller is
     /// expected to also mark `self.terminated`.
-    fn join_all(&mut self, candidates: &[&[AState]]) {
+    pub(crate) fn join_all(&mut self, candidates: &[&[AState]]) {
         let mut iter = candidates.iter();
         if let Some(first) = iter.next() {
             self.restore(first);
@@ -1088,6 +1134,11 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
 /// is left untouched and crosses the call boundary unassigned (issue #82's
 /// hazard class again).
 ///
+/// Also risky, unconditionally, if the body contains inline assembly
+/// anywhere: an assembly `return`/`stop`/`revert` could exit before `_;`
+/// ever runs, and this analysis does not parse Yul to rule that out (see
+/// [`contains_assembly`]).
+///
 /// This is a standalone, deliberately simple reachability scan — not the
 /// full [`AState`] definite-assignment machinery — since a modifier body
 /// only needs one bit of information per statement: does the placeholder
@@ -1147,7 +1198,36 @@ pub(crate) fn modifier_may_skip_body(block: &ast::Block<'_>) -> bool {
     // Risky if a `return` can happen before the placeholder is definite, OR
     // if the placeholder is not *definitely* reached by the end of the
     // block at all (falling off the end without ever running `_;` is the
-    // same hazard as an explicit early `return`).
+    // same hazard as an explicit early `return`), OR if the body contains
+    // inline assembly anywhere (its control flow is opaque to this scan).
     let (definitely_reaches_placeholder, may_return_before_it) = scan_block(block, false);
-    may_return_before_it || !definitely_reaches_placeholder
+    may_return_before_it || !definitely_reaches_placeholder || contains_assembly(block)
+}
+
+/// Whether `block` contains an inline-assembly statement anywhere,
+/// including nested inside `if`/`else`, loops, `try`/`catch`, and nested
+/// blocks. This checker does not parse Yul, so it cannot tell whether an
+/// assembly block unconditionally exits via `return`/`stop`/`revert` —
+/// which would make code textually after it look reachable when it is not.
+/// Used to fail closed (flag rather than trust) a function or modifier
+/// whose body contains one anywhere, instead of modeling Yul control flow.
+pub(crate) fn contains_assembly(block: &ast::Block<'_>) -> bool {
+    fn stmt_has(s: &ast::Stmt<'_>) -> bool {
+        use ast::StmtKind::*;
+        match &s.kind {
+            Assembly(_) => true,
+            Block(b) | UncheckedBlock(b) | Precondition(b) => block_has(b),
+            If(_, then, els) => stmt_has(then) || els.as_ref().is_some_and(|e| stmt_has(e)),
+            While(_, body) | DoWhile(body, _) => stmt_has(body),
+            For { init, body, .. } => init.as_ref().is_some_and(|i| stmt_has(i)) || stmt_has(body),
+            Try(t) => t.clauses.iter().any(|c| block_has(&c.block)),
+            _ => false,
+        }
+    }
+
+    fn block_has(block: &ast::Block<'_>) -> bool {
+        block.stmts.iter().any(stmt_has)
+    }
+
+    block_has(block)
 }

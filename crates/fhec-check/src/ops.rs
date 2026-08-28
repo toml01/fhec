@@ -59,7 +59,31 @@ impl<'ast> FnChecker<'_, 'ast> {
         r: &'ast ast::Expr<'ast>,
     ) -> Ty {
         let lty = self.type_expr(l);
+
+        // Plaintext `&&`/`||` short-circuits: `r` may never execute at
+        // runtime. Only the ENCRYPTED form (either side `ebool`) forgoes
+        // short-circuit (spec §5.5, handled below), and that is already
+        // known to be impossible here whenever `l` alone is encrypted.
+        // Model the short-circuit exactly like an `if`/`else` (spec §6):
+        // join "r never ran" with "r ran", instead of committing to a
+        // read/assignment inside `r` as unconditional.
+        let maybe_short_circuits =
+            matches!(op.kind, ast::BinOpKind::And | ast::BinOpKind::Or) && !lty.is_encrypted();
+        let pre_r = maybe_short_circuits.then(|| self.snapshot());
         let rty = self.type_expr(r);
+        if let Some(pre_r) = &pre_r {
+            if !rty.is_encrypted() {
+                // Confirmed plain: exactly one side of `l` genuinely
+                // decided the outcome without ever evaluating `r`.
+                let after = self.snapshot();
+                self.restore(pre_r);
+                self.join_into(&after);
+            }
+            // Otherwise `rty` turned out encrypted despite `lty` not being
+            // (a mixed, most likely already-illegal shape) — fall through
+            // unchanged into the encrypted-domain handling below, which
+            // only needs `lty` or `rty` to be encrypted, not both.
+        }
 
         if !lty.is_encrypted() && !rty.is_encrypted() {
             return self.plain_binary(&lty, op.kind, &rty);
@@ -612,124 +636,141 @@ impl<'ast> FnChecker<'_, 'ast> {
         b: &'ast ast::Expr<'ast>,
     ) -> Ty {
         let cty = self.type_expr(c);
-        let aty = self.type_expr(a);
-        let bty = self.type_expr(b);
-        match cty {
-            Ty::Encrypted(EType::Ebool) => {
-                for side in [a, b] {
-                    if let Some(sp) = self.side_effect_span(side) {
-                        self.out.diagnostics.push(
-                            Diagnostic::error(
-                                codes::SIDE_EFFECT_OPERAND,
-                                sp,
-                                "side-effecting arm of an encrypted `?:`: both arms \
-                                 always execute",
-                            )
-                            .with_rule("§5.5"),
-                        );
-                    }
-                }
-                let target = match (&aty, &bty) {
-                    (Ty::Encrypted(_), _) | (_, Ty::Encrypted(_)) => {
-                        match self.common_target(e.span, &aty, &bty) {
-                            Some(t) => t,
-                            None => return Ty::Unknown,
-                        }
-                    }
-                    // Both arms plaintext: infer the encrypted analogue when
-                    // it is unambiguous; literals alone carry no width.
-                    (Ty::Plain(pa), Ty::Plain(pb)) => {
-                        let cand = |p: &PlainTy| match p {
-                            PlainTy::Bool => Some(EType::Ebool),
-                            PlainTy::Address => Some(EType::Eaddress),
-                            PlainTy::Uint(bits) => EWidth::ALL
-                                .into_iter()
-                                .find(|w| w.bits() == *bits)
-                                .map(EType::Euint),
-                            _ => None,
-                        };
-                        match (cand(pa), cand(pb)) {
-                            (Some(x), Some(y)) if x == y => x,
-                            (Some(x), None) if matches!(pb, PlainTy::NumLit { .. }) => x,
-                            (None, Some(y)) if matches!(pa, PlainTy::NumLit { .. }) => y,
-                            _ => {
-                                self.out.diagnostics.push(
-                                    Diagnostic::error(
-                                        codes::NOT_CONVERTIBLE,
-                                        e.span,
-                                        "cannot infer the common encrypted type of these \
-                                         plaintext arms; make at least one arm encrypted \
-                                         or give both a definite width",
-                                    )
-                                    .with_rule("§5.4"),
-                                );
-                                return Ty::Unknown;
-                            }
-                        }
-                    }
-                    _ => {
-                        self.out.diagnostics.push(
-                            Diagnostic::error(
-                                codes::ENCRYPTED_MEETS_UNKNOWN,
-                                e.span,
-                                "an arm of this encrypted `?:` cannot be typed; refusing \
-                                 to guess",
-                            )
-                            .with_rule("§3.2"),
-                        );
-                        return Ty::Unknown;
-                    }
-                };
-                let pa = self.plan_operand(a, &aty, target, false);
-                let pb = self.plan_operand(b, &bty, target, false);
-                let (Plan::Ok(ka), Plan::Ok(kb)) = (pa, pb) else {
-                    return Ty::Unknown;
-                };
-                self.flag_uninit_in(c.span, "as a `select` condition");
-                self.flag_uninit_in(a.span, "as a `select` arm");
-                self.flag_uninit_in(b.span, "as a `select` arm");
-                self.note_site(e.span);
-                let site = TernarySite {
-                    span: e.span,
-                    cond_span: c.span,
-                    arms: [
-                        OperandPlan {
-                            span: a.span,
-                            kind: ka,
-                        },
-                        OperandPlan {
-                            span: b.span,
-                            kind: kb,
-                        },
-                    ],
-                    result: target,
-                    function: self.fid,
-                    file: self.file,
-                };
-                self.out.ternary_sites.push(site);
-                Ty::Encrypted(target)
-            }
-            Ty::Encrypted(other) => {
-                self.error(
-                    codes::CONDITION_NOT_EBOOL,
-                    c.span,
-                    format!(
-                        "`?:` condition has type `{}`; encrypted conditions must be \
-                         `ebool`",
-                        other.solidity_name()
-                    ),
-                );
-                Ty::Unknown
-            }
-            // Plaintext condition: NOT lowered even with encrypted arms
-            // (spec §5.4).
-            _ => {
-                if aty == bty {
-                    aty
-                } else {
+        // A real `ebool` condition lowers to `FHE.select`, which always
+        // evaluates BOTH arms (spec §5.4/§5.5) — so typing them
+        // unconditionally, one after the other, is the correct model.
+        // Anything else (a plaintext condition, or an already-erroring
+        // non-`ebool` encrypted one) is a genuine runtime branch: exactly
+        // one arm executes, so a read/assignment inside one arm must not be
+        // treated as unconditional. Decided from `cty` alone, before typing
+        // either arm, so the join can be applied while typing them.
+        if !matches!(cty, Ty::Encrypted(EType::Ebool)) {
+            let snap = self.snapshot();
+            let aty = self.type_expr(a);
+            let a_states = self.snapshot();
+            self.restore(&snap);
+            let bty = self.type_expr(b);
+            let b_states = self.snapshot();
+            self.join_all(&[&a_states, &b_states]);
+            return match cty {
+                Ty::Encrypted(other) => {
+                    self.error(
+                        codes::CONDITION_NOT_EBOOL,
+                        c.span,
+                        format!(
+                            "`?:` condition has type `{}`; encrypted conditions must be \
+                             `ebool`",
+                            other.solidity_name()
+                        ),
+                    );
                     Ty::Unknown
                 }
+                // Plaintext condition: NOT lowered even with encrypted arms
+                // (spec §5.4).
+                _ => {
+                    if aty == bty {
+                        aty
+                    } else {
+                        Ty::Unknown
+                    }
+                }
+            };
+        }
+        let aty = self.type_expr(a);
+        let bty = self.type_expr(b);
+        {
+            for side in [a, b] {
+                if let Some(sp) = self.side_effect_span(side) {
+                    self.out.diagnostics.push(
+                        Diagnostic::error(
+                            codes::SIDE_EFFECT_OPERAND,
+                            sp,
+                            "side-effecting arm of an encrypted `?:`: both arms \
+                                 always execute",
+                        )
+                        .with_rule("§5.5"),
+                    );
+                }
             }
+            let target = match (&aty, &bty) {
+                (Ty::Encrypted(_), _) | (_, Ty::Encrypted(_)) => {
+                    match self.common_target(e.span, &aty, &bty) {
+                        Some(t) => t,
+                        None => return Ty::Unknown,
+                    }
+                }
+                // Both arms plaintext: infer the encrypted analogue when
+                // it is unambiguous; literals alone carry no width.
+                (Ty::Plain(pa), Ty::Plain(pb)) => {
+                    let cand = |p: &PlainTy| match p {
+                        PlainTy::Bool => Some(EType::Ebool),
+                        PlainTy::Address => Some(EType::Eaddress),
+                        PlainTy::Uint(bits) => EWidth::ALL
+                            .into_iter()
+                            .find(|w| w.bits() == *bits)
+                            .map(EType::Euint),
+                        _ => None,
+                    };
+                    match (cand(pa), cand(pb)) {
+                        (Some(x), Some(y)) if x == y => x,
+                        (Some(x), None) if matches!(pb, PlainTy::NumLit { .. }) => x,
+                        (None, Some(y)) if matches!(pa, PlainTy::NumLit { .. }) => y,
+                        _ => {
+                            self.out.diagnostics.push(
+                                Diagnostic::error(
+                                    codes::NOT_CONVERTIBLE,
+                                    e.span,
+                                    "cannot infer the common encrypted type of these \
+                                         plaintext arms; make at least one arm encrypted \
+                                         or give both a definite width",
+                                )
+                                .with_rule("§5.4"),
+                            );
+                            return Ty::Unknown;
+                        }
+                    }
+                }
+                _ => {
+                    self.out.diagnostics.push(
+                        Diagnostic::error(
+                            codes::ENCRYPTED_MEETS_UNKNOWN,
+                            e.span,
+                            "an arm of this encrypted `?:` cannot be typed; refusing \
+                                 to guess",
+                        )
+                        .with_rule("§3.2"),
+                    );
+                    return Ty::Unknown;
+                }
+            };
+            let pa = self.plan_operand(a, &aty, target, false);
+            let pb = self.plan_operand(b, &bty, target, false);
+            let (Plan::Ok(ka), Plan::Ok(kb)) = (pa, pb) else {
+                return Ty::Unknown;
+            };
+            self.flag_uninit_in(c.span, "as a `select` condition");
+            self.flag_uninit_in(a.span, "as a `select` arm");
+            self.flag_uninit_in(b.span, "as a `select` arm");
+            self.note_site(e.span);
+            let site = TernarySite {
+                span: e.span,
+                cond_span: c.span,
+                arms: [
+                    OperandPlan {
+                        span: a.span,
+                        kind: ka,
+                    },
+                    OperandPlan {
+                        span: b.span,
+                        kind: kb,
+                    },
+                ],
+                result: target,
+                function: self.fid,
+                file: self.file,
+            };
+            self.out.ternary_sites.push(site);
+            Ty::Encrypted(target)
         }
     }
 
@@ -750,7 +791,7 @@ impl<'ast> FnChecker<'_, 'ast> {
         // as an ordinary lvalue would leave their definite-assignment slots
         // untouched and later report FHE2007 falsely.
         if op.is_none() && matches!(lhs.peel_parens().kind, ast::ExprKind::Tuple(_)) {
-            self.assign_tuple_lvalues(lhs);
+            self.assign_tuple_lvalues(lhs, Some(rhs));
             return Ty::Plain(PlainTy::Opaque);
         }
 
@@ -759,6 +800,17 @@ impl<'ast> FnChecker<'_, 'ast> {
         match op {
             None => {
                 self.simple_assign(lhs, rhs.span, &rty, &lty, &lv);
+                // A bare copy from an encrypted local/named-return that is
+                // itself not definitely assigned propagates that unassigned
+                // status to the target, rather than unconditionally
+                // becoming Assigned — otherwise the copy silently launders
+                // an uninitialized handle (spec §6; issue #82's hazard
+                // class, one function-local hop earlier).
+                if matches!(lty, Ty::Encrypted(_)) && self.rhs_is_unassigned_slot(rhs) {
+                    if let Some(idx) = lv.slot {
+                        self.slots[idx].state = AState::Unassigned;
+                    }
+                }
             }
             Some(binop) => match &lty {
                 Ty::Encrypted(t) => {
@@ -783,11 +835,31 @@ impl<'ast> FnChecker<'_, 'ast> {
     /// Applies the simple-assignment bookkeeping to every present tuple
     /// component. Holes have no target, while nested tuples are flattened
     /// recursively so every named lvalue receives its own assignment state.
-    fn assign_tuple_lvalues(&mut self, lhs: &'ast ast::Expr<'ast>) {
-        if let ast::ExprKind::Tuple(els) = &lhs.peel_parens().kind {
-            for el in els.iter() {
-                if let Some(el) = el.as_ref().unspan() {
-                    self.assign_tuple_lvalues(el);
+    ///
+    /// When `rhs` is itself an explicit tuple literal of the same shape
+    /// (`(r, other) = (x, y);`), each component's write additionally
+    /// inherits its paired RHS element's status when that element is a bare
+    /// reference to an unassigned tracked slot (spec §6), same as a simple
+    /// assignment. A call-returning-tuple RHS (`(ok, r) = f(...);`, this
+    /// issue's original shape) has no per-component identity to inspect
+    /// here — that hazard is instead caught at the callee's own exit
+    /// points, which is what the rest of this PR adds.
+    fn assign_tuple_lvalues(
+        &mut self,
+        lhs: &'ast ast::Expr<'ast>,
+        rhs: Option<&'ast ast::Expr<'ast>>,
+    ) {
+        if let ast::ExprKind::Tuple(lels) = &lhs.peel_parens().kind {
+            let rels = rhs.and_then(|r| match &r.peel_parens().kind {
+                ast::ExprKind::Tuple(rels) if rels.len() == lels.len() => Some(rels),
+                _ => None,
+            });
+            for (i, lel) in lels.iter().enumerate() {
+                if let Some(lel) = lel.as_ref().unspan() {
+                    let rel = rels
+                        .and_then(|rels| rels[i].as_ref().unspan())
+                        .map(|v| &**v);
+                    self.assign_tuple_lvalues(lel, rel);
                 }
             }
             return;
@@ -798,6 +870,29 @@ impl<'ast> FnChecker<'_, 'ast> {
         // types. Solidity checks component compatibility; the checker only
         // needs the target type here to record the definite assignment.
         self.record_simple_write(lhs, &lty, &lv);
+        if matches!(lty, Ty::Encrypted(_)) && rhs.is_some_and(|r| self.rhs_is_unassigned_slot(r)) {
+            if let Some(idx) = lv.slot {
+                self.slots[idx].state = AState::Unassigned;
+            }
+        }
+    }
+
+    /// Whether `rhs` (peeled of parens) is a bare reference to a tracked
+    /// local/parameter/named-return that is not currently definitely
+    /// assigned. Used to propagate an uninitialized handle through a copy
+    /// (`r = x;`) instead of unconditionally marking the copy's target
+    /// assigned.
+    fn rhs_is_unassigned_slot(&self, rhs: &'ast ast::Expr<'ast>) -> bool {
+        let ast::ExprKind::Ident(id) = &rhs.peel_parens().kind else {
+            return false;
+        };
+        let Some(Resolution::Local(_) | Resolution::Param(_)) = self.unit.resolve(*id) else {
+            return false;
+        };
+        let Some(idx) = self.slot_of(id.as_str()) else {
+            return false;
+        };
+        self.slots[idx].encrypted.is_some() && self.slots[idx].state != AState::Assigned
     }
 
     /// Shared simple-assignment checks and write bookkeeping.
