@@ -486,6 +486,114 @@ fn sugar_expands_param_and_conversion() {
     );
 }
 
+#[test]
+fn sugar_binder_uses_the_bound_proof_and_appends_nothing() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(in(sig) euint32 amount, bytes calldata sig, bytes calldata data)\n\
+         \x20       external\n\
+         \x20   {\n\
+         \x20       a = amount;\n\
+         \x20       data;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(externalEuint32 amount_input, bytes calldata sig, \
+         bytes calldata data)\n\
+         \x20       external\n\
+         \x20   {\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, sig);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       data;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_binder_batches_in_encrypted_parameter_order() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(in(p) euint32 x, bytes memory p, in(p) euint32 y) external {\n\
+         \x20       a = x;\n\
+         \x20       a = y;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(externalEuint32 x_input, bytes memory p, externalEuint32 y_input) \
+         external {\n\
+         \x20       UnsignedEncryptedInput[] memory __fhe_inputs_0 = \
+         new UnsignedEncryptedInput[](2);\n\
+         \x20       __fhe_inputs_0[0] = \
+         UnsignedEncryptedInput(uint256(externalEuint32.unwrap(x_input)), 0, \
+         Utils.EUINT32_TFHE);\n\
+         \x20       __fhe_inputs_0[1] = \
+         UnsignedEncryptedInput(uint256(externalEuint32.unwrap(y_input)), 0, \
+         Utils.EUINT32_TFHE);\n\
+         \x20       bytes32[] memory __fhe_hashes_1 = \
+         Impl.verifyBatchInputs(__fhe_inputs_0, p);\n\
+         \x20       euint32 x = euint32.wrap(__fhe_hashes_1[0]);\n\
+         \x20       euint32 y = euint32.wrap(__fhe_hashes_1[1]);\n\
+         \x20       a = x;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       a = y;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_binder_expands_a_constructor_parameter_list() {
+    // A constructor is a parameter list like any other (spec §2.3), and the
+    // binder may name a proof declared *before* the input it verifies.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   constructor(bytes memory sig, in(sig) euint32 seed, uint256 tag) {\n\
+         \x20       a = seed;\n\
+         \x20       tag;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   constructor(bytes memory sig, externalEuint32 seed_input, uint256 tag) {\n\
+         \x20       euint32 seed = FHE.asEuint32(seed_input, sig);\n\
+         \x20       a = seed;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       tag;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // `precondition` blocks (spec §2.7)
 // ---------------------------------------------------------------------------
@@ -617,6 +725,55 @@ fn precondition_local_declarations_stay_inside_the_block() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       uint256 cap = n;\n\
          \x20       cap;\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn precondition_moves_a_bound_conversion_after_the_block() {
+    // The binder and the guard compose: the proof keeps its declared
+    // position, and its verification still happens after the guard.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   mapping(address => bool) operators;\n\
+         \x20   error NotOperator(address who);\n\
+         \x20   function isOperator(address who) public view returns (bool) {\n\
+         \x20       return operators[who];\n\
+         \x20   }\n\
+         \x20   function setA(address from, in(sig) euint32 amount, bytes calldata sig)\n\
+         \x20       external\n\
+         \x20   {\n\
+         \x20       precondition {\n\
+         \x20           if (!isOperator(from)) revert NotOperator(from);\n\
+         \x20       }\n\
+         \x20       a = amount;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   mapping(address => bool) operators;\n\
+         \x20   error NotOperator(address who);\n\
+         \x20   function isOperator(address who) public view returns (bool) {\n\
+         \x20       return operators[who];\n\
+         \x20   }\n\
+         \x20   function setA(address from, externalEuint32 amount_input, bytes calldata sig)\n\
+         \x20       external\n\
+         \x20   {\n\
+         \x20       {\n\
+         \x20           if (!isOperator(from)) revert NotOperator(from);\n\
+         \x20       }\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, sig);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
          \x20       FHE.allowSender(a);\n\

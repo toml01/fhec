@@ -1,0 +1,47 @@
+[
+  {
+    "code": "FHE1014",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 262,
+      "end_byte": 276,
+      "start_line": 10,
+      "start_col": 9,
+      "end_line": 10,
+      "end_col": 23
+    },
+    "message": "this `in` parameter uses the explicit binder `in(inputProof)`, but the first `in` parameter of this list uses the implicit trailing proof (`in`) — every `in` parameter of one parameter list must verify against the same proof",
+    "rule": "§2.3"
+  },
+  {
+    "code": "FHE1014",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 503,
+      "end_byte": 505,
+      "start_line": 21,
+      "start_col": 9,
+      "end_line": 21,
+      "end_col": 11
+    },
+    "message": "this `in` parameter uses the implicit trailing proof (`in`), but the first `in` parameter of this list uses the explicit binder `in(inputProof)` — every `in` parameter of one parameter list must verify against the same proof",
+    "rule": "§2.3"
+  },
+  {
+    "code": "FHE1014",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 733,
+      "end_byte": 743,
+      "start_line": 32,
+      "start_col": 9,
+      "end_line": 32,
+      "end_col": 19
+    },
+    "message": "this `in` parameter uses the explicit binder `in(proofB)`, but the first `in` parameter of this list uses the explicit binder `in(proofA)` — every `in` parameter of one parameter list must verify against the same proof",
+    "rule": "§2.3"
+  }
+]

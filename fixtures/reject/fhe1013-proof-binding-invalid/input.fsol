@@ -1,0 +1,64 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract S {
+    bytes stateProof;
+
+    // The binder names a state variable, not a parameter of this list. The
+    // binder resolves against the same parameter list only.
+    function notAParameter(in(stateProof) euint32 x) public {
+        x;
+    }
+
+    // The binder names no parameter of this list at all.
+    function missing(in(inputProof) euint32 x, bytes calldata other) public {
+        x;
+        other;
+    }
+
+    // The binder names a parameter that is not `bytes`.
+    function wrongType(in(inputProof) euint32 x, uint256 inputProof) public {
+        x;
+        inputProof;
+    }
+
+    // The binder names a `bytes` parameter with no usable data location.
+    function wrongLocation(in(inputProof) euint32 x, bytes storage inputProof) internal {
+        x;
+        inputProof;
+    }
+
+    // The binder names the encrypted input itself.
+    function selfBound(in(x) euint32 x, bytes calldata inputProof) public {
+        x;
+        inputProof;
+    }
+
+    // The binder names a fixed-width `bytesNN`, which is a value type.
+    function fixedWidth(in(inputProof) euint32 x, bytes32 inputProof) public {
+        x;
+        inputProof;
+    }
+
+    // The binder names a parameter with the right data location but the
+    // wrong elementary type.
+    function wrongElementaryType(in(inputProof) euint32 x, string memory inputProof) public {
+        x;
+        inputProof;
+    }
+
+    // The `bytes memory` parameter has no name, so this list declares no
+    // `inputProof` for the binder to match.
+    function unnamedProof(in(inputProof) euint32 x, bytes memory) public {
+        x;
+    }
+
+    // The binder resolves against the parameter list only, so a `bytes memory`
+    // entry of the `returns` list never matches.
+    function inReturnsList(in(inputProof) euint32 x) public returns (bytes memory inputProof) {
+        x;
+        inputProof = "";
+    }
+}

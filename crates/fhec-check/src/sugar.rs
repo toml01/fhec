@@ -1,6 +1,6 @@
 //! The `in eT name` encrypted-input parameter sugar checks (spec §2.3).
 
-use fhec_bind::{BoundUnit, SourceFile};
+use fhec_bind::{BoundUnit, FunctionInfo, SourceFile};
 use solar_ast as ast;
 use solar_interface::Span;
 
@@ -10,7 +10,20 @@ use crate::sites::{CheckedUnit, InSugarSite};
 use crate::trust::Trust;
 use crate::ty::Ty;
 
-/// Scans sugar occurrences: legality (FHE1010/1011/1012) and expansion sites.
+/// The proof every `in` parameter of one function verifies against.
+///
+/// A function's sugared parameters all use the implicit trailing-proof form
+/// or all bind the same author-declared proof parameter; mixing the two, or
+/// binding two different proofs, is FHE1014.
+enum ProofMode {
+    /// `in eT name`: the expansion appends one `bytes memory inputProof`.
+    Appended,
+    /// `in(name) eT ...`: the named same-list `bytes` parameter is used and
+    /// nothing is appended.
+    Bound(String),
+}
+
+/// Scans sugar occurrences: legality (FHE1010–FHE1014) and expansion sites.
 pub(crate) fn scan<'ast>(
     files: &[SourceFile<'ast>],
     unit: &BoundUnit<'ast>,
@@ -23,10 +36,25 @@ pub(crate) fn scan<'ast>(
             f.ast.kind,
             ast::FunctionKind::Function | ast::FunctionKind::Constructor
         );
+        // The proof binding is a property of the whole parameter list, so it
+        // is resolved before any site is stated: an inconsistent or
+        // unresolvable binding states no site at all, and the unit is
+        // refused (§1.3).
+        let mode = if legal_kind {
+            match proof_mode(unit, f, out) {
+                Ok(mode) => mode,
+                Err(()) => {
+                    scan_returns(out, f);
+                    continue;
+                }
+            }
+        } else {
+            ProofMode::Appended
+        };
         let sites_before = out.sugar_sites.len();
         for &p in &f.params {
             let v = unit.var(p);
-            let Some(in_span) = v.decl.in_sugar else {
+            let Some(in_sugar) = v.decl.in_sugar else {
                 continue;
             };
             if !legal_kind {
@@ -77,7 +105,11 @@ pub(crate) fn scan<'ast>(
             out.sugar_sites.push(InSugarSite {
                 param_span: v.decl.span,
                 params_span: f.ast.header.parameters.span,
-                in_span,
+                in_span: in_sugar.kw_span,
+                proof: match &mode {
+                    ProofMode::Appended => None,
+                    ProofMode::Bound(proof) => Some(proof.clone()),
+                },
                 ty: ety,
                 name: name.as_str().to_string(),
                 has_body: f.ast.body.is_some(),
@@ -86,9 +118,14 @@ pub(crate) fn scan<'ast>(
                 file: f.file,
             });
         }
-        // The expansion appends one shared `inputProof` parameter per
-        // function with sugar (spec §2.3); that name must be free too.
-        if out.sugar_sites.len() > sites_before && ident_occurs(f.ast, "inputProof") {
+        // The implicit form appends one shared `inputProof` parameter per
+        // function with sugar (spec §2.3); that name must be free too. The
+        // explicit binder appends nothing and introduces no fixed generated
+        // name, so it has nothing to guard here.
+        if matches!(mode, ProofMode::Appended)
+            && out.sugar_sites.len() > sites_before
+            && ident_occurs(f.ast, "inputProof")
+        {
             out.diagnostics.push(
                 Diagnostic::error(
                     codes::IN_SUGAR_NAME_COLLISION,
@@ -100,12 +137,7 @@ pub(crate) fn scan<'ast>(
                 .with_rule("§2.3"),
             );
         }
-        // Return-parameter lists (named and unnamed): never legal.
-        for r in f.ast.header.returns() {
-            if r.in_sugar.is_some() {
-                bad_position(out, r.span, "returns list");
-            }
-        }
+        scan_returns(out, f);
     }
 
     // Event/error parameter lists and state variables: never legal. These
@@ -114,6 +146,140 @@ pub(crate) fn scan<'ast>(
         for item in file.ast.items.iter() {
             scan_item(out, item);
         }
+    }
+}
+
+/// Return-parameter lists (named and unnamed): never legal.
+fn scan_returns(out: &mut CheckedUnit, f: &FunctionInfo<'_>) {
+    for r in f.ast.header.returns() {
+        if r.in_sugar.is_some() {
+            bad_position(out, r.span, "returns list");
+        }
+    }
+}
+
+/// Resolves the one proof every sugared parameter of `f` verifies against.
+///
+/// `Err(())` means the binding is illegal and was reported; the caller states
+/// no site for the function.
+fn proof_mode(
+    unit: &BoundUnit<'_>,
+    f: &FunctionInfo<'_>,
+    out: &mut CheckedUnit,
+) -> Result<ProofMode, ()> {
+    let sugared: Vec<&ast::VariableDefinition<'_>> = f
+        .params
+        .iter()
+        .map(|&p| unit.var(p).decl)
+        .filter(|d| d.in_sugar.is_some())
+        .collect();
+    let Some(first) = sugared.first() else {
+        return Ok(ProofMode::Appended);
+    };
+    let first_sugar = first.in_sugar.expect("filtered on `in_sugar`");
+
+    // Every sugared parameter of one list must agree with the first: same
+    // form, and — in the explicit form — the same proof identifier. Mixing
+    // is refused rather than resolved (§1.3): the two forms produce
+    // different ABIs.
+    let mut consistent = true;
+    for decl in &sugared[1..] {
+        let sugar = decl.in_sugar.expect("filtered on `in_sugar`");
+        let agrees = match (first_sugar.proof, sugar.proof) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.as_str() == b.as_str(),
+            _ => false,
+        };
+        if agrees {
+            continue;
+        }
+        consistent = false;
+        out.diagnostics.push(
+            Diagnostic::error(
+                codes::IN_SUGAR_PROOF_BINDING_INCONSISTENT,
+                sugar.span,
+                format!(
+                    "this `in` parameter uses {}, but the first `in` parameter of this list \
+                     uses {} — every `in` parameter of one parameter list must verify \
+                     against the same proof",
+                    describe_form(sugar.proof),
+                    describe_form(first_sugar.proof),
+                ),
+            )
+            .with_rule("§2.3"),
+        );
+    }
+    if !consistent {
+        return Err(());
+    }
+
+    let Some(proof) = first_sugar.proof else {
+        return Ok(ProofMode::Appended);
+    };
+
+    // The binder must name exactly one parameter of this same list, declared
+    // `bytes memory` or `bytes calldata`. Anything else is refused; the
+    // transpiler never guesses which parameter carries the proof.
+    let named: Vec<&ast::VariableDefinition<'_>> = f
+        .params
+        .iter()
+        .map(|&p| unit.var(p).decl)
+        .filter(|d| d.name.is_some_and(|n| n.as_str() == proof.as_str()))
+        .collect();
+    let [target] = named[..] else {
+        let message = if named.is_empty() {
+            format!(
+                "`in({0})` must name a `bytes memory` or `bytes calldata` parameter of this \
+                 parameter list, but no such parameter is declared here",
+                proof.as_str()
+            )
+        } else {
+            // Solidity forbids duplicate parameter names (the binder reports
+            // FHE1020), so this is unreachable in a well-formed list; the
+            // binding is still ambiguous, so it is refused rather than
+            // resolved to the first match (§1.3).
+            format!(
+                "`in({0})` is ambiguous: this parameter list declares `{0}` more than once",
+                proof.as_str()
+            )
+        };
+        out.diagnostics.push(
+            Diagnostic::error(codes::IN_SUGAR_PROOF_BINDING_INVALID, proof.span, message)
+                .with_rule("§2.3"),
+        );
+        return Err(());
+    };
+    let is_bytes = matches!(
+        target.ty.kind,
+        ast::TypeKind::Elementary(ast::ElementaryType::Bytes)
+    );
+    let location_ok = matches!(
+        target.data_location,
+        Some(ast::DataLocation::Memory | ast::DataLocation::Calldata)
+    );
+    if !is_bytes || !location_ok {
+        out.diagnostics.push(
+            Diagnostic::error(
+                codes::IN_SUGAR_PROOF_BINDING_INVALID,
+                target.span,
+                format!(
+                    "`in({0})` names this parameter, which must be declared \
+                     `bytes memory {0}` or `bytes calldata {0}` to carry the input proof",
+                    proof.as_str()
+                ),
+            )
+            .with_rule("§2.3"),
+        );
+        return Err(());
+    }
+    Ok(ProofMode::Bound(proof.as_str().to_string()))
+}
+
+/// Names one of the two sugar forms for an FHE1014 message.
+fn describe_form(proof: Option<solar_interface::Ident>) -> String {
+    match proof {
+        Some(p) => format!("the explicit binder `in({})`", p.as_str()),
+        None => "the implicit trailing proof (`in`)".to_string(),
     }
 }
 

@@ -131,6 +131,35 @@ fn local_decl_multi_component_is_flagged_local() {
 }
 
 #[test]
+fn explicit_proof_binder_is_recorded() {
+    let src = "contract C {\n\
+         \x20 function f(in(inputProof) euint32 a, in euint32 b, bytes calldata inputProof)\n\
+         \x20   external {}\n\
+         }";
+    with_parsed_source("t.fsol", src, |p| {
+        let uses = collect_in_sugar(p.ast);
+        assert_eq!(uses.len(), 2);
+        // Explicit: the binder is recorded, the marker span covers the parens,
+        // and `in_span` still covers exactly the keyword.
+        assert_eq!(uses[0].proof.as_deref(), Some("inputProof"));
+        assert_eq!(p.snippet(uses[0].in_span).as_deref(), Some("in"));
+        assert_eq!(
+            p.snippet(uses[0].marker_span).as_deref(),
+            Some("in(inputProof)")
+        );
+        assert_eq!(
+            p.snippet(uses[0].param_span).as_deref(),
+            Some("in(inputProof) euint32 a")
+        );
+        // Implicit: no binder, and the marker is the keyword alone. Mixing the
+        // two forms parses; rejecting it (FHE1014) is the checker's job.
+        assert_eq!(uses[1].proof, None);
+        assert_eq!(p.snippet(uses[1].marker_span).as_deref(), Some("in"));
+    })
+    .expect("source must parse");
+}
+
+#[test]
 fn plain_solidity_has_no_sugar() {
     let uses = collect(
         "contract C {\n\

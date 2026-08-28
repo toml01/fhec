@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract S {
+    // The implicit trailing-proof form and the explicit binder in one list.
+    function mixedImplicitFirst(
+        in euint32 x,
+        in(inputProof) euint32 y,
+        bytes calldata inputProof
+    ) public {
+        x;
+        y;
+        inputProof;
+    }
+
+    // The same mix, the other way round.
+    function mixedExplicitFirst(
+        in(inputProof) euint32 x,
+        in euint32 y,
+        bytes calldata inputProof
+    ) public {
+        x;
+        y;
+        inputProof;
+    }
+
+    // Two explicit binders that name different proofs.
+    function twoProofs(
+        in(proofA) euint32 x,
+        in(proofB) euint32 y,
+        bytes calldata proofA,
+        bytes calldata proofB
+    ) public {
+        x;
+        y;
+        proofA;
+        proofB;
+    }
+}

@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A bodiless declaration rewrites its signature only (§2.3 restriction 3).
+// The bound proof keeps its position, name, and data location, and nothing is
+// appended to the parameter list.
+interface ISugarProofBinderBodiless {
+    function deposit(in(inputProof) euint32 amount, bytes calldata inputProof) external;
+}
+
+abstract contract SugarProofBinderBodiless {
+    function withdraw(
+        in(sig) euint64 amount,
+        bytes memory sig,
+        uint256 tag
+    ) public virtual;
+}

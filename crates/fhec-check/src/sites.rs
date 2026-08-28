@@ -174,7 +174,7 @@ pub struct IncDecSite {
     pub file: FileId,
 }
 
-/// One `in eT name` parameter to expand (spec §2.3).
+/// One `in eT name` or `in(proof) eT name` parameter to expand (spec §2.3).
 #[derive(Clone, Debug)]
 pub struct InSugarSite {
     /// Span of the whole parameter declaration (starts at `in`).
@@ -184,6 +184,16 @@ pub struct InSugarSite {
     pub params_span: Span,
     /// Span of the `in` keyword.
     pub in_span: Span,
+    /// The proof parameter this input verifies against.
+    ///
+    /// `None` is the implicit form `in eT name`: the expansion appends one
+    /// `bytes memory inputProof` parameter and converts against that name.
+    /// `Some(name)` is the explicit binder `in(name) eT name`: `name` is an
+    /// author-declared `bytes memory|calldata` parameter of the same list,
+    /// which keeps its position, name, and data location, and no proof
+    /// parameter is appended. The checker guarantees that every site of one
+    /// function carries the same value (FHE1014).
+    pub proof: Option<String>,
     /// The declared encrypted type.
     pub ty: EType,
     /// The parameter name.

@@ -117,6 +117,13 @@ pub enum InSugarPosition {
 pub struct InSugarUse {
     /// Exact span of the `in` keyword itself.
     pub in_span: interface::Span,
+    /// Span of the whole marker: the `in` keyword alone in the implicit form,
+    /// or `in` through the binder's closing `)` in the explicit form.
+    pub marker_span: interface::Span,
+    /// The identifier bound by `in(...)`, if the explicit proof-binder form
+    /// was used. Whether it names a valid same-list `bytes` parameter is a
+    /// checker rule (FHE1013), not a syntax one.
+    pub proof: Option<String>,
     /// Span of the whole parameter declaration (starts at `in`).
     pub param_span: interface::Span,
     /// Span of the declared type.
@@ -194,9 +201,11 @@ pub fn collect_in_sugar<'ast>(unit: &'ast ast::SourceUnit<'ast>) -> Vec<InSugarU
             &mut self,
             var: &'ast ast::VariableDefinition<'ast>,
         ) -> ControlFlow<Self::BreakValue> {
-            if let Some(in_span) = var.in_sugar {
+            if let Some(in_sugar) = var.in_sugar {
                 self.out.push(InSugarUse {
-                    in_span,
+                    in_span: in_sugar.kw_span,
+                    marker_span: in_sugar.span,
+                    proof: in_sugar.proof.map(|i| i.to_string()),
                     param_span: var.span,
                     ty_span: var.ty.span,
                     name: var.name.map(|i| i.to_string()),

@@ -223,17 +223,19 @@ fn internal(span: Span, err: fhec_targets::ProfileError) -> LowerFailure {
 // `in` parameter sugar (spec §2.3)
 // ---------------------------------------------------------------------------
 
-/// The fixed name of the shared proof parameter appended to a function with
-/// `in` sugar (spec §2.3; the checker guarantees it is collision-free).
+/// The fixed name of the shared proof parameter appended to a function whose
+/// `in` sugar uses the implicit form (spec §2.3; the checker guarantees it is
+/// collision-free). The explicit binder `in(proof)` uses the author's own
+/// parameter name instead and appends nothing.
 const INPUT_PROOF: &str = "inputProof";
 
 /// Expands every sugar site of one file. Per function with sugar: each `in`
 /// parameter is replaced by its external-input handle declaration, one shared
-/// `bytes memory inputProof` parameter is appended to the parameter list, and
-/// the verified conversion prelude is inserted at the start of the body — a
-/// direct conversion call for one parameter, a single batch verification for
-/// several (one signature covers the whole batch; per-parameter conversion
-/// calls would not verify).
+/// `bytes memory inputProof` parameter is appended to the parameter list
+/// (implicit form only), and the verified conversion prelude is inserted at
+/// the start of the body — a direct conversion call for one parameter, a
+/// single batch verification for several (one signature covers the whole
+/// batch; per-parameter conversion calls would not verify).
 pub(crate) fn expand_sugar(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan) -> Result<()> {
     // The `precondition` marker (spec §2.7) is stripped so a plain nested
     // block survives. The block's own bytes are untouched, and the
@@ -284,6 +286,17 @@ fn expand_function_sugar(
 ) -> Result<()> {
     let first = sites[0];
 
+    // The checker resolves the proof for the whole parameter list, so every
+    // site of one function carries the same binding (FHE1014). Refuse rather
+    // than pick one if that ever stops holding (§1.3).
+    if sites.iter().any(|s| s.proof != first.proof) {
+        return fail(
+            first.param_span,
+            "sugar sites of one function disagree on the input proof (internal)",
+        );
+    }
+    let proof = first.proof.as_deref().unwrap_or(INPUT_PROOF);
+
     // 1. Each `in eT name` parameter becomes `externalET name_input`.
     for site in sites {
         let external_ty = ctx.profile.external_input_type(site.ty);
@@ -294,15 +307,20 @@ fn expand_function_sugar(
         ));
     }
 
-    // 2. One shared proof parameter, appended before the list's closing `)`.
-    let params_range = ctx.range(first.params_span);
+    // 2. The implicit form appends one shared proof parameter before the
+    //    list's closing `)`. The explicit binder names a parameter the author
+    //    already declared, which keeps its position, name, and data location,
+    //    so nothing is appended and the ABI gains no extra proof.
     let file_text = ctx.text(first.file);
-    debug_assert_eq!(&file_text[params_range.end - 1..params_range.end], ")");
-    plan.push(Patch::insert(
-        params_range.end - 1,
-        format!(", {}", ctx.profile.input_proof_param()),
-        Provenance::new("§2.3 in-sugar-proof-param", ctx.range(first.params_span)),
-    ));
+    if first.proof.is_none() {
+        let params_range = ctx.range(first.params_span);
+        debug_assert_eq!(&file_text[params_range.end - 1..params_range.end], ")");
+        plan.push(Patch::insert(
+            params_range.end - 1,
+            format!(", {}", ctx.profile.input_proof_param()),
+            Provenance::new("§2.3 in-sugar-proof-param", ctx.range(first.params_span)),
+        ));
+    }
 
     // 3. The conversion prelude (bodiless functions: signature rewrite only).
     if !first.has_body {
@@ -338,11 +356,7 @@ fn expand_function_sugar(
         let input = format!("{}_input", site.name);
         let call = ctx
             .profile
-            .render_call(
-                FheOp::FromExternal { ty: site.ty },
-                &[],
-                &[&input, INPUT_PROOF],
-            )
+            .render_call(FheOp::FromExternal { ty: site.ty }, &[], &[&input, proof])
             .map_err(|e| internal(site.param_span, e))?;
         vec![format!(
             "{} {} = {};",
@@ -365,7 +379,7 @@ fn expand_function_sugar(
             .map(|(t, i, n)| (*t, i.as_str(), n.as_str()))
             .collect();
         ctx.profile
-            .batch_input_statements(&params, INPUT_PROOF, &inputs_tmp, &hashes_tmp)
+            .batch_input_statements(&params, proof, &inputs_tmp, &hashes_tmp)
     };
 
     let mut prelude = String::new();

@@ -79,6 +79,10 @@ pub mod codes {
     pub const IN_SUGAR_NAME_COLLISION: &str = "FHE1011";
     /// in-sugar-bad-position (§2.3).
     pub const IN_SUGAR_BAD_POSITION: &str = "FHE1012";
+    /// in-sugar-proof-binding-invalid (§2.3).
+    pub const IN_SUGAR_PROOF_BINDING_INVALID: &str = "FHE1013";
+    /// in-sugar-proof-binding-inconsistent (§2.3).
+    pub const IN_SUGAR_PROOF_BINDING_INCONSISTENT: &str = "FHE1014";
     /// precondition-bad-position (§2.7).
     pub const PRECONDITION_BAD_POSITION: &str = "FHE1017";
     /// encrypted-meets-unknown (§3.2).
