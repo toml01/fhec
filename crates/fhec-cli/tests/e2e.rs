@@ -432,3 +432,68 @@ contract User is Lib {}
         "expected a forwarded third-party error: {arr:?}"
     );
 }
+
+#[test]
+fn a_wrong_shared_return_assumption_is_caught_by_solc() {
+    // Spec §2.8 restriction 8 downgrades FHE2012 to a warning when only an
+    // unreadable base blocks the proof, on the ground that the generated
+    // `share` call is type-checked downstream. This test is that ground:
+    // without it the warning rests on an unproven claim.
+    let Some((contracts, openzeppelin)) = cofhe_packages() else {
+        return;
+    };
+    if !have_solc() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("fhec.toml"), "").unwrap();
+    std::fs::create_dir_all(root.join("contracts")).unwrap();
+    link_node_modules(root, &contracts, &openzeppelin);
+
+    // `L.pub` really returns `uint256`. The unreadable base makes the
+    // checker unable to prove that, so it warns and emits
+    // `FHE.shareEuint64(L.pub(a), msg.sender)`.
+    let source = "\
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";
+import { ReentrancyGuardTransient } from \"@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol\";
+
+library L {
+    function pub(euint64 a) internal pure returns (uint256) {
+        return 1;
+    }
+}
+
+contract Wrong is ReentrancyGuardTransient {
+    function f(euint64 a) external returns (shared(msg.sender) euint64) {
+        return L.pub(a);
+    }
+}
+";
+    std::fs::write(root.join("contracts/Wrong.fsol"), source).unwrap();
+
+    let out = fhec(root, &["build", "--json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("json diagnostics");
+    let arr = parsed.as_array().unwrap();
+
+    assert!(
+        arr.iter()
+            .any(|d| d["code"] == "FHE2012" && d["severity"] == "warning"),
+        "expected the FHE2012 warning: {arr:?}"
+    );
+    let solc = arr
+        .iter()
+        .find(|d| d["code"] == "FHE6000" && d["severity"] == "error")
+        .unwrap_or_else(|| panic!("solc must reject the wrong assumption: {arr:?}"));
+    assert!(
+        solc["message"]
+            .as_str()
+            .unwrap()
+            .contains("uint256 to euint64"),
+        "diag: {solc:?}"
+    );
+    assert_eq!(out.status.code(), Some(1), "stderr: {}", stderr(&out));
+}

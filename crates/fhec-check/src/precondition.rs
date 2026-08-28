@@ -507,9 +507,9 @@ impl<'ast> FnChecker<'_, 'ast> {
         self.pre_ident_resolution(self.unit.resolve(id).cloned(), id, span);
     }
 
-    /// The body of [`Self::pre_ident`], factored out so an
-    /// [`UnresolvedReason::IncompleteInheritance`] fallback can be judged by
-    /// the same rule as a direct resolution.
+    /// The body of [`Self::pre_ident`], factored out so the file-scope miss
+    /// carried by [`UnresolvedReason::IncompleteInheritance`] can be judged
+    /// by the same rule as a direct unresolved result.
     fn pre_ident_resolution(
         &mut self,
         res: Option<Resolution>,
@@ -544,13 +544,10 @@ impl<'ast> FnChecker<'_, 'ast> {
             }
             // The names used as call/cast callees, and event/error paths.
             Some(Function(_) | Contract(_) | TypeName(_) | Builtin(_) | Event(_) | Error(_)) => {}
-            // A base contract the binder cannot see completely (an external
-            // or unresolved import) MAY declare a member shadowing this
-            // name — but treating that as possible would refuse `msg`,
-            // `block`, and `tx` in every inheriting contract, which is the
-            // ordinary case for a real contract. Judge the file-scope
-            // fallback by the same rule instead, mirroring `trust.rs`'s
-            // identical call for the profile FHE library name.
+            // Judge the name by what file scope would have said, rather than
+            // by the generic inheritance failure. This is an explicit policy:
+            // the binder deliberately does not resolve that fallback, because
+            // an unseen base can shadow the name.
             Some(Unresolved(UnresolvedReason::IncompleteInheritance { fallback, .. })) => {
                 self.pre_ident_resolution(Some(*fallback), id, span);
             }
@@ -734,9 +731,13 @@ impl<'ast> FnChecker<'_, 'ast> {
             // plaintext operation. A `new` on any other type deploys a
             // contract and stays refused.
             ast::ExprKind::New(ty) => is_memory_allocation(ty),
-            ast::ExprKind::Ident(id) => match self.unit.resolve(*id) {
+            ast::ExprKind::Ident(id) => match self.callee_resolution(*id) {
                 Some(Resolution::Function(fids)) => {
                     let fids = fids.clone();
+                    if let Some(message) = self.incomplete_overload_set(id.as_str(), &fids) {
+                        self.pre_reject(e.span, message);
+                        return;
+                    }
                     if !self.all_view_or_pure(&fids) {
                         false
                     } else if let Some(message) = self.unusable_return(&fids) {
@@ -795,10 +796,9 @@ impl<'ast> FnChecker<'_, 'ast> {
     /// Why a callee's declared return list disqualifies it, if it does.
     ///
     /// The declared list is checked directly instead of the call's inferred
-    /// type: an *unnamed* encrypted return (`returns (euint64)`, the shape
-    /// every confidential getter uses) resolves to no variable, so the
-    /// inferred type would be `Unknown` and would slip through. A return the
-    /// checker cannot prove plaintext is refused either way (spec §1.3).
+    /// type so tuple returns and every nested declared type are classified
+    /// independently. A return the checker cannot prove plaintext is refused
+    /// either way (spec §1.3).
     fn unusable_return(&self, fids: &[fhec_bind::FunctionId]) -> Option<String> {
         let mut unknown = false;
         for &f in fids {
@@ -850,6 +850,65 @@ impl<'ast> FnChecker<'_, 'ast> {
                             .to_string()
                     })
                 })
+        })
+    }
+
+    /// The resolution to judge a `precondition` callee by.
+    ///
+    /// Under an incomplete linearization every name that is not the
+    /// contract's own member degrades, `require` included, which would make
+    /// a `precondition` block unusable in any contract that inherits from a
+    /// package. The builtin answer file scope would have given is restored
+    /// here, and only that: a `Function` fallback stays degraded, because an
+    /// unseen base can shadow a file-scope function and this module must not
+    /// license a call on a guess (§1.3). A base declaring `require` itself
+    /// would defeat this, which is the general hazard tracked separately.
+    fn callee_resolution(&self, id: solar_interface::Ident) -> Option<Resolution> {
+        match self.unit.resolve(id)? {
+            Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
+                fallback, ..
+            }) => match fallback.as_ref() {
+                b @ Resolution::Builtin(_) => Some(b.clone()),
+                other => Some(Resolution::Unresolved(
+                    UnresolvedReason::IncompleteInheritance {
+                        contract: self.contract?,
+                        fallback: Box::new(other.clone()),
+                    },
+                )),
+            },
+            other => Some(other.clone()),
+        }
+    }
+
+    /// Refuses a call whose overload set this unit cannot see in full.
+    ///
+    /// Under an incomplete linearization the binder answers with the members
+    /// of the known prefix only, and that answer is a *lower bound*: Solidity
+    /// unions overloads across the whole linearization, so an unseen base may
+    /// add a signature that solc prefers. Judging the call by the prefix
+    /// alone would license a state-changing overload on the strength of a
+    /// `view` one (§1.3). The §7 branch rules are already safe here, because
+    /// their gate reads `linearization.order`, which an incomplete
+    /// linearization leaves as just the contract itself.
+    fn incomplete_overload_set(
+        &self,
+        name: &str,
+        fids: &[fhec_bind::FunctionId],
+    ) -> Option<String> {
+        let contract = self.contract?;
+        if self.unit.linearization(contract).complete {
+            return None;
+        }
+        let inherited = fids
+            .iter()
+            .any(|&f| self.unit.function(f).contract != Some(contract));
+        inherited.then(|| {
+            format!(
+                "`{name}` is declared by a base of `{}`, which also inherits a base outside \
+                 the compilation unit, so the transpiler cannot see every overload solc will \
+                 choose from; call it outside the `precondition` block",
+                self.unit.contract(contract).name_str
+            )
         })
     }
 

@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+// A file that previously needed only the `shared*` wire types is exactly the
+// file that reaches for `in shared` first, and its selective import lacks the
+// plain type (spec §2.8).
+import { sharedEbool, sharedEuint64 } from "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+interface IReceiver {
+    function onReceive(address from, in shared euint64 amount) external returns (bytes4);
+}

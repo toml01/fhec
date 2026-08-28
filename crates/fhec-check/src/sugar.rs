@@ -28,10 +28,13 @@ pub(crate) fn scan<'ast>(
     files: &[SourceFile<'ast>],
     unit: &BoundUnit<'ast>,
     trust: &Trust,
+    profile: &dyn fhec_targets::TargetProfile,
     out: &mut CheckedUnit,
 ) {
     // Function/constructor parameters: the legal position.
     for (fid, f) in unit.functions() {
+        let profile_import =
+            crate::imports::selective_profile_import(files[f.file.index()].ast, trust);
         let legal_kind = matches!(
             f.ast.kind,
             ast::FunctionKind::Function | ast::FunctionKind::Constructor
@@ -69,6 +72,22 @@ pub(crate) fn scan<'ast>(
             }
             let ty = declared_ty(unit, trust, &v.decl.ty);
             let Ty::Encrypted(ety) = ty else {
+                // A selective import that forgot the plain type is the
+                // common cause, and the generic message names the very type
+                // the author wrote (spec §2.3).
+                if let Some(import) = &profile_import {
+                    if let Some(name) = unimported_encrypted_type(&v.decl.ty, import) {
+                        refuse_symbol_not_imported(
+                            out,
+                            v.decl.ty.span,
+                            import,
+                            &name,
+                            "it names a profile encrypted type",
+                            "§2.3",
+                        );
+                        continue;
+                    }
+                }
                 out.diagnostics.push(
                     Diagnostic::error(
                         codes::IN_SUGAR_NON_ENCRYPTED,
@@ -80,6 +99,22 @@ pub(crate) fn scan<'ast>(
                 );
                 continue;
             };
+            // The expansion emits the external wire type, which a selective
+            // import must also name (spec §2.3).
+            if let Some(import) = &profile_import {
+                let wire = profile.external_input_type(ety);
+                if !import.has(&wire) {
+                    refuse_symbol_not_imported(
+                        out,
+                        v.decl.ty.span,
+                        import,
+                        &wire,
+                        "the expansion declares the parameter with it",
+                        "§2.3",
+                    );
+                    continue;
+                }
+            }
             let Some(name) = v.name else {
                 out.diagnostics.push(
                     Diagnostic::error(
@@ -337,6 +372,47 @@ fn bad_position(out: &mut CheckedUnit, span: Span, position: &str) {
         )
         .with_rule("§2.3"),
     );
+}
+
+/// The diagnostic for a symbol a selective import does not bring into scope.
+///
+/// `written` is what the author typed (or, for a generated name, what the
+/// expansion will emit); `role` explains which of the two it is.
+pub(crate) fn refuse_symbol_not_imported(
+    out: &mut CheckedUnit,
+    span: Span,
+    import: &crate::imports::SelectiveProfileImport,
+    symbol: &str,
+    role: &str,
+    rule: &'static str,
+) {
+    let mut d = Diagnostic::error(
+        codes::SUGAR_SYMBOL_NOT_IMPORTED,
+        span,
+        format!(
+            "`{symbol}` is not in scope: {role}, and this file imports the profile \
+             module selectively without naming it; add `{symbol}` to that import"
+        ),
+    )
+    .with_rule(rule);
+    d.fixits.push(import.extend_fixit(symbol));
+    out.diagnostics.push(d);
+}
+
+/// Whether a type the author wrote names a profile encrypted type that a
+/// selective import failed to bring into scope.
+pub(crate) fn unimported_encrypted_type<'ast>(
+    ty: &ast::Type<'ast>,
+    import: &crate::imports::SelectiveProfileImport,
+) -> Option<String> {
+    let ast::TypeKind::Custom(path) = &ty.kind else {
+        return None;
+    };
+    let [seg] = path.segments() else {
+        return None;
+    };
+    let name = seg.as_str();
+    (crate::trust::etype_by_name(name).is_some() && !import.has(name)).then(|| name.to_string())
 }
 
 /// The span of the first modifier-invocation argument that names `needle`.

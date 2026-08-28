@@ -16,9 +16,12 @@
 //!    profile library, and both solc and the verify gate re-check actual
 //!    name resolution downstream.
 //! 3. **Incomplete inheritance.** [`UnresolvedReason::IncompleteInheritance`]
-//!    defers to its file-scope `fallback`, to which rules 1–2 apply. (A base
-//!    contract shadowing `FHE`/`euint32` cannot be ruled out, but treating
-//!    that as possible would reject every inheriting contract; the explicit
+//!    defers to its `fallback` — what file scope would have said — so rule 2
+//!    can still recognize exposure from an explicit profile plain import.
+//!    This is a deliberate, narrow policy: the binder does not resolve that
+//!    fallback itself, because an unseen base can shadow the name. (A base
+//!    shadowing `FHE`/`euint32` cannot be ruled out either, but treating that
+//!    as possible would reject every inheriting contract; the explicit
 //!    profile import wins.)
 //! 4. **In-unit library.** The name resolves to an in-unit `library FHE`
 //!    declared in a file that also declares a user-defined value type
@@ -65,7 +68,7 @@ impl Trust {
     }
 
     /// Whether an import specifier denotes the profile library.
-    fn specifier_trusted(&self, spec: &str) -> bool {
+    pub(crate) fn specifier_trusted(&self, spec: &str) -> bool {
         if self.specifiers.iter().any(|s| s == spec) {
             return true;
         }

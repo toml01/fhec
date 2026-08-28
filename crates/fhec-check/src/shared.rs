@@ -45,7 +45,9 @@
 //! expression's own boundaries, so it composes with R2's grants and with
 //! ordinary operator lowering inside the expression without owning anything.
 
-use fhec_bind::{BoundUnit, FunctionInfo, SourceFile};
+use fhec_bind::{
+    BaseRef, BoundUnit, ContractId, FunctionInfo, Resolution, SourceFile, UnresolvedReason,
+};
 use fhec_ir::EType;
 use fhec_targets::TargetProfile;
 use solar_ast as ast;
@@ -80,7 +82,7 @@ pub(crate) fn scan<'ast>(
     out: &mut CheckedUnit,
 ) {
     for (fid, f) in unit.functions() {
-        scan_params(unit, trust, profile, out, fid, f);
+        scan_params(files, unit, trust, profile, out, fid, f);
         scan_returns(unit, trust, profile, out, fid, f);
     }
     // Event/error parameter lists and state variables: never legal, and not
@@ -107,7 +109,9 @@ pub(crate) fn declares_shared_return(f: &ast::ItemFunction<'_>) -> bool {
 // Shared inputs — `in shared eT name`
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn scan_params<'ast>(
+    files: &[SourceFile<'ast>],
     unit: &BoundUnit<'ast>,
     trust: &Trust,
     profile: &dyn TargetProfile,
@@ -120,6 +124,7 @@ fn scan_params<'ast>(
     if decls.iter().all(|d| d.shared.is_none()) {
         return;
     }
+    let profile_import = crate::imports::selective_profile_import(files[f.file.index()].ast, trust);
 
     // Whole-list rules first, each refusing the function outright: no site is
     // stated even for a parameter that is fine on its own (§1.3). The first
@@ -233,6 +238,23 @@ fn scan_params<'ast>(
         let ty = declared_ty(unit, trust, &decl.ty);
         let Ty::Encrypted(ety) = ty else {
             refused = true;
+            // The dominant cause is a selective import that names only the
+            // `shared*` wire types — exactly the files that reach for this
+            // marker first. Say that instead of listing the type the author
+            // already wrote (spec §2.8).
+            if let Some(import) = &profile_import {
+                if let Some(name) = crate::sugar::unimported_encrypted_type(&decl.ty, import) {
+                    crate::sugar::refuse_symbol_not_imported(
+                        out,
+                        decl.ty.span,
+                        import,
+                        &name,
+                        "it names a profile encrypted type",
+                        RULE,
+                    );
+                    continue;
+                }
+            }
             bad_position(
                 out,
                 decl.ty.span,
@@ -256,6 +278,24 @@ fn scan_params<'ast>(
         if !supports_shared(profile, out, ety, shared.span) {
             refused = true;
             continue;
+        }
+        // The expansion declares the parameter with the shared wire type,
+        // which a selective import must also name (spec §2.8).
+        if let Some(import) = &profile_import {
+            if let Ok(wire) = profile.shared_wire_type(ety) {
+                if !import.has(&wire) {
+                    refused = true;
+                    crate::sugar::refuse_symbol_not_imported(
+                        out,
+                        decl.ty.span,
+                        import,
+                        &wire,
+                        "the expansion declares the parameter with it",
+                        RULE,
+                    );
+                    continue;
+                }
+            }
         }
         // A bodiless declaration generates no local and keeps the author's
         // parameter name, so no name is introduced to collide.
@@ -484,8 +524,34 @@ fn scan_returns<'ast>(
                     continue;
                 }
             }
-            match out.types.get(e.span) {
+            let recorded = out.types.get(e.span);
+            match recorded {
                 Some(Ty::Encrypted(t)) if *t == ety => return_exprs.push(e.span),
+                // An unreadable base is the one cause fhec cannot rule out by
+                // reading harder, and it is also the one cause the output
+                // checks for itself: the rewrite takes the encrypted type
+                // from the *declared* return, so a wrong assumption reaches
+                // solc as a type error on `FHE.shareT(...)`, never as a
+                // silent ciphertext. Warn and proceed rather than refuse
+                // every contract that inherits from a package.
+                None | Some(Ty::Unknown)
+                    if incomplete_inheritance_call(unit, trust, e).is_some() =>
+                {
+                    return_exprs.push(e.span);
+                    out.diagnostics.push(
+                        Diagnostic::warning(
+                            codes::SHARED_BOUNDARY_TYPE_MISMATCH,
+                            e.span,
+                            format!(
+                                "this function shares `{}`, but {}; the rewrite assumes the \
+                                 declared type, and solc rejects the output if that is wrong",
+                                ety.solidity_name(),
+                                describe_mismatch(unit, trust, e, recorded)
+                            ),
+                        )
+                        .with_rule(RULE),
+                    );
+                }
                 other => {
                     refused = true;
                     out.diagnostics.push(
@@ -493,9 +559,9 @@ fn scan_returns<'ast>(
                             codes::SHARED_BOUNDARY_TYPE_MISMATCH,
                             e.span,
                             format!(
-                                "this function shares `{}`, but the returned expression is {}",
+                                "this function shares `{}`, but {}",
                                 ety.solidity_name(),
-                                describe(other)
+                                describe_mismatch(unit, trust, e, other)
                             ),
                         )
                         .with_rule(RULE),
@@ -780,12 +846,103 @@ fn supports_shared(
     }
 }
 
-fn describe(ty: Option<&Ty>) -> String {
+fn describe_mismatch(
+    unit: &BoundUnit<'_>,
+    trust: &Trust,
+    expr: &ast::Expr<'_>,
+    ty: Option<&Ty>,
+) -> String {
     match ty {
-        Some(Ty::Encrypted(t)) => format!("`{}`", t.solidity_name()),
-        Some(Ty::Plain(_)) => "a plaintext value".to_string(),
-        _ => "of a type the checker cannot prove is that encrypted type".to_string(),
+        Some(Ty::Encrypted(t)) => {
+            format!("the returned expression is `{}`", t.solidity_name())
+        }
+        Some(Ty::Plain(_)) => "the returned expression is a plaintext value".to_string(),
+        _ => incomplete_inheritance_call(unit, trust, expr).unwrap_or_else(|| {
+            "the returned expression is of a type the checker cannot prove is that encrypted type"
+                .to_string()
+        }),
     }
+}
+
+/// The FHE2012 explanation for a call whose callee this unit cannot see past
+/// an incomplete inheritance surface.
+///
+/// `trust` is consulted so a call the checker types *through the profile
+/// library* never qualifies: an `Unknown` there means the profile does not
+/// model that operation, which the unreadable surface did not cause and which
+/// solc will not catch. Only a callee the unit genuinely cannot resolve does.
+fn incomplete_inheritance_call(
+    unit: &BoundUnit<'_>,
+    trust: &Trust,
+    expr: &ast::Expr<'_>,
+) -> Option<String> {
+    let ast::ExprKind::Call(callee, _) = &expr.peel_parens().kind else {
+        return None;
+    };
+    let (name, root) = callee_path(callee)?;
+    let res = unit.resolve(root)?;
+    if trust.is_fhe_library(unit, root.as_str(), res) {
+        return None;
+    }
+    let Resolution::Unresolved(UnresolvedReason::IncompleteInheritance { contract, .. }) = res
+    else {
+        return None;
+    };
+    let contract_name = &unit.contract(*contract).name_str;
+    let cause = opaque_base(unit, *contract, &mut Vec::new()).map_or_else(
+        || "has an inherited surface the binder cannot establish completely".to_string(),
+        |base| match base {
+            OpaqueBase::External(base) => {
+                format!("inherits `{base}`, which is outside the compilation unit")
+            }
+            OpaqueBase::Unknown(base) => {
+                format!("inherits `{base}`, which cannot be resolved inside the compilation unit")
+            }
+        },
+    );
+    Some(format!(
+        "`{name}` resolves to `Unknown` because contract `{contract_name}` {cause}"
+    ))
+}
+
+fn callee_path(expr: &ast::Expr<'_>) -> Option<(String, solar_interface::Ident)> {
+    match &expr.peel_parens().kind {
+        ast::ExprKind::Ident(id) => Some((id.as_str().to_string(), *id)),
+        ast::ExprKind::Member(object, member) => {
+            let (prefix, root) = callee_path(object)?;
+            Some((format!("{prefix}.{}", member.as_str()), root))
+        }
+        ast::ExprKind::CallOptions(inner, _) => callee_path(inner),
+        _ => None,
+    }
+}
+
+enum OpaqueBase {
+    External(String),
+    Unknown(String),
+}
+
+fn opaque_base(
+    unit: &BoundUnit<'_>,
+    contract: ContractId,
+    seen: &mut Vec<ContractId>,
+) -> Option<OpaqueBase> {
+    if seen.contains(&contract) {
+        return None;
+    }
+    seen.push(contract);
+    for base in &unit.contract(contract).bases {
+        match base {
+            BaseRef::External { name, .. } => return Some(OpaqueBase::External(name.clone())),
+            BaseRef::Unknown { name } => return Some(OpaqueBase::Unknown(name.clone())),
+            BaseRef::InUnit(base) => {
+                if let Some(cause) = opaque_base(unit, *base, seen) {
+                    return Some(cause);
+                }
+            }
+        }
+    }
+    None
 }
 
 fn bad_position(out: &mut CheckedUnit, span: Span, message: String) {

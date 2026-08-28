@@ -39,6 +39,7 @@
 mod decl;
 mod diag;
 mod exprs;
+mod imports;
 mod ops;
 mod precondition;
 mod shared;
@@ -76,7 +77,7 @@ pub fn check<'ast>(
     let trust = trust::Trust::new(profile);
     let mut out = CheckedUnit::default();
 
-    sugar::scan(files, unit, &trust, &mut out);
+    sugar::scan(files, unit, &trust, profile, &mut out);
     precondition::scan(unit, &mut out);
 
     let mut safe_cache: FxHashMap<fhec_bind::FunctionId, bool> = FxHashMap::default();

@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+// A plain import brings the whole profile surface into scope, so neither the
+// source type nor the generated wire type needs naming.
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract PlainImport {
+    euint64 stored;
+
+    function deposit(in euint64 amount) public {
+        stored = amount;
+    }
+
+    function receiveShared(in shared euint64 amount) external {
+        stored = amount;
+    }
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 799,
+      "end_byte": 816,
+      "start_line": 26,
+      "start_col": 16,
+      "end_line": 26,
+      "end_col": 33
+    },
+    "message": "this function shares `euint64`, but the returned expression is of a type the checker cannot prove is that encrypted type",
+    "rule": "§2.8"
+  }
+]

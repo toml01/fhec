@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+// The reverse direction: the source type is imported, but the expansion
+// declares the parameter with `externalEuint64`, which is not (spec §2.3).
+import { FHE, euint64 } from "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract WireTypeMissing {
+    euint64 stored;
+
+    function deposit(in euint64 amount) public {
+        stored = amount;
+    }
+}
