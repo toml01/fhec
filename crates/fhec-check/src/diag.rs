@@ -83,6 +83,10 @@ pub mod codes {
     pub const IN_SUGAR_PROOF_BINDING_INVALID: &str = "FHE1013";
     /// in-sugar-proof-binding-inconsistent (§2.3).
     pub const IN_SUGAR_PROOF_BINDING_INCONSISTENT: &str = "FHE1014";
+    /// shared-boundary-bad-position (§2.8).
+    pub const SHARED_BOUNDARY_BAD_POSITION: &str = "FHE1015";
+    /// shared-boundary-name-collision (§2.8).
+    pub const SHARED_BOUNDARY_NAME_COLLISION: &str = "FHE1016";
     /// precondition-bad-position (§2.7).
     pub const PRECONDITION_BAD_POSITION: &str = "FHE1017";
     /// encrypted-meets-unknown (§3.2).
@@ -107,6 +111,8 @@ pub mod codes {
     pub const FHE_IN_VIEW_OR_PURE: &str = "FHE2010";
     /// inc-dec-value-used (§4.2).
     pub const INC_DEC_VALUE_USED: &str = "FHE2011";
+    /// shared-boundary-type-mismatch (§2.8).
+    pub const SHARED_BOUNDARY_TYPE_MISMATCH: &str = "FHE2012";
     /// return-in-encrypted-branch (§7.1).
     pub const RETURN_IN_BRANCH: &str = "FHE3001";
     /// break-continue-in-encrypted-branch (§7.1).

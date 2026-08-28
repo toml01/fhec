@@ -1517,6 +1517,348 @@ fn no_precondition_leaves_the_sugar_untouched() {
     });
 }
 
+// ---- the shared boundary (spec §2.8) -----------------------------------------
+
+/// Wraps contract members in a bare unit, without the standard test contract.
+fn unit(members: &str) -> String {
+    format!(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract S {{\n\
+           euint32 a;\n\
+           euint64 b;\n\
+           uint256 plain;\n\
+         {members}\n\
+         }}\n"
+    )
+}
+
+fn shared_codes(members: &str) -> Vec<&'static str> {
+    with_checked(&[("t.fsol", &unit(members))], |c, _| {
+        c.diagnostics.iter().map(|d| d.code).collect()
+    })
+}
+
+#[test]
+fn shared_input_states_a_site_and_no_in_sugar_site() {
+    let src = unit("function g(in shared euint32 amount) external { a = amount; }");
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        // The §2.3 scan must not claim it: `in shared` is a different
+        // expansion with a different wire type.
+        assert!(c.sugar_sites.is_empty());
+        assert_eq!(c.shared_input_sites.len(), 1);
+        let s = &c.shared_input_sites[0];
+        assert_eq!(snip(s.param_span), "in shared euint32 amount");
+        assert_eq!(s.name, "amount");
+        assert_eq!(s.ty.solidity_name(), "euint32");
+        assert!(s.has_body);
+    });
+}
+
+#[test]
+fn shared_return_states_one_site_per_function_and_suppresses_r3() {
+    let src = unit(
+        "function g(bool c) public returns (shared(msg.sender) euint64) {\n\
+           if (c) { return b; }\n\
+           return b;\n\
+         }",
+    );
+    with_checked(&[("t.fsol", &src)], |c, snip| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.shared_return_sites.len(), 1);
+        let s = &c.shared_return_sites[0];
+        assert_eq!(snip(s.decl_span), "shared(msg.sender) euint64");
+        assert_eq!(s.ty.solidity_name(), "euint64");
+        assert_eq!(s.recipient, "msg.sender");
+        assert_eq!(s.return_exprs.len(), 2);
+        // §8.3 R3 must not also fire: the share call is the grant.
+        assert!(c.acl.returns.is_empty());
+    });
+}
+
+#[test]
+fn an_ordinary_encrypted_return_still_states_an_r3_fact() {
+    // Guards the suppression above against over-reach.
+    let src = unit("function g() public returns (euint64) { return b; }");
+    with_checked(&[("t.fsol", &src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert!(c.shared_return_sites.is_empty());
+        assert_eq!(c.acl.returns.len(), 1);
+    });
+}
+
+#[test]
+fn a_bodiless_shared_declaration_states_a_site_with_no_returns() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        interface I {\n\
+          function g(in shared euint32 amount) external;\n\
+          function h() external returns (shared(msg.sender) euint64);\n\
+        }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.shared_input_sites.len(), 1);
+        assert!(!c.shared_input_sites[0].has_body);
+        assert_eq!(c.shared_return_sites.len(), 1);
+        assert!(c.shared_return_sites[0].return_exprs.is_empty());
+    });
+}
+
+#[test]
+fn illegal_shared_positions_are_fhe1015() {
+    for members in [
+        // Kind, visibility, and mutability of a shared input. `public` is
+        // illegal as well: a public function is callable internally, and
+        // lowering rewrites the declaration alone, so an internal call site
+        // would still pass the unshared `eT`.
+        "function g(in shared euint32 amount) internal { a = amount; }",
+        "function g(in shared euint32 amount) private { a = amount; }",
+        "function g(in shared euint32 amount) public { a = amount; }",
+        "function g(in shared euint32 amount) external view { amount; }",
+        "function g(in shared euint32 amount) external pure { amount; }",
+        "constructor(in shared euint32 amount) { a = amount; }",
+        "modifier m(in shared euint32 amount) { _; }",
+        // The MVP mixing rule.
+        "function g(in shared euint32 s, in euint32 e) external { a = s; a = e; }",
+        "function g(in(p) shared euint32 s, bytes calldata p) external { a = s; p; }",
+        // Shape of a shared input.
+        "function g(in shared(msg.sender) euint32 s) external { a = s; }",
+        "function g(in shared uint256 s) external { s; }",
+        // An encrypted type is a value type: no data location applies, and
+        // the declaration rewrite must not drop the keyword in silence.
+        "function g(in shared euint32 calldata s) external { a = s; }",
+        "function g(in shared euint32 memory s) external { a = s; }",
+        // Kind, visibility, and mutability of a shared return.
+        "function g() internal returns (shared(msg.sender) euint64) { return b; }",
+        "function g() public view returns (shared(msg.sender) euint64) { return b; }",
+        // Shape of a shared return.
+        "function g() public returns (shared(msg.sender) euint64 out) { out = b; }",
+        "function g() public returns (shared(msg.sender) euint64, uint256) { return (b, 1); }",
+        "function g() public returns (shared(msg.sender) uint256) { return 1; }",
+        "function g() public returns (shared(msg.sender) euint64 memory) { return b; }",
+        "address owner;\nfunction g() public returns (shared(owner) euint64) { return b; }",
+        // Statement shape inside a shared-return function.
+        "function g() public returns (shared(msg.sender) euint64) { return; }",
+        "function g(bool c) public returns (shared(msg.sender) euint64) { if (c) return b; return b; }",
+        "function g() public returns (shared(msg.sender) euint64) { return b = b; }",
+    ] {
+        let got = shared_codes(members);
+        assert_eq!(got, ["FHE1015"], "members: {members}");
+        with_checked(&[("t.fsol", &unit(members))], |c, _| {
+            assert!(c.shared_input_sites.is_empty(), "members: {members}");
+            assert!(c.shared_return_sites.is_empty(), "members: {members}");
+        });
+    }
+}
+
+#[test]
+fn a_shared_marker_in_a_try_declaration_list_is_fhe1015() {
+    // Solar parses the success clause's `returns (...)` list and every `catch`
+    // clause's argument list with the ordinary parameter grammar, so a marker
+    // can be written in either. Neither list is reachable from a function
+    // header, so the checker must find them by walking the body — otherwise
+    // the raw marker text leaks into the generated Solidity unlowered.
+    for members in [
+        "function g() public {\n\
+           try this.h() returns (shared(msg.sender) euint64 got) { got; } catch {}\n\
+         }\n\
+         function h() external returns (euint64) { return b; }",
+        "function g() public {\n\
+           try this.h() returns (euint64 got) { got; }\n\
+           catch Error(in shared euint64 reason) { reason; }\n\
+         }\n\
+         function h() external returns (euint64) { return b; }",
+    ] {
+        assert_eq!(shared_codes(members), ["FHE1015"], "members: {members}");
+    }
+}
+
+#[test]
+fn a_shared_marker_in_a_local_declaration_is_a_parse_error() {
+    // The counterpart of the rule above: solar's statement grammar never
+    // reaches the marker in a local declaration, tuple or not, so there is
+    // nothing for the checker to flag. Pinned so a later grammar change that
+    // starts accepting the shape does not slip past the legality scan.
+    for members in [
+        "function g() public { shared(msg.sender) euint64 x = b; x; }",
+        "function g() public { (shared(msg.sender) euint64 x, uint256 y) = (b, 1); x; y; }",
+    ] {
+        let src = unit(members);
+        assert!(
+            fhec_syntax::with_parsed_source("t.fsol", &src, |_| ()).is_err(),
+            "members: {members}"
+        );
+    }
+}
+
+#[test]
+fn the_generated_wire_name_must_be_free() {
+    for members in [
+        "function g(in shared euint32 amount) external { uint256 amount_shared = 1; a = amount; amount_shared; }",
+        "function g(in shared euint32 amount, uint256 amount_shared) external { a = amount; amount_shared; }",
+    ] {
+        assert_eq!(shared_codes(members), ["FHE1016"], "members: {members}");
+    }
+}
+
+#[test]
+fn a_shared_return_must_return_exactly_its_declared_type() {
+    for members in [
+        // A different encrypted width.
+        "function g() public returns (shared(msg.sender) euint32) { return b; }",
+        // A plaintext value.
+        "function g() public returns (shared(msg.sender) euint64) { return plain; }",
+        // A value the checker cannot type (§1.3: refuse rather than guess).
+        "function g() public returns (shared(msg.sender) euint64) { return unknownFn(); }",
+    ] {
+        assert_eq!(shared_codes(members), ["FHE2012"], "members: {members}");
+    }
+}
+
+#[test]
+fn a_call_to_a_shared_return_types_as_unknown_at_its_call_site() {
+    // The binder resolves a shared return's declared type so the FHE2012 rule
+    // above can compare against it. Call-site inference must NOT inherit that:
+    // what the call actually yields is the `sharedT` wire handle, so an
+    // encrypted operand meeting it is FHE2001, never `FHE.add(take(), b)`.
+    let members = "function take() public returns (shared(msg.sender) euint64) { return b; }\n\
+                   function use() public { b = take() + b; }";
+    assert_eq!(shared_codes(members), ["FHE2001"], "members: {members}");
+    // The two rules are separate code paths: `take`'s own statement-shape
+    // check is unaffected and the site still stands.
+    with_checked(&[("t.fsol", &unit(members))], |c, _| {
+        assert_eq!(c.shared_return_sites.len(), 1);
+    });
+}
+
+#[test]
+fn a_plain_encrypted_return_still_types_at_its_call_site() {
+    // The regression guard for the rule above: only a `shared(...)` return is
+    // opaque. A *named* encrypted return is what the binder resolves for the
+    // ordinary case, and it must keep lowering as before. (An unnamed plain
+    // return is `Unknown` at a call site today for an unrelated reason — the
+    // binder registers no var for it — which is why the shared-return rule is
+    // a restoration, not a new restriction.)
+    let members = "function take() public returns (euint64 out) { out = b; }\n\
+                   function use() public { b = take() + b; }";
+    assert!(shared_codes(members).is_empty(), "members: {members}");
+    with_checked(&[("t.fsol", &unit(members))], |c, _| {
+        assert_eq!(c.operator_sites.len(), 1);
+    });
+}
+
+/// Wraps contract members in a unit that also declares a vault interface, for
+/// the §8.2 R2 interaction below.
+fn vault_unit(members: &str) -> String {
+    format!(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         interface IVault {{\n\
+           function pull(euint64 v) external returns (euint64);\n\
+           function idx(euint64 v) external returns (uint256);\n\
+           function tag(uint256 t) external returns (uint256);\n\
+         }}\n\
+         contract S {{\n\
+           euint64 b;\n\
+           euint64 fee;\n\
+           ebool flag;\n\
+           euint64[] vals;\n\
+           IVault vault;\n\
+         {members}\n\
+         }}\n"
+    )
+}
+
+fn vault_codes(members: &str) -> Vec<&'static str> {
+    with_checked(&[("t.fsol", &vault_unit(members))], |c, _| {
+        c.diagnostics.iter().map(|d| d.code).collect()
+    })
+}
+
+#[test]
+fn a_shared_return_refuses_a_rewrite_site_the_r2_rule_would_swallow() {
+    // §8.2 R2 owns the whole statement it anchors on: it renders its own call
+    // site and pass 1 then skips every statement inside that span. While R3
+    // applied, its whole-statement re-render happened to cover the returned
+    // expression; a shared return suppresses R3 (§8.3) and wraps in place, so
+    // nothing lowers the expression any more. Refuse rather than emit a
+    // silently unlowered operator (§1.3).
+    for members in [
+        // The R2 fact anchors on the enclosing `try`, which contains the
+        // `return`.
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           try vault.pull(b) returns (euint64 pulled) { return pulled - fee; }\n\
+           catch { return fee; }\n\
+         }",
+        // The R2 fact anchors on the `return` statement itself.
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           return vals[vault.idx(b)] + fee;\n\
+         }",
+        // A ternary is a rewrite site too (§5.4).
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           try vault.pull(b) returns (euint64 pulled) { return flag ? pulled : fee; }\n\
+           catch { return fee; }\n\
+         }",
+    ] {
+        assert_eq!(vault_codes(members), ["FHE1015"], "members: {members}");
+        with_checked(&[("t.fsol", &vault_unit(members))], |c, _| {
+            assert!(c.shared_return_sites.is_empty(), "members: {members}");
+        });
+    }
+}
+
+#[test]
+fn a_shared_return_with_nothing_left_to_lower_survives_an_r2_statement() {
+    // The regression guard for the rule above: R2's own call site is the only
+    // rewrite the statement needs, and R2 renders it itself. Nothing is at
+    // risk, so the site must still be stated.
+    let members = "function g() public returns (shared(msg.sender) euint64) {\n\
+                     try vault.pull(b) returns (euint64 pulled) { return pulled; }\n\
+                     catch { return fee; }\n\
+                   }";
+    assert!(vault_codes(members).is_empty(), "members: {members}");
+    with_checked(&[("t.fsol", &vault_unit(members))], |c, snip| {
+        assert_eq!(c.acl.external_args.len(), 1, "the R2 fact must still stand");
+        assert_eq!(c.shared_return_sites.len(), 1);
+        let exprs = &c.shared_return_sites[0].return_exprs;
+        assert_eq!(
+            exprs.iter().map(|s| snip(*s)).collect::<Vec<_>>(),
+            ["pulled", "fee"]
+        );
+    });
+}
+
+#[test]
+fn a_shared_return_without_any_r2_fact_is_untouched_by_the_rule() {
+    // The common case: operators in the returned expression lower normally
+    // because no R2 fact owns the statement.
+    for members in [
+        "function g() public returns (shared(msg.sender) euint64) { return b + fee; }",
+        "function g() public returns (shared(msg.sender) euint64) { return flag ? b : fee; }",
+        // An external call with no encrypted argument states no R2 fact.
+        "function g() public returns (shared(msg.sender) euint64) {\n\
+           return vals[vault.tag(1)] + fee;\n\
+         }",
+    ] {
+        assert!(vault_codes(members).is_empty(), "members: {members}");
+        with_checked(&[("t.fsol", &vault_unit(members))], |c, _| {
+            assert!(c.acl.external_args.is_empty(), "members: {members}");
+            assert_eq!(c.shared_return_sites.len(), 1, "members: {members}");
+            assert_eq!(c.operator_sites.len() + c.ternary_sites.len(), 1);
+        });
+    }
+}
+
+#[test]
+fn shared_stays_an_ordinary_identifier_in_the_checker_too() {
+    // §1.4: plain Solidity naming a variable `shared` produces no site and no
+    // diagnostic.
+    let members = "uint256 shared;\n\
+                   function g(uint256 shared_) public { shared = shared_; }";
+    assert!(shared_codes(members).is_empty());
+}
+
 // ---- helpers referenced from bodies ------------------------------------------
 
 // `unknownFn`, `stateWriterB`, `fhelperWrite`, `plainStateRead` are

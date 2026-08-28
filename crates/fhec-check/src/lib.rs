@@ -41,6 +41,7 @@ mod diag;
 mod exprs;
 mod ops;
 mod precondition;
+mod shared;
 mod sites;
 mod sugar;
 mod trust;
@@ -51,7 +52,7 @@ pub use diag::{codes, Diagnostic, FixIt, Severity};
 pub use sites::{
     AclFacts, CheckedUnit, CompoundAssignSite, EncryptedArgCall, EncryptedIfSite, EncryptedReturn,
     EncryptedStorageWrite, InSugarSite, IncDecSite, OperandKind, OperandPlan, OperatorSite,
-    PreconditionSite, SlotKind, TernarySite, TypeTable,
+    PreconditionSite, SharedInputSite, SharedReturnSite, SlotKind, TernarySite, TypeTable,
 };
 pub use ty::{PlainTy, Ty};
 
@@ -82,5 +83,8 @@ pub fn check<'ast>(
     for fid in fids {
         walk::FnChecker::new(unit, &trust, profile, sm, &mut out, &mut safe_cache, fid).run();
     }
+    // Last: the shared-return type rule (FHE2012) reads the types the walk
+    // recorded for each returned expression.
+    shared::scan(files, unit, &trust, profile, &mut out);
     out
 }

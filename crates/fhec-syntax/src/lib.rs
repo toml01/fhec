@@ -226,6 +226,187 @@ pub fn collect_in_sugar<'ast>(unit: &'ast ast::SourceUnit<'ast>) -> Vec<InSugarU
     c.out
 }
 
+/// Where a shared-boundary marker appeared (fhec spec §2.8).
+///
+/// The parser records the marker wherever it can be written unambiguously; the
+/// checker maps every position but the two legal ones to FHE1015.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SharedPosition {
+    /// A parameter list of the given function kind. Only `in shared eT name`
+    /// on a `function` is legal.
+    Parameters(ast::FunctionKind),
+    /// A `returns (...)` list of the given function kind. Only
+    /// `shared(msg.sender) eT` on a `function` is legal.
+    Returns(ast::FunctionKind),
+    /// An event parameter list.
+    Event,
+    /// An error parameter list.
+    Error,
+    /// A state-variable declaration.
+    StateVar,
+    /// Any other variable-declaration position.
+    Other,
+}
+
+/// The recipient of a `shared(...)` marker, classified for the checker.
+///
+/// The MVP accepts exactly `msg.sender`; the classification is structural, not
+/// textual, so spacing and comments inside the marker do not matter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SharedRecipient {
+    /// Exactly the member expression `msg.sender`.
+    MsgSender,
+    /// Any other expression. The span is the recipient expression's own.
+    Other(interface::Span),
+}
+
+/// One occurrence of a shared-boundary marker.
+#[derive(Clone, Debug)]
+pub struct SharedUse {
+    /// Span of the marker: `shared` alone (input form) or `shared` through the
+    /// recipient's closing `)` (return form).
+    pub marker_span: interface::Span,
+    /// Span of the whole declaration the marker belongs to.
+    pub decl_span: interface::Span,
+    /// Span of the declared type that follows the marker.
+    pub ty_span: interface::Span,
+    /// The recipient, when the `shared(recipient)` form was used. `None` is
+    /// the bare input-side marker `in shared eT name`.
+    pub recipient: Option<SharedRecipient>,
+    /// Whether the declaration also carries the §2.3 `in` marker. The bare
+    /// form can only appear with it; the recipient form must appear without.
+    pub has_in_marker: bool,
+    /// The identifier bound by an accompanying `in(proof)` binder, if any.
+    /// Binding a proof and sharing are mutually exclusive (FHE1015).
+    pub proof: Option<String>,
+    /// Declared name, if named.
+    pub name: Option<String>,
+    /// Enclosing function/modifier name, if any and named.
+    pub function: Option<String>,
+    /// Syntactic position.
+    pub position: SharedPosition,
+}
+
+/// Whether an expression is exactly the member access `msg.sender`.
+///
+/// Structural on purpose: the checker must not accept a *different* expression
+/// that happens to evaluate to the same address, because it cannot prove that.
+pub fn is_msg_sender(e: &ast::Expr<'_>) -> bool {
+    let ast::ExprKind::Member(base, member) = &e.kind else {
+        return false;
+    };
+    let ast::ExprKind::Ident(id) = &base.kind else {
+        return false;
+    };
+    id.as_str() == "msg" && member.as_str() == "sender"
+}
+
+/// Collects every shared-boundary marker occurrence in a parsed source unit.
+///
+/// Must be called inside a live session (see [`collect_in_sugar`]).
+pub fn collect_shared<'ast>(unit: &'ast ast::SourceUnit<'ast>) -> Vec<SharedUse> {
+    use ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Collector {
+        pos: SharedPosition,
+        function: Option<String>,
+        out: Vec<SharedUse>,
+    }
+
+    impl<'ast> Visit<'ast> for Collector {
+        type BreakValue = std::convert::Infallible;
+
+        fn visit_item_function(
+            &mut self,
+            f: &'ast ast::ItemFunction<'ast>,
+        ) -> ControlFlow<Self::BreakValue> {
+            let prev_fn = self.function.take();
+            self.function = f.header.name.map(|i| i.to_string());
+            let prev_pos = self.pos;
+            self.pos = SharedPosition::Parameters(f.kind);
+            self.visit_parameter_list(&f.header.parameters)?;
+            if let Some(returns) = &f.header.returns {
+                self.pos = SharedPosition::Returns(f.kind);
+                self.visit_parameter_list(returns)?;
+            }
+            self.pos = SharedPosition::Other;
+            if let Some(body) = &f.body {
+                self.visit_block(body)?;
+            }
+            self.pos = prev_pos;
+            self.function = prev_fn;
+            ControlFlow::Continue(())
+        }
+
+        fn visit_item_event(
+            &mut self,
+            e: &'ast ast::ItemEvent<'ast>,
+        ) -> ControlFlow<Self::BreakValue> {
+            let prev = self.pos;
+            self.pos = SharedPosition::Event;
+            self.visit_parameter_list(&e.parameters)?;
+            self.pos = prev;
+            ControlFlow::Continue(())
+        }
+
+        fn visit_item_error(
+            &mut self,
+            e: &'ast ast::ItemError<'ast>,
+        ) -> ControlFlow<Self::BreakValue> {
+            let prev = self.pos;
+            self.pos = SharedPosition::Error;
+            self.visit_parameter_list(&e.parameters)?;
+            self.pos = prev;
+            ControlFlow::Continue(())
+        }
+
+        fn visit_item(&mut self, item: &'ast ast::Item<'ast>) -> ControlFlow<Self::BreakValue> {
+            let prev = self.pos;
+            if matches!(item.kind, ast::ItemKind::Variable(_)) {
+                self.pos = SharedPosition::StateVar;
+            }
+            let r = self.walk_item(item);
+            self.pos = prev;
+            r
+        }
+
+        fn visit_variable_definition(
+            &mut self,
+            var: &'ast ast::VariableDefinition<'ast>,
+        ) -> ControlFlow<Self::BreakValue> {
+            if let Some(shared) = &var.shared {
+                self.out.push(SharedUse {
+                    marker_span: shared.span,
+                    decl_span: var.span,
+                    ty_span: var.ty.span,
+                    recipient: shared.recipient.as_ref().map(|e| {
+                        if is_msg_sender(e) {
+                            SharedRecipient::MsgSender
+                        } else {
+                            SharedRecipient::Other(e.span)
+                        }
+                    }),
+                    has_in_marker: var.in_sugar.is_some(),
+                    proof: var.in_sugar.and_then(|s| s.proof).map(|i| i.to_string()),
+                    name: var.name.map(|i| i.to_string()),
+                    function: self.function.clone(),
+                    position: self.pos,
+                });
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    let mut c = Collector {
+        pos: SharedPosition::Other,
+        function: None,
+        out: Vec::new(),
+    };
+    let _ = c.visit_source_unit(unit);
+    c.out
+}
+
 enum SourceInput {
     Text(String),
     File(std::path::PathBuf),

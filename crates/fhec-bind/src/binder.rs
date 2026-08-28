@@ -805,6 +805,32 @@ impl<'ast> Binder<'ast> {
             }
         }
 
+        // Return types carrying a §2.8 shared-boundary marker. Named returns
+        // are registered as vars and the signature-level pass above already
+        // walked them; unnamed ones are not registered at all, so their type
+        // name has no resolution and every consumer sees `Unknown`. A shared
+        // return is unnamed by definition and must know its declared encrypted
+        // type, so it is walked here.
+        //
+        // Deliberately narrow: resolving *every* unnamed return type would
+        // also teach the checker the result of in-unit calls it treats as
+        // `Unknown` today, which changes typing and lowering well beyond the
+        // shared boundary. That is a separate change.
+        for fi in 0..self.unit.functions.len() {
+            let (file, contract, ast) = (
+                self.unit.functions[fi].file,
+                self.unit.functions[fi].contract,
+                self.unit.functions[fi].ast,
+            );
+            if !ast.header.returns().iter().any(|r| r.shared.is_some()) {
+                continue;
+            }
+            let mut w = Walker::new(self, file, contract, None);
+            for r in ast.header.returns().iter().filter(|r| r.shared.is_some()) {
+                w.walk_type(&r.ty);
+            }
+        }
+
         // Contract base constructor arguments (`is Base(42)`).
         for ci in 0..self.unit.contracts.len() {
             let (file, ast) = (self.unit.contracts[ci].file, self.unit.contracts[ci].ast);

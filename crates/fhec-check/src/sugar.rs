@@ -57,6 +57,12 @@ pub(crate) fn scan<'ast>(
             let Some(in_sugar) = v.decl.in_sugar else {
                 continue;
             };
+            if v.decl.shared.is_some() {
+                // `in shared eT name` is the §2.8 shared boundary, not an
+                // external input: it expands to a different wire type and a
+                // different materializer. `crate::shared` owns it.
+                continue;
+            }
             if !legal_kind {
                 bad_position(out, v.decl.span, f.ast.kind.to_str());
                 continue;
@@ -167,11 +173,13 @@ fn proof_mode(
     f: &FunctionInfo<'_>,
     out: &mut CheckedUnit,
 ) -> Result<ProofMode, ()> {
+    // `in shared` parameters carry the `in` marker too but bind no proof
+    // (§2.8); they are not part of this list's proof agreement.
     let sugared: Vec<&ast::VariableDefinition<'_>> = f
         .params
         .iter()
         .map(|&p| unit.var(p).decl)
-        .filter(|d| d.in_sugar.is_some())
+        .filter(|d| d.in_sugar.is_some() && d.shared.is_none())
         .collect();
     let Some(first) = sugared.first() else {
         return Ok(ProofMode::Appended);
@@ -326,9 +334,9 @@ fn bad_position(out: &mut CheckedUnit, span: Span, position: &str) {
 }
 
 /// Whether any identifier inside the function item equals `needle`
-/// (spec §2.3: the expansion must not collide, and the transpiler must not
-/// rename silently).
-fn ident_occurs<'ast>(f: &'ast ast::ItemFunction<'ast>, needle: &str) -> bool {
+/// (spec §2.3, §2.8: a fixed generated name must not collide, and the
+/// transpiler must not rename silently).
+pub(crate) fn ident_occurs<'ast>(f: &'ast ast::ItemFunction<'ast>, needle: &str) -> bool {
     use ast::visit::Visit;
     use std::ops::ControlFlow;
 

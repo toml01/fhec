@@ -9,6 +9,7 @@ description = "FHE type checker, definite assignment, legality"
 fhec-ir = { path = "../fhec-ir" }
 fhec-targets = { path = "../fhec-targets" }
 fhec-bind = { path = "../fhec-bind" }
+fhec-syntax = { path = "../fhec-syntax" }
 solar-ast.workspace = true
 solar-interface.workspace = true
 solar-data-structures.workspace = true

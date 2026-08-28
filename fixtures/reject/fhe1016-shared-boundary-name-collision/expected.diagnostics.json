@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE1016",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 456,
+      "end_byte": 480,
+      "start_line": 13,
+      "start_col": 32,
+      "end_line": 13,
+      "end_col": 56
+    },
+    "message": "the expansion needs the identifier `amount_shared`, which is already used in this function; rename one of them (the transpiler never renames silently)",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE1016",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 609,
+      "end_byte": 633,
+      "start_line": 19,
+      "start_col": 32,
+      "end_line": 19,
+      "end_col": 56
+    },
+    "message": "the expansion needs the identifier `amount_shared`, which is already used in this function; rename one of them (the transpiler never renames silently)",
+    "rule": "§2.8"
+  }
+]

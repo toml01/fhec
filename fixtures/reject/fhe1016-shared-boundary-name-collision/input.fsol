@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// The wire parameter of a shared input is named `<name>_shared` (spec §2.8).
+// The name is fixed, so a collision is refused: the transpiler never renames
+// silently. A shared *return* introduces no generated identifier at all, so it
+// has nothing to collide with.
+contract SharedNameCollision {
+    euint64 b;
+
+    function collidesWithLocal(in shared euint64 amount) external {
+        uint256 amount_shared = 1;
+        b = amount;
+        amount_shared;
+    }
+
+    function collidesWithParam(in shared euint64 amount, uint256 amount_shared) external {
+        b = amount;
+        amount_shared;
+    }
+}

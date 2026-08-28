@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+interface IVault {
+    function pull() external returns (euint64);
+}
+
+// A shared return must know exactly which `share` call to emit, so the
+// returned expression MUST type as the declared encrypted type (spec §2.8).
+// A different encrypted type, a plaintext value, and a type the checker
+// cannot prove are all FHE2012 — refusing beats guessing (§1.3).
+contract SharedReturnTypeMismatch {
+    euint64 wide;
+    uint256 plain;
+    IVault vault;
+
+    function wrongWidth() public returns (shared(msg.sender) euint32) {
+        return wide;
+    }
+
+    function plaintext() public returns (shared(msg.sender) euint64) {
+        return plain;
+    }
+
+    function unprovable() public returns (shared(msg.sender) euint64) {
+        return vault.pull();
+    }
+}

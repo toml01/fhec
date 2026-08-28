@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// Plain CoFHE Solidity that crosses the shared boundary by hand: no dialect
+// marker anywhere, so the transpiler MUST reproduce it byte for byte (§1.4).
+// This is also what a §2.8 lowering produces, so it pins idempotence.
+contract SharedExplicitCalls {
+    euint64 balance;
+
+    function deposit(sharedEuint64 amount_shared) public {
+        euint64 amount = FHE.receiveEuint64Param(amount_shared);
+        balance = amount;
+        FHE.allowThis(balance);
+        FHE.allowSender(balance);
+    }
+
+    function take() public returns (sharedEuint64) {
+        return FHE.shareEuint64(balance, msg.sender);
+    }
+}

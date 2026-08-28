@@ -637,12 +637,21 @@ impl<'ast> FnChecker<'_, 'ast> {
 
     /// The declared return type shared by all candidates (single return
     /// value), or `Unknown`.
+    ///
+    /// A `shared(...)` return (§2.8) is always `Unknown` at a call site. The
+    /// declaration names the *plaintext-side* encrypted type `eT`, but the
+    /// value the call actually yields is the profile's `sharedT` wire handle,
+    /// which no rewrite of this checker understands. The binder resolves such
+    /// a return type so the shared-return statement rule can compare against
+    /// it; call-site inference must not inherit that knowledge, or an operator
+    /// over the result would lower to `FHE.op(sharedT, ...)` (§1.3 — refuse
+    /// rather than guess).
     fn common_return_ty(&mut self, fids: &[fhec_bind::FunctionId]) -> Ty {
         let mut common: Option<Ty> = None;
         for &f in fids {
             let info = self.unit.function(f);
             let rets = info.ast.header.returns();
-            if rets.len() != 1 {
+            if rets.len() != 1 || rets[0].shared.is_some() {
                 return Ty::Unknown;
             }
             let t = declared_ty(self.unit, self.trust, &rets[0].ty);

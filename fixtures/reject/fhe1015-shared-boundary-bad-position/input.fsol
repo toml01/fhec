@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// One member per illegal shared-boundary position or shape (spec §2.8).
+// Solar parses every one of them (allow-and-flag), so each must reach the
+// checker as FHE1015 rather than as a parse error.
+error SharedError(shared(msg.sender) euint64 v);
+
+contract SharedInputBadPosition {
+    euint64 b;
+
+    shared(msg.sender) euint64 stateVar;
+
+    event SharedEvent(shared(msg.sender) euint64 v);
+
+    constructor(in shared euint64 amount) {
+        b = amount;
+    }
+
+    function internalInput(in shared euint64 amount) internal {
+        b = amount;
+    }
+
+    // `public` is illegal too: a public function is callable internally, and
+    // an internal call site is not rewritten to pass the shared handle.
+    function publicInput(in shared euint64 amount) public {
+        b = amount;
+    }
+
+    function viewInput(in shared euint64 amount) external view {
+        amount;
+    }
+
+    function mixedInputs(in shared euint64 s, in euint64 e) external {
+        b = s;
+        b = e;
+    }
+
+    function boundBinder(in(proof) shared euint64 amount, bytes calldata proof) external {
+        b = amount;
+        proof;
+    }
+
+    function inputWithRecipient(in shared(msg.sender) euint64 amount) external {
+        b = amount;
+    }
+
+    function nonEncryptedInput(in shared uint256 amount) external {
+        amount;
+    }
+
+    // An encrypted type is a value type, so a data location never applies.
+    // The declaration rewrite would otherwise drop the keyword in silence.
+    function locatedInput(in shared euint64 calldata amount) external {
+        b = amount;
+    }
+
+    modifier sharedModifier(in shared euint64 amount) {
+        _;
+    }
+}
+
+// Return-side shapes. Kept in a second contract so the spans of the cases
+// above do not move when this one grows.
+contract SharedReturnBadPosition {
+    euint64 b;
+    address owner;
+
+    function namedReturn() public returns (shared(msg.sender) euint64 out) {
+        out = b;
+    }
+
+    function tupleReturn() public returns (shared(msg.sender) euint64, uint256) {
+        return (b, 1);
+    }
+
+    function otherRecipient() public returns (shared(owner) euint64) {
+        return b;
+    }
+
+    function viewReturn() public view returns (shared(msg.sender) euint64) {
+        return b;
+    }
+
+    function internalReturn() internal returns (shared(msg.sender) euint64) {
+        return b;
+    }
+
+    function nonEncryptedReturn() public returns (shared(msg.sender) uint256) {
+        return 1;
+    }
+
+    function bareReturn() public returns (shared(msg.sender) euint64) {
+        return;
+    }
+
+    function bracelessReturn(bool c) public returns (shared(msg.sender) euint64) {
+        if (c) return b;
+        return b;
+    }
+
+    function assigningReturn() public returns (shared(msg.sender) euint64) {
+        return b = b;
+    }
+
+    function locatedReturn() public returns (shared(msg.sender) euint64 memory) {
+        return b;
+    }
+}
+
+// The `try` statement's own declaration lists. Solar parses both with the
+// ordinary parameter grammar, so a marker can be written in either; neither is
+// reachable from a function header, so the checker walks the body for them.
+interface ISharedVault {
+    function pull(uint256 v) external returns (uint256);
+}
+
+contract SharedTryBadPosition {
+    ISharedVault vault;
+
+    function tryReturns() public {
+        try vault.pull(1) returns (shared(msg.sender) euint64 got) {
+            got;
+        } catch {}
+    }
+
+    function catchArgs() public {
+        try vault.pull(1) returns (uint256 got) {
+            got;
+        } catch Error(in shared euint64 reason) {
+            reason;
+        }
+    }
+}
