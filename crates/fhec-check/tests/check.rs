@@ -2232,3 +2232,79 @@ fn an_unmodelled_profile_call_under_an_unseen_base_stays_an_error() {
         assert!(c.shared_return_sites.is_empty());
     });
 }
+
+#[test]
+fn a_precondition_may_call_require_under_an_unseen_base() {
+    // Every name degrades under an incomplete linearization, `require`
+    // included. Without restoring the builtin, a `precondition` block is
+    // unusable in any contract that inherits from a package.
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+        contract T is ReentrancyGuardTransient {
+            euint32 v;
+            function f(in euint32 amount) public {
+                precondition {
+                    require(true, "no");
+                }
+                v = amount;
+            }
+        }
+    "#;
+    let codes = codes_for_source(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+#[test]
+fn a_precondition_refuses_an_inherited_call_whose_overloads_are_hidden() {
+    // Solidity unions overloads across the whole linearization, so the known
+    // prefix is a lower bound. A `view` overload here must not license the
+    // state-changing one an unseen base may add.
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+        contract Base {
+            function helper(bool x) internal pure returns (uint256) { return x ? 1 : 0; }
+        }
+        contract T is ReentrancyGuardTransient, Base {
+            euint32 v;
+            function f(in euint32 amount) public {
+                precondition {
+                    uint256 g = helper(true);
+                    require(g == 1, "no");
+                }
+                v = amount;
+            }
+        }
+    "#;
+    let codes = codes_for_source(src);
+    assert!(codes.iter().any(|c| c == "FHE3015"), "{codes:?}");
+}
+
+#[test]
+fn a_precondition_keeps_an_inherited_call_when_every_base_is_visible() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract Base {
+            function helper(bool x) internal pure returns (uint256) { return x ? 1 : 0; }
+        }
+        contract T is Base {
+            euint32 v;
+            function f(in euint32 amount) public {
+                precondition {
+                    uint256 g = helper(true);
+                    require(g == 1, "no");
+                }
+                v = amount;
+            }
+        }
+    "#;
+    let codes = codes_for_source(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}

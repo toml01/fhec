@@ -305,6 +305,14 @@ impl<'ast> BoundUnit<'ast> {
 
     /// Looks up only the inherited members that precede every opaque base in
     /// all possible completions of an incomplete linearization.
+    ///
+    /// For a function name the returned list is a **lower bound** on the
+    /// overload set: Solidity unions overloads across the whole
+    /// linearization, and an unseen base may add a signature solc prefers.
+    /// A caller that grants a *permission* on the strength of this answer —
+    /// effect-freedom, branch safety — must therefore refuse instead when
+    /// the linearization is incomplete. Typing is safe: a wrong return type
+    /// dies at solc.
     pub(crate) fn inherited_member_in_known_prefix(
         &self,
         contract: ContractId,
