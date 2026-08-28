@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE4004",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 387,
+      "end_byte": 409,
+      "start_line": 12,
+      "start_col": 14,
+      "end_line": 12,
+      "end_col": 36
+    },
+    "message": "an ACL grant for this statement cannot be inserted in a `for` header (spec §8); move the statement above the loop",
+    "rule": "§8"
+  }
+]

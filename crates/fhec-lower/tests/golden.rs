@@ -1500,3 +1500,113 @@ fn if_unsupported_statement_rejects_with_fhe3013() {
         "FHE3013 must point at the offending statement"
     );
 }
+
+#[test]
+fn braceless_branch_body_is_wrapped_before_r2_grants() {
+    // Spec §8.0: the grant must not become the branch body and push the
+    // guarded call out of the branch.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function deposit(euint32 x) external;\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   IVault vault;\n\
+               \x20   function f(bool notPaused) public {\n\
+               \x20       if (notPaused) vault.deposit(a);\n\
+               \x20   }\n\
+               }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function deposit(euint32 x) external;\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   IVault vault;\n\
+               \x20   function f(bool notPaused) public {\n\
+               \x20       if (notPaused) { FHE.allowTransient(a, address(vault));\n\
+               \x20       vault.deposit(a);\n\
+               \x20       }\n\
+               \x20   }\n\
+               }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn braceless_branch_body_is_wrapped_after_r1_grants() {
+    // Mirror direction: R1 inserts after the write, which would otherwise
+    // grant unconditionally.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   mapping(address => euint32) bal;\n\
+               \x20   function f(bool ok, euint32 amt) public {\n\
+               \x20       if (ok) bal[msg.sender] = amt;\n\
+               \x20   }\n\
+               }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   mapping(address => euint32) bal;\n\
+               \x20   function f(bool ok, euint32 amt) public {\n\
+               \x20       if (ok) { bal[msg.sender] = amt;\n\
+               \x20       FHE.allowThis(bal[msg.sender]);\n\
+               \x20       FHE.allowSender(bal[msg.sender]);\n\
+               \x20       }\n\
+               \x20   }\n\
+               }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn braceless_branch_body_with_every_grant_present_stays_byte_identical() {
+    // §8.6 suppresses the insertion, so §1.4 must hold: no braces appear.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               interface IVault {\n\
+               \x20   function deposit(euint32 x) external;\n\
+               }\n\
+               \n\
+               contract C {\n\
+               \x20   euint32 a;\n\
+               \x20   IVault vault;\n\
+               \x20   function f(bool notPaused) public {\n\
+               \x20       if (notPaused) { FHE.allowTransient(a, address(vault)); vault.deposit(a); }\n\
+               \x20   }\n\
+               }\n";
+    golden(src, src);
+}
+
+#[test]
+fn acl_grant_in_a_for_header_rejects_with_fhe4004() {
+    // A `for` initializer accepts no block and holds no statement list, so
+    // the grant has nowhere legal to go (spec §8.0).
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               \n\
+               contract C {\n\
+               \x20   mapping(address => euint32) bal;\n\
+               \x20   function f(euint32 amt) public {\n\
+               \x20       for (bal[msg.sender] = amt; false; ) {}\n\
+               \x20   }\n\
+               }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4004")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(out.failed_files, 1);
+    assert_eq!(out.files[0].1, src, "a refused file must stay untouched");
+}

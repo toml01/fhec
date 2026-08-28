@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A `for` header holds no statement list and accepts no block, so an R1 grant
+// for a write written there has nowhere legal to go. Spec §8.0: refuse.
+contract ForInitPosition {
+    mapping(address => euint32) internal _bal;
+
+    function f(euint32 amt) public {
+        for (_bal[msg.sender] = amt; false; ) {}
+    }
+}

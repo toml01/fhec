@@ -9,7 +9,8 @@
 //! prime directive (spec §1.3) forbids producing output for a unit the
 //! checker refused. When lowering itself finds a fault (undecidable aliasing
 //! FHE3011, an unsupported statement form in an encrypted branch FHE3013, an
-//! ACL callee whose declared type cannot be derived FHE4003, or an internal
+//! ACL callee whose declared type cannot be derived FHE4003, an ACL grant
+//! with nowhere legal to go FHE4004, or an internal
 //! invariant violation FHE9001), every patch of the affected *file* is
 //! dropped: a partially lowered file would be a miscompile, and refusal is
 //! always safer.
@@ -34,6 +35,16 @@ use fhec_emit::TempNamer;
 use fhec_ir::{FilePlan, RewritePlan};
 use fhec_targets::TargetProfile;
 use solar_interface::source_map::SourceMap;
+
+/// The diagnostic codes this crate emits from its own rules (spec §9).
+///
+/// Codes forwarded from a lowering failure are assigned in [`fault_code`];
+/// this module holds the ones a rule cites directly.
+pub(crate) mod codes {
+    /// An ACL grant would have to be written where no statement may go
+    /// (spec §8).
+    pub(crate) const ACL_POSITION_ILLEGAL: &str = "FHE4004";
+}
 
 mod ctx;
 mod expr;

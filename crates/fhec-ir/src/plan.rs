@@ -65,9 +65,18 @@ impl Provenance {
 /// between the two source constructs — the declaration must come first or the
 /// output names an undeclared identifier.
 ///
-/// Ordering is by declaration order: [`InsertOrder::Declaration`] sorts first.
+/// The same problem appears when a pass must wrap a statement in a block:
+/// the opening brace has to precede every other insertion at the statement's
+/// start, and the closing brace has to follow every other insertion at its
+/// end, whatever order the passes ran in.
+///
+/// Ordering is by declaration order: [`InsertOrder::BlockOpen`] sorts first,
+/// [`InsertOrder::BlockClose`] last.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum InsertOrder {
+    /// The patch opens a block around the statement that starts at this
+    /// offset (spec §8 ACL insertion into a braceless branch body).
+    BlockOpen,
     /// The patch introduces declarations later patches at this offset may
     /// name (spec §2.3 encrypted-input materializers, spec §2.7 when a
     /// `precondition` block moves them).
@@ -75,6 +84,9 @@ pub enum InsertOrder {
     /// Everything else. Plan order breaks the remaining ties.
     #[default]
     Normal,
+    /// The patch closes a block opened by an [`InsertOrder::BlockOpen`]
+    /// patch, and must follow everything else inserted at this offset.
+    BlockClose,
 }
 
 /// A single byte-range patch: replace `range` in the original file with
@@ -123,6 +135,22 @@ impl Patch {
     #[must_use]
     pub fn declaration(mut self) -> Self {
         self.order = InsertOrder::Declaration;
+        self
+    }
+
+    /// Marks this patch as the opening brace of a block wrapped around the
+    /// statement at this offset; see [`InsertOrder`].
+    #[must_use]
+    pub fn block_open(mut self) -> Self {
+        self.order = InsertOrder::BlockOpen;
+        self
+    }
+
+    /// Marks this patch as the closing brace of a wrapped block; see
+    /// [`InsertOrder`].
+    #[must_use]
+    pub fn block_close(mut self) -> Self {
+        self.order = InsertOrder::BlockClose;
         self
     }
 

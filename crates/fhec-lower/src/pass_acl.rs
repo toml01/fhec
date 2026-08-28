@@ -2,6 +2,14 @@
 //! R2 before external calls with encrypted arguments, R3 before encrypted
 //! returns. Never `FHE.allow`, `allowGlobal`, or `allowPublic` (spec §8.5).
 //!
+//! A trigger statement that is the lone, braceless body of an `if`, `else`,
+//! `while`, `do` or `for` is wrapped in a block as part of the insertion: a
+//! grant emitted next to it would otherwise become the branch body and push
+//! the guarded statement out of the branch (R2), or fire unconditionally
+//! (R1). The braces are ordinary patches at the statement's own boundaries,
+//! ordered by [`fhec_ir::InsertOrder`], so they compose with every other
+//! patch inside the statement.
+//!
 //! Dedupe (spec §8.6): an equivalent existing call suppresses the insertion —
 //! same ACL function, syntactically identical argument after parenthesis
 //! stripping; method syntax counts as library syntax. R1 scans forward from
@@ -18,12 +26,16 @@ use fhec_ir::{EType, FheOp, FilePlan, Patch, Provenance};
 use solar_ast as ast;
 use solar_interface::Span;
 
+use crate::codes;
 use crate::ctx::{strip_parens, Ctx};
 use crate::expr::{fail_coded, LowerFailure, Renderer, Result};
 
 pub(crate) struct AclOutcome {
     /// Statement spans whose inner rendering pass 3 took over (pass 1 skips).
     pub owned_stmts: Vec<Span>,
+    /// Statement spans this pass already wrapped in braces (spec §8.0); a
+    /// statement carrying two ACL facts is wrapped once.
+    braced: Vec<Span>,
 }
 
 /// Runs R1/R2/R3 for one function, in source order.
@@ -38,6 +50,7 @@ pub(crate) fn run_function<'ast>(
 ) -> Result<AclOutcome> {
     let mut outcome = AclOutcome {
         owned_stmts: Vec::new(),
+        braced: Vec::new(),
     };
     let inside_if = |span: Span| if_spans.iter().any(|s| ctx.contains(*s, span));
 
@@ -67,7 +80,7 @@ pub(crate) fn run_function<'ast>(
 
     for (_, fact) in facts {
         match fact {
-            Fact::W(w) => rule_r1(ctx, w, acl_insert, diags, plan)?,
+            Fact::W(w) => rule_r1(ctx, w, acl_insert, diags, plan, &mut outcome)?,
             Fact::C(c) => rule_r2(ctx, c, namer, acl_insert, diags, plan, &mut outcome)?,
             Fact::R(r) => rule_r3(ctx, r, namer, acl_insert, diags, plan, &mut outcome)?,
         }
@@ -85,6 +98,7 @@ fn rule_r1(
     acl_insert: bool,
     diags: &RefCell<Vec<fhec_check::Diagnostic>>,
     plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
 ) -> Result<()> {
     if w.in_view_or_pure {
         // A storage write in view/pure is already a checker/solc error.
@@ -132,6 +146,7 @@ fn rule_r1(
     let indent = ctx.line_indent(w.file, ctx.range(w.stmt_span).start);
     let at = after_stmt_offset(ctx.text(w.file), ctx.range(w.stmt_span).end);
     if acl_insert {
+        brace_lone_stmt(ctx, w.function, w.stmt_span, plan, outcome)?;
         for op in missing {
             let call = ctx
                 .profile
@@ -267,6 +282,7 @@ fn rule_r2<'ast>(
     }
 
     let indent = ctx.line_indent(c.file, ctx.range(c.stmt_span).start);
+    brace_lone_stmt(ctx, c.function, c.stmt_span, plan, outcome)?;
     let mut lines: Vec<String> = Vec::new();
 
     // Callee handling (spec §8.2 draft decision — single evaluation):
@@ -411,6 +427,7 @@ fn rule_r3<'ast>(
         return Ok(());
     }
 
+    brace_lone_stmt(ctx, r.function, r.stmt_span, plan, outcome)?;
     let temp = namer.borrow_mut().fresh(TempHint::Ret);
     let call = ctx
         .profile
@@ -436,6 +453,126 @@ fn rule_r3<'ast>(
     ));
     outcome.owned_stmts.push(r.stmt_span);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Braceless branch bodies
+// ---------------------------------------------------------------------------
+
+/// Where a trigger statement sits when it is not an element of a `{ }` block.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LoneStmt {
+    /// The lone body of an `if`, `else`, `while`, `do` or `for`. A grant
+    /// inserted beside it would land outside the branch, so the rule braces
+    /// the pair.
+    BranchBody,
+    /// The initializer of a `for` header. A block is not legal there and the
+    /// header holds no statement list, so the rule refuses (spec §1.3).
+    ForInit,
+}
+
+/// Wraps `stmt_span` in braces when it is a braceless branch body, so that a
+/// grant inserted at either of its boundaries stays inside the branch.
+///
+/// Idempotent per statement: a statement that carries two ACL facts is
+/// wrapped once. Refuses with FHE4004 where no block may be written.
+fn brace_lone_stmt(
+    ctx: &Ctx<'_, '_>,
+    function: fhec_bind::FunctionId,
+    stmt_span: Span,
+    plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
+) -> Result<()> {
+    if outcome.braced.contains(&stmt_span) {
+        return Ok(());
+    }
+    match lone_stmt_position(ctx, function, stmt_span) {
+        None => return Ok(()),
+        Some(LoneStmt::ForInit) => {
+            return fail_coded(
+                stmt_span,
+                "an ACL grant for this statement cannot be inserted in a `for` header (spec §8); \
+                 move the statement above the loop"
+                    .to_string(),
+                codes::ACL_POSITION_ILLEGAL,
+                Some("§8"),
+            );
+        }
+        Some(LoneStmt::BranchBody) => {}
+    }
+    let file = ctx.unit.function(function).file;
+    let range = ctx.range(stmt_span);
+    let indent = ctx.line_indent(file, range.start);
+    let end = after_stmt_offset(ctx.text(file), range.end);
+    plan.push(
+        Patch::insert(
+            range.start,
+            "{ ",
+            Provenance::new("§8 brace-wrap", ctx.range(stmt_span)),
+        )
+        .block_open(),
+    );
+    plan.push(
+        Patch::insert(
+            end,
+            format!("\n{indent}}}"),
+            Provenance::new("§8 brace-wrap", ctx.range(stmt_span)),
+        )
+        .block_close(),
+    );
+    outcome.braced.push(stmt_span);
+    Ok(())
+}
+
+/// Classifies the position of the statement with span `target`, or `None`
+/// when it is an ordinary element of a statement list.
+fn lone_stmt_position(
+    ctx: &Ctx<'_, '_>,
+    function: fhec_bind::FunctionId,
+    target: Span,
+) -> Option<LoneStmt> {
+    let body = ctx.unit.function(function).ast.body.as_ref()?;
+    scan_block(body, target)
+}
+
+fn scan_block<'ast>(block: &'ast [ast::Stmt<'ast>], target: Span) -> Option<LoneStmt> {
+    block.iter().find_map(|s| scan_stmt(s, target))
+}
+
+fn scan_stmt<'ast>(stmt: &'ast ast::Stmt<'ast>, target: Span) -> Option<LoneStmt> {
+    if !(stmt.span.lo() <= target.lo() && target.hi() <= stmt.span.hi()) {
+        return None;
+    }
+    match &stmt.kind {
+        ast::StmtKind::Block(b)
+        | ast::StmtKind::UncheckedBlock(b)
+        | ast::StmtKind::Precondition(b) => scan_block(b, target),
+        ast::StmtKind::If(_, t, e) => {
+            scan_branch(t, target).or_else(|| e.as_ref().and_then(|e| scan_branch(e, target)))
+        }
+        ast::StmtKind::While(_, b) | ast::StmtKind::DoWhile(b, _) => scan_branch(b, target),
+        ast::StmtKind::For { body, init, .. } => scan_branch(body, target).or_else(|| {
+            init.as_ref().and_then(|i| {
+                if i.span == target {
+                    Some(LoneStmt::ForInit)
+                } else {
+                    scan_stmt(i, target)
+                }
+            })
+        }),
+        ast::StmtKind::Try(t) => t.clauses.iter().find_map(|c| scan_block(&c.block, target)),
+        _ => None,
+    }
+}
+
+/// The direct body of a branching statement: a `Block` holds an ordinary
+/// statement list, anything else is the braceless form this module braces.
+fn scan_branch<'ast>(body: &'ast ast::Stmt<'ast>, target: Span) -> Option<LoneStmt> {
+    match &body.kind {
+        ast::StmtKind::Block(b) => scan_block(b, target),
+        _ if body.span == target => Some(LoneStmt::BranchBody),
+        _ => scan_stmt(body, target),
+    }
 }
 
 // ---------------------------------------------------------------------------
