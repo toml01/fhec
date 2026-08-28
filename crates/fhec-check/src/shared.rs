@@ -82,7 +82,7 @@ pub(crate) fn scan<'ast>(
     out: &mut CheckedUnit,
 ) {
     for (fid, f) in unit.functions() {
-        scan_params(unit, trust, profile, out, fid, f);
+        scan_params(files, unit, trust, profile, out, fid, f);
         scan_returns(unit, trust, profile, out, fid, f);
     }
     // Event/error parameter lists and state variables: never legal, and not
@@ -109,7 +109,9 @@ pub(crate) fn declares_shared_return(f: &ast::ItemFunction<'_>) -> bool {
 // Shared inputs — `in shared eT name`
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn scan_params<'ast>(
+    files: &[SourceFile<'ast>],
     unit: &BoundUnit<'ast>,
     trust: &Trust,
     profile: &dyn TargetProfile,
@@ -122,6 +124,7 @@ fn scan_params<'ast>(
     if decls.iter().all(|d| d.shared.is_none()) {
         return;
     }
+    let profile_import = crate::imports::selective_profile_import(files[f.file.index()].ast, trust);
 
     // Whole-list rules first, each refusing the function outright: no site is
     // stated even for a parameter that is fine on its own (§1.3). The first
@@ -235,6 +238,23 @@ fn scan_params<'ast>(
         let ty = declared_ty(unit, trust, &decl.ty);
         let Ty::Encrypted(ety) = ty else {
             refused = true;
+            // The dominant cause is a selective import that names only the
+            // `shared*` wire types — exactly the files that reach for this
+            // marker first. Say that instead of listing the type the author
+            // already wrote (spec §2.8).
+            if let Some(import) = &profile_import {
+                if let Some(name) = crate::sugar::unimported_encrypted_type(&decl.ty, import) {
+                    crate::sugar::refuse_symbol_not_imported(
+                        out,
+                        decl.ty.span,
+                        import,
+                        &name,
+                        "it names a profile encrypted type",
+                        RULE,
+                    );
+                    continue;
+                }
+            }
             bad_position(
                 out,
                 decl.ty.span,
@@ -258,6 +278,24 @@ fn scan_params<'ast>(
         if !supports_shared(profile, out, ety, shared.span) {
             refused = true;
             continue;
+        }
+        // The expansion declares the parameter with the shared wire type,
+        // which a selective import must also name (spec §2.8).
+        if let Some(import) = &profile_import {
+            if let Ok(wire) = profile.shared_wire_type(ety) {
+                if !import.has(&wire) {
+                    refused = true;
+                    crate::sugar::refuse_symbol_not_imported(
+                        out,
+                        decl.ty.span,
+                        import,
+                        &wire,
+                        "the expansion declares the parameter with it",
+                        RULE,
+                    );
+                    continue;
+                }
+            }
         }
         // A bodiless declaration generates no local and keeps the author's
         // parameter name, so no name is introduced to collide.

@@ -2120,3 +2120,51 @@ fn an_unnamed_return_type_reaches_operator_lowering() {
         assert_eq!(c.operator_sites.len(), 1);
     });
 }
+
+#[test]
+fn a_selective_import_missing_the_source_type_rejects_with_fhe1021() {
+    let src = "pragma solidity ^0.8.25;\n\
+               import { sharedEbool, sharedEuint64 } from \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               interface I {\n\
+               \x20   function onReceive(in shared euint64 amount) external returns (bytes4);\n\
+               }\n";
+    let codes = codes_for_source(src);
+    assert_eq!(codes, vec!["FHE1021".to_string()], "{codes:?}");
+}
+
+#[test]
+fn a_selective_import_missing_the_wire_type_rejects_with_fhe1021() {
+    let src = "pragma solidity ^0.8.25;\n\
+               import { FHE, euint64 } from \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               contract C {\n\
+               \x20   euint64 stored;\n\
+               \x20   function deposit(in euint64 amount) public { stored = amount; }\n\
+               }\n";
+    let codes = codes_for_source(src);
+    assert_eq!(codes, vec!["FHE1021".to_string()], "{codes:?}");
+}
+
+#[test]
+fn a_plain_import_needs_no_named_symbols() {
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               contract C {\n\
+               \x20   euint64 stored;\n\
+               \x20   function deposit(in euint64 amount) public { stored = amount; }\n\
+               \x20   function receiveShared(in shared euint64 amount) external { stored = amount; }\n\
+               }\n";
+    let codes = codes_for_source(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}
+
+#[test]
+fn a_complete_selective_import_is_accepted() {
+    let src = "pragma solidity ^0.8.25;\n\
+               import { FHE, euint64, externalEuint64 } from \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               contract C {\n\
+               \x20   euint64 stored;\n\
+               \x20   function deposit(in euint64 amount) public { stored = amount; }\n\
+               }\n";
+    let codes = codes_for_source(src);
+    assert!(codes.is_empty(), "{codes:?}");
+}

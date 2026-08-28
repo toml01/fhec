@@ -65,7 +65,7 @@ impl Trust {
     }
 
     /// Whether an import specifier denotes the profile library.
-    fn specifier_trusted(&self, spec: &str) -> bool {
+    pub(crate) fn specifier_trusted(&self, spec: &str) -> bool {
         if self.specifiers.iter().any(|s| s == spec) {
             return true;
         }

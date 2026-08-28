@@ -157,6 +157,8 @@ The bound parameter is an ordinary author-declared parameter everywhere else: it
 
 A modifier invocation is part of the function *header* and is evaluated before the body opens, but `<name>` only exists from the materialization point onwards. A modifier argument that names an `in` / `in(proof)` / `in shared` parameter would therefore reference an identifier the output does not declare there, so the transpiler MUST refuse with FHE1019 rather than emit it.
 
+A selective import (`import {A, B} from "…";`) brings in exactly what it names. The sugar needs two symbols in scope: the encrypted type the author wrote, and the wire type the expansion declares the parameter with (`externalT` for §2.3, `sharedT` for §2.8). When the file imports the profile module selectively and does not name either, the transpiler MUST refuse with FHE1021, naming the missing symbol, and SHOULD attach a `safe: true` fix-it that adds it to the import list. A plain import brings the whole surface into scope and is unaffected.
+
 On a **bodiless** declaration the §2.3 expansion likewise generates no local, so the parameter keeps the author's name and only its type changes; the appended proof parameter is unaffected.
 
 **⚠ Draft decision (generated names):** the raw-input parameter is named `<name>_input`, and, in the implicit form, the appended proof parameter is named `inputProof`. If `<name>_input` is already declared anywhere in the function's scope (parameters, locals, contract members referenced unqualified), the transpiler MUST reject with FHE1011 rather than rename silently; the same applies to `inputProof` in the implicit form. The explicit binder introduces **no** new fixed generated name — it reuses the author's own parameter name verbatim — so `inputProof` is not reserved in a bound function and a parameter of that name is the ordinary case there.
@@ -622,6 +624,7 @@ Assigned in this version:
 | FHE1017 | error | precondition-bad-position (§2.7) |
 | FHE1018 | error | cast-sugar-bad-arity (§2.9) |
 | FHE1019 | error | sugar-name-in-modifier (§2.3, §2.8) |
+| FHE1021 | error | sugar-symbol-not-imported (§2.3, §2.8) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
 | FHE2002 | error | incompatible-encrypted-operands (e.g. eaddress + euint32) |

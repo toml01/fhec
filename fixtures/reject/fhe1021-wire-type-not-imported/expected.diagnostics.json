@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE1021",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 353,
+      "end_byte": 360,
+      "start_line": 11,
+      "start_col": 25,
+      "end_line": 11,
+      "end_col": 32
+    },
+    "message": "`externalEuint64` is not in scope: the expansion declares the parameter with it, and this file imports the profile module selectively without naming it; add `externalEuint64` to that import",
+    "fixits": [
+      {
+        "span": {
+          "file": "input.fsol",
+          "start_byte": 229,
+          "end_byte": 229,
+          "start_line": 6,
+          "start_col": 22,
+          "end_line": 6,
+          "end_col": 22
+        },
+        "replacement": ", externalEuint64",
+        "safe": true
+      }
+    ],
+    "rule": "§2.3"
+  }
+]

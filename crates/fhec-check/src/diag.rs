@@ -94,6 +94,9 @@ pub mod codes {
     /// A modifier invocation names a parameter the dialect renames in the
     /// header (spec §2.3, §2.8).
     pub const SUGAR_NAME_IN_MODIFIER: &str = "FHE1019";
+    /// A selective import does not bring a symbol the sugar needs into
+    /// scope, in the source or in the expansion (spec §2.3, §2.8).
+    pub const SUGAR_SYMBOL_NOT_IMPORTED: &str = "FHE1021";
     /// encrypted-meets-unknown (§3.2).
     pub const ENCRYPTED_MEETS_UNKNOWN: &str = "FHE2001";
     /// incompatible-encrypted-operands (§3.3, §4.1).
