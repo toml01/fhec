@@ -2745,3 +2745,197 @@ fn fhe1022_single_in_param_does_not_check_the_batch_materializer_names() {
     "#;
     assert!(codes_for_source(src).is_empty());
 }
+
+/// PROBE (round-3 review item 1): an in-unit FHE.sol stand-in declaring
+/// `library Impl` and `library Utils` alongside `library FHE`, plain-imported
+/// by the victim file — the real profile-library shape when the profile file
+/// is part of the compilation unit. Multi-param `in` sugar here must not be
+/// spuriously refused: `Impl`/`Utils` resolve to `Resolution::Contract` from
+/// the same trusted import, not `Unresolved`.
+#[test]
+fn probe_fhe1022_in_unit_fhe_sol_with_batch_sugar() {
+    let fhe_sol = r#"
+        pragma solidity ^0.8.25;
+        type ebool is bytes32;
+        type eaddress is bytes32;
+        library FHE {
+            function select(ebool c, ebool a, ebool b) internal pure returns (ebool) { return a; }
+            function allowThis(ebool v) internal pure {}
+        }
+        library Impl {
+            function verifyBatchInputs(uint256[] memory, bytes memory) internal pure returns (bytes32[] memory r) {}
+        }
+        library Utils {
+            uint8 constant EBOOL_TFHE = 0;
+            uint8 constant EADDRESS_TFHE = 1;
+        }
+        struct UnsignedEncryptedInput { uint256 data; uint8 securityZone; uint8 utype; }
+    "#;
+    let victim = r#"
+        pragma solidity ^0.8.25;
+        import "./FHE.sol";
+        contract Victim {
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    with_checked(&[("FHE.sol", fhe_sol), ("Victim.fsol", victim)], |c, _| {
+        let mut v: Vec<String> = c.diagnostics.iter().map(|d| d.code.to_string()).collect();
+        v.sort();
+        assert!(v.is_empty(), "{v:?}");
+    });
+}
+
+/// Critical regression (round-3 review item 2): a known, in-unit,
+/// *earlier* base already declares `FakeLib FHE`, but a *later*, opaque
+/// base in the same `is` list means `inherited_member_in_known_prefix`
+/// cannot certify it as the provably-first member — and the file also
+/// imports the real profile, so the incomplete-inheritance fallback alone
+/// would otherwise wave this through. The real, visible shadow must win.
+#[test]
+fn fhe1022_known_ancestor_shadow_beats_a_trailing_opaque_base() {
+    // `a`/`b` are declared directly on `Victim` (own member, resolved
+    // without touching inheritance at all) so the construct isolates the
+    // one thing under test: `FHE` resolution specifically, inherited from
+    // `KnownBase`, which is *not* the rightmost direct base and so is not
+    // covered by `inherited_member_in_known_prefix`'s "rightmost known
+    // base" special case either.
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract KnownBase {
+            FakeLib FHE;
+        }
+        contract Victim is KnownBase, UnseenBase {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Same shape, but the ordering is reversed (`UnseenBase, KnownBase`) so
+/// `inherited_member_in_known_prefix` *would* have found the shadow via its
+/// own "rightmost known base" special case — pinning that the new
+/// known-ancestor check does not depend on which arm of that function
+/// happens to fire.
+#[test]
+fn fhe1022_known_ancestor_shadow_found_regardless_of_base_order() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {UnseenBase} from "@external-lib/pkg/UnseenBase.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract KnownBase {
+            euint32 a;
+            euint32 b;
+            FakeLib FHE;
+        }
+        contract Victim is UnseenBase, KnownBase {
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 4 (round-3 review): `Utils` shadowed by a state variable, alongside
+/// a legitimately trusted `Impl`/`UnsignedEncryptedInput` from a real plain
+/// import — pins that each batch-materializer name is checked
+/// independently, not as an all-or-nothing bundle.
+#[test]
+fn fhe1022_batch_materializer_utils_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeUtils {}
+        contract Victim {
+            FakeUtils Utils;
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 4: `UnsignedEncryptedInput` shadowed by an in-unit struct that is
+/// not the profile's own declaration.
+#[test]
+fn fhe1022_batch_materializer_unsigned_encrypted_input_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        struct UnsignedEncryptedInput { uint256 x; }
+        contract Victim {
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 3 (round-3 review): the batch materializer also writes
+/// `externalT.unwrap(...)` and `eT.wrap(...)` calls for every parameter
+/// type; a state variable literally named `externalEbool` (the wire type of
+/// one of the `in` parameters here) must be caught even though `Impl`,
+/// `Utils`, and `UnsignedEncryptedInput` stay correctly trusted.
+#[test]
+fn fhe1022_batch_materializer_external_wire_type_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeExternalEbool {}
+        contract Victim {
+            FakeExternalEbool externalEbool;
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 3: the plain encrypted type name side (`eT.wrap(...)`), not just the
+/// external wire-type side.
+#[test]
+fn fhe1022_batch_materializer_plain_type_is_shadowed() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeEbool {}
+        contract Victim {
+            FakeEbool ebool;
+            function f(in ebool flag, in eaddress owner_) public {}
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Item 5 (round-3 review): a bodiless multi-`in` declaration never reaches
+/// `batch_input_statements` (signature rewrite only), so it must not be
+/// scanned for the batch-materializer names at all.
+#[test]
+fn fhe1022_bodiless_multi_in_declaration_is_not_scanned() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeImpl {}
+        abstract contract Victim {
+            FakeImpl Impl;
+            function f(in ebool flag, in eaddress owner_) external virtual;
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}

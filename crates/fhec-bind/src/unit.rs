@@ -394,6 +394,51 @@ impl<'ast> BoundUnit<'ast> {
         self.member_in_known_prefix(contract, name, false, &mut Vec::new())
     }
 
+    /// Whether `name` is declared *anywhere* reachable through the known
+    /// (in-unit) portion of `contract`'s hierarchy: `contract` itself, then
+    /// every `BaseRef::InUnit` base, transitively — regardless of whether a
+    /// trailing opaque (external/unresolved) base means C3 cannot certainly
+    /// place this declaration first.
+    ///
+    /// This answers a different question than
+    /// [`inherited_member_in_known_prefix`](Self::inherited_member_in_known_prefix):
+    /// that one answers "is this member *certainly* what Solidity resolves
+    /// `name` to" (used to grant a permission — effect-freedom, branch
+    /// safety — and correctly `None` when a later, unseen base could still
+    /// interleave something ahead of it). This one answers "does a visible
+    /// declaration of `name` exist at all" — sufficient to prove `name` is
+    /// *not* safely inferred from an incomplete-inheritance fallback alone,
+    /// even when it is not certain to be the declaration Solidity ultimately
+    /// picks. Use this only to *refuse* (a real, visible shadow beats the
+    /// fallback's benefit of the doubt); never to grant a permission on its
+    /// own — an opaque base could still add an earlier-resolving one.
+    pub fn known_ancestor_member(&self, contract: ContractId, name: Symbol) -> Option<Resolution> {
+        self.known_ancestor_member_inner(contract, name, &mut Vec::new())
+    }
+
+    fn known_ancestor_member_inner(
+        &self,
+        contract: ContractId,
+        name: Symbol,
+        seen: &mut Vec<ContractId>,
+    ) -> Option<Resolution> {
+        if seen.contains(&contract) {
+            return None;
+        }
+        seen.push(contract);
+        if let Some(r) = self.inheritable_own_member(contract, name) {
+            return Some(r);
+        }
+        for base in &self.contracts[contract.index()].bases {
+            if let BaseRef::InUnit(b) = base {
+                if let Some(r) = self.known_ancestor_member_inner(*b, name, seen) {
+                    return Some(r);
+                }
+            }
+        }
+        None
+    }
+
     fn member_in_known_prefix(
         &self,
         contract: ContractId,

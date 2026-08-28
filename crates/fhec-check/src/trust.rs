@@ -35,7 +35,7 @@
 //!
 //! Anything not covered types as `Unknown` — never a guess.
 
-use fhec_bind::{BoundUnit, Resolution, TypeDeclKind, UnresolvedReason};
+use fhec_bind::{BoundUnit, FileId, Resolution, TypeDeclKind, UnresolvedReason};
 use fhec_ir::{EType, FheOp};
 use fhec_targets::TargetProfile;
 use solar_ast as ast;
@@ -119,16 +119,63 @@ impl Trust {
         // part of the compilation unit.
         if let Resolution::Contract(id) = res {
             let c = unit.contract(*id);
-            if c.kind == ast::ContractKind::Library && c.name_str == "FHE" {
-                let has = |n: &str| {
-                    c.functions
-                        .iter()
-                        .any(|f| unit.function(*f).name_str.as_deref() == Some(n))
-                };
-                return has("select") && has("allowThis");
-            }
+            return Self::looks_like_fhe_library(unit, c);
         }
         false
+    }
+
+    /// Whether a contract declaration structurally looks like the profile's
+    /// `library FHE` (rule 4): a library named `FHE` declaring both
+    /// `select` and `allowThis`.
+    fn looks_like_fhe_library(unit: &BoundUnit<'_>, c: &fhec_bind::ContractInfo<'_>) -> bool {
+        if c.kind != ast::ContractKind::Library || c.name_str != "FHE" {
+            return false;
+        }
+        let has = |n: &str| {
+            c.functions
+                .iter()
+                .any(|f| unit.function(*f).name_str.as_deref() == Some(n))
+        };
+        has("select") && has("allowThis")
+    }
+
+    /// Whether `file` is the profile module file itself — an in-unit file
+    /// that declares the rule-4 `library FHE`. Other generated-only names
+    /// declared alongside it in that same file (`Impl`, `Utils`,
+    /// `UnsignedEncryptedInput`, the batch `in`-sugar materializer's
+    /// symbols, spec §2.3) are declared by the same trusted profile module,
+    /// even though they have no distinctive member surface of their own to
+    /// recognize structurally the way rule 4 recognizes `library FHE`.
+    fn file_is_profile_module(&self, unit: &BoundUnit<'_>, file: FileId) -> bool {
+        unit.contracts()
+            .any(|(_, c)| c.file == file && Self::looks_like_fhe_library(unit, c))
+    }
+
+    /// Whether `res` is trusted to be a name the profile module declares —
+    /// the generic exposure paths (`resolution_trusted`: a trusted import
+    /// specifier, or exposure through a plain import of the profile), or,
+    /// for a `Contract`/`TypeName` resolution, being declared in-unit in the
+    /// same file as the recognized `library FHE` (see
+    /// [`file_is_profile_module`](Self::file_is_profile_module)).
+    ///
+    /// Unlike [`is_fhe_library`](Self::is_fhe_library) this is not keyed to
+    /// a specific name: it answers "does the profile module declare
+    /// whatever this resolved to", which is exactly what `emit_trust` needs
+    /// for `Impl`/`Utils`/`UnsignedEncryptedInput` — names with no
+    /// rule-4-style structural signature of their own.
+    pub(crate) fn is_trusted_profile_declaration(
+        &self,
+        unit: &BoundUnit<'_>,
+        res: &Resolution,
+    ) -> bool {
+        match res {
+            Resolution::Contract(id) => self.file_is_profile_module(unit, unit.contract(*id).file),
+            Resolution::TypeName(id) => self.file_is_profile_module(unit, unit.type_decl(*id).file),
+            Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
+                fallback, ..
+            }) => self.is_trusted_profile_declaration(unit, fallback),
+            _ => self.resolution_trusted(res),
+        }
     }
 
     /// The encrypted type a *type name* resolution denotes, when trusted.

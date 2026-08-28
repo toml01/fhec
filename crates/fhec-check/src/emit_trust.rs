@@ -12,29 +12,34 @@
 //! - **`FHE`** (spec §1.5), used by every operator/select/cast/ACL/shared-
 //!   boundary call the lowerer writes. Trust reuses `trust::is_fhe_library`
 //!   verbatim, including its rule 4 (in-unit library declaration).
-//! - **`Impl`, `Utils`, `UnsignedEncryptedInput`** (spec §2.3), used only by
-//!   the *batched* `in`-sugar materializer (`TargetProfile::
-//!   batch_input_statements`, cofhe-contracts#78) when a function has more
-//!   than one `in` parameter. These have no read-side counterpart — the
-//!   author never writes them — so there is no rule-4 equivalent for an
-//!   in-unit-vendored profile file; trust here is exposure-only
-//!   (`Trust::resolution_trusted`).
+//! - The *batched* `in`-sugar materializer (`TargetProfile::
+//!   batch_input_statements`, cofhe-contracts#78), used when a function has
+//!   more than one `in` parameter with a body: `Impl`, `Utils`,
+//!   `UnsignedEncryptedInput`, plus the wire/encrypted type names the batch
+//!   actually uses (`externalT.unwrap(...)`, `eT.wrap(...)` for each `T` the
+//!   function's `in` parameters name). None of these have a rule-4-style
+//!   structural signature of their own to recognize; trust instead follows
+//!   `Trust::is_trusted_profile_declaration` (the generic exposure paths,
+//!   plus being declared in-unit in the same file as the recognized
+//!   `library FHE`) or, for the type names, `Trust::encrypted_type` /
+//!   `Trust::external_input_type`.
 //!
 //! A collision with a name the transpiler must write is the same class of
 //! problem as the FHE1011/FHE1016 generated-name collisions: refuse rather
 //! than silently rename around it (FHE1022).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use fhec_bind::{BoundUnit, FunctionId, Resolution, UnresolvedReason};
+use fhec_ir::EType;
 use solar_interface::{Span, Symbol};
 
 use crate::diag::{codes, Diagnostic};
 use crate::sites::CheckedUnit;
 use crate::trust::Trust;
 
-/// The batch `in`-sugar materializer's identifiers (spec §2.3), besides
-/// `FHE` itself.
+/// The batch `in`-sugar materializer's fixed identifiers (spec §2.3),
+/// besides `FHE` itself.
 const BATCH_MATERIALIZER_NAMES: [&str; 3] = ["Impl", "Utils", "UnsignedEncryptedInput"];
 
 /// Scans every function that at least one collected rewrite site or ACL fact
@@ -47,17 +52,27 @@ const BATCH_MATERIALIZER_NAMES: [&str; 3] = ["Impl", "Utils", "UnsignedEncrypted
 /// the last ones stated).
 pub(crate) fn scan(unit: &BoundUnit<'_>, trust: &Trust, out: &mut CheckedUnit) {
     let mut diags = Vec::new();
-    let mut seen: HashSet<(&'static str, FunctionId)> = HashSet::new();
+    let mut seen: HashSet<(String, FunctionId)> = HashSet::new();
 
     for function in functions_writing_fhe(out) {
         check_one(unit, function, "FHE", &mut seen, &mut diags, |res| {
             trust.is_fhe_library(unit, "FHE", res)
         });
     }
-    for function in functions_writing_batch_materializer(out) {
+    for (function, types) in functions_writing_batch_materializer(out) {
         for name in BATCH_MATERIALIZER_NAMES {
             check_one(unit, function, name, &mut seen, &mut diags, |res| {
-                trust.resolution_trusted(res)
+                trust.is_trusted_profile_declaration(unit, res)
+            });
+        }
+        for ty in types {
+            let external = ty.external_name();
+            check_one(unit, function, external, &mut seen, &mut diags, |res| {
+                trust.external_input_type(unit, external, res).is_some()
+            });
+            let plain = ty.solidity_name();
+            check_one(unit, function, plain, &mut seen, &mut diags, |res| {
+                trust.encrypted_type(unit, plain, res).is_some()
             });
         }
     }
@@ -69,17 +84,34 @@ pub(crate) fn scan(unit: &BoundUnit<'_>, trust: &Trust, out: &mut CheckedUnit) {
 fn check_one(
     unit: &BoundUnit<'_>,
     function: FunctionId,
-    name: &'static str,
-    seen: &mut HashSet<(&'static str, FunctionId)>,
+    name: &str,
+    seen: &mut HashSet<(String, FunctionId)>,
     diags: &mut Vec<Diagnostic>,
     is_trusted: impl Fn(&Resolution) -> bool,
 ) {
-    if !seen.insert((name, function)) {
+    if !seen.insert((name.to_string(), function)) {
         return;
     }
     let info = unit.function(function);
     let symbol = Symbol::intern(name);
     let res = unit.resolve_name_in_scope(Some(function), info.contract, info.file, symbol, name);
+
+    // A known (in-unit) ancestor's own declaration always beats the
+    // incomplete-inheritance fallback's benefit of the doubt: it is
+    // concrete proof of a real, visible shadow, not mere uncertainty about
+    // an unseen base. `resolve_name_in_scope` cannot always surface it
+    // itself — a *trailing* opaque base in the linearization can block the
+    // "provably first" prefix it computes even when an earlier, in-unit
+    // base already declares `name` — so recheck explicitly whenever the
+    // resolution took the incomplete-inheritance path.
+    if let Resolution::Unresolved(UnresolvedReason::IncompleteInheritance { contract, .. }) = &res {
+        if let Some(shadow) = unit.known_ancestor_member(*contract, symbol) {
+            let span = shadow_span(unit, &shadow).unwrap_or(info.span);
+            diags.push(diagnostic_for(name, &shadow, span));
+            return;
+        }
+    }
+
     if is_trusted(&res) {
         return;
     }
@@ -97,9 +129,10 @@ fn check_one(
     //   binder's own fallback already gives the explicit-profile-import
     //   case the benefit of the doubt (`is_trusted` would have returned
     //   `true` above, via `Trust::resolution_trusted`'s recursive fallback
-    //   check); reaching this point means even that fallback did not prove
-    //   it, so the unseen base is the only remaining explanation and must
-    //   be refused, not waved through.
+    //   check, and the known-ancestor check above already ruled out a
+    //   visible shadow); reaching this point means even that fallback did
+    //   not prove it, so the unseen base is the only remaining explanation
+    //   and must be refused, not waved through.
     // - `Ambiguous` / `ImportFailed` / `MaybeReExport`: likewise unconfirmed.
     //
     // This is the exact shape of the original issue's "member of a base
@@ -155,18 +188,24 @@ fn functions_writing_fhe(out: &CheckedUnit) -> impl Iterator<Item = FunctionId> 
 }
 
 /// Every function id whose `in`-sugar sites will lower through the *batched*
-/// materializer (more than one `in` parameter sharing the function, spec
-/// §2.3) — the only construct that writes `Impl`/`Utils`/
-/// `UnsignedEncryptedInput` instead of (or in addition to) `FHE`.
-fn functions_writing_batch_materializer(out: &CheckedUnit) -> Vec<FunctionId> {
-    let mut counts: std::collections::HashMap<FunctionId, usize> = Default::default();
-    for s in &out.sugar_sites {
-        *counts.entry(s.function).or_insert(0) += 1;
+/// materializer (more than one `in` parameter sharing the function, all with
+/// a body, spec §2.3 — a bodiless declaration only rewrites the signature
+/// and never reaches `batch_input_statements`), paired with the distinct
+/// encrypted types its parameters name (what `externalT`/`eT` the
+/// materializer will write `.unwrap`/`.wrap` calls on).
+fn functions_writing_batch_materializer(out: &CheckedUnit) -> Vec<(FunctionId, Vec<EType>)> {
+    let mut by_fn: HashMap<FunctionId, Vec<EType>> = HashMap::new();
+    for s in out.sugar_sites.iter().filter(|s| s.has_body) {
+        by_fn.entry(s.function).or_default().push(s.ty);
     }
-    counts
+    by_fn
         .into_iter()
-        .filter(|(_, count)| *count > 1)
-        .map(|(f, _)| f)
+        .filter(|(_, types)| types.len() > 1)
+        .map(|(f, mut types)| {
+            types.sort_by_key(|t| t.solidity_name());
+            types.dedup();
+            (f, types)
+        })
         .collect()
 }
 
