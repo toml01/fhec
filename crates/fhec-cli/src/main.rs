@@ -38,6 +38,10 @@ struct Cli {
     #[arg(long, global = true)]
     no_verify: bool,
 
+    /// Also forward non-error solc diagnostics from files outside project.src.
+    #[arg(long, global = true)]
+    all_solc_warnings: bool,
+
     /// Re-transpile the generated output and assert byte identity (spec §1.4).
     #[arg(long, global = true, hide = true)]
     self_check: bool,
@@ -90,6 +94,7 @@ fn main() {
         no_verify: cli.no_verify,
         self_check: cli.self_check,
         watch: cli.watch,
+        all_solc_warnings: cli.all_solc_warnings,
     };
     let code = match cli.command {
         Command::Build if g.watch => fhec_cli::watch::cmd_watch(&g, commands::cmd_build),

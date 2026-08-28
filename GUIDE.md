@@ -1,7 +1,9 @@
 # Writing `.fsol`
 
 `.fsol` is Solidity plus six shortcuts for CoFHE. Every valid Solidity file is
-already a valid `.fsol` file — adopt it one function at a time. `fhec build`
+already a valid `.fsol` file — adopt it one function at a time. Rename a file
+to `.fsol` to opt it in; `fhec check --fix` rewrites relative imports that
+still end in `.sol` when the target was discovered as `.fsol`. `fhec build`
 compiles it down to the plain, auditable Solidity you'd otherwise write by
 hand; see [README.md](README.md) for setup and the CLI.
 

@@ -1,6 +1,6 @@
 //! Stage 1 (Load): file discovery and compilation-unit assembly.
 
-use crate::config::{Config, CODE_CONFIG_INVALID};
+use crate::config::{Config, CODE_CONFIG_INVALID, CONFIG_FILE_NAME};
 use crate::diag::{Diagnostic, Severity, Span};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::path::{Path, PathBuf};
@@ -30,6 +30,9 @@ pub struct SourceFile {
 pub struct LoadedUnit {
     pub files: Vec<SourceFile>,
 }
+
+/// Warning: `project.include` matched no `.fsol` / `.sol` files under `project.src`.
+pub const CODE_NO_FILES_MATCHED: &str = "FHE1007";
 
 fn glob_set(patterns: &[String], what: &str) -> Result<GlobSet, Box<Diagnostic>> {
     let mut b = GlobSetBuilder::new();
@@ -132,6 +135,19 @@ pub fn discover(
             dialect,
         });
     }
+    if files.is_empty() {
+        let mut d = Diagnostic::new(
+            CODE_NO_FILES_MATCHED,
+            Severity::Warning,
+            Span::file_level(CONFIG_FILE_NAME),
+            format!(
+                "no source files matched project.include under `{}` (include = {:?})",
+                config.project.src, config.project.include
+            ),
+        );
+        d.rule = Some("§2.1".to_string());
+        diags.push(d);
+    }
     Ok(LoadedUnit { files })
 }
 
@@ -215,5 +231,19 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = discover(&Config::default(), tmp.path(), &mut Vec::new()).unwrap_err();
         assert_eq!(err.code, CODE_CONFIG_INVALID);
+    }
+
+    #[test]
+    fn empty_src_warns_no_files_matched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("contracts")).unwrap();
+        let mut diags = Vec::new();
+        let unit = discover(&Config::default(), root, &mut diags).unwrap();
+        assert!(unit.files.is_empty());
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].code, CODE_NO_FILES_MATCHED);
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("project.include"));
     }
 }

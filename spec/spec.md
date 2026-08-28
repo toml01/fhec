@@ -104,10 +104,11 @@ contract EncryptedCounter {
 1. Dialect source files use the extension `.fsol`. Plain `.sol` files in the same project MUST pass through unmodified except §2.6.
 2. A `.fsol` file MUST carry a `pragma solidity` constraint whose satisfiable range lies within `>=0.8.25 <0.9.0`. Constraints outside this range are FHE1001 errors, enforced by the load stage; a pragma the load stage cannot parse defers to solc rather than erroring. (The CoFHE interface file itself requires `>=0.8.25`; CoFHE deployments require the `cancun` EVM target.)
 3. Except for the extensions in §2.3, §2.7, and §2.8, the grammar of `.fsol` is exactly the grammar of Solidity in the supported pragma range. Every valid Solidity file in that range is a valid `.fsol` file.
+4. When `project.include` matches no `.fsol` / `.sol` files under `project.src`, the load stage MUST emit FHE1007 (warning). An empty match is almost always a misconfigured `src` or include glob, not an empty project.
 
 ### §2.2 Parse errors
 
-Input that does not parse under the dialect grammar is rejected with FHE1002. Unresolvable imports are FHE1003.
+Input that does not parse under the dialect grammar is rejected with FHE1002. Unresolvable imports are FHE1003. When a relative specifier fails to resolve and replacing `.sol` with `.fsol` (or the reverse) names a file the compilation unit actually discovered, the diagnostic SHOULD carry a `safe: true` fix-it that rewrites the specifier.
 
 ### §2.3 The `in` parameter sugar
 
@@ -600,6 +601,7 @@ Assigned in this version:
 | FHE1004 | error | config-not-found (no `fhec.toml` for a command that requires one) |
 | FHE1005 | error | config-invalid (`fhec.toml` parse or validation failure) |
 | FHE1006 | error | frozen-drift (`--frozen`: regeneration differs from the committed output tree) |
+| FHE1007 | warning | no-files-matched (`project.include` matched no `.fsol` / `.sol` files under `project.src`) |
 | FHE1010 | error | in-sugar-non-encrypted-type |
 | FHE1011 | error | in-sugar-name-collision (§2.3) |
 | FHE1012 | error | in-sugar-bad-position (§2.3) |
@@ -657,6 +659,8 @@ Assigned in this version:
 | FHE9003 | error | fragment-reparse-failed (§2.5) |
 
 Every diagnostic MUST carry: code, severity, original-source span, message. It SHOULD carry fix-its and a documentation link. Fix-its marked `safe: true` MAY be auto-applied by `--fix`.
+
+Non-error FHE6000 diagnostics whose span is not a discovered file under `project.src` SHOULD be suppressed by default (third-party library warnings are not actionable). Error-severity FHE6000 diagnostics MUST always be forwarded. A CLI that suppresses those warnings MUST provide a flag (`--all-solc-warnings`) that restores them.
 
 ---
 
@@ -722,3 +726,5 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.5.0 (2026-08-27)** — third grammar extension: §2.8 adds the shared boundary. `in shared eT name` lowers a parameter to the profile's `sharedT` wire type and receives it at the materialization point, with no input proof and no batching; `returns (shared(msg.sender) eT)` makes the ABI result `sharedT` and wraps every returned expression in one `share` call, in place, so single evaluation and nested operator lowering both hold by construction. A shared return replaces the §8.3 R3 grant and never costs any other ACL grant. MVP limits: `in shared` on `external` functions only, no data location on either marker, no mixing of shared and external inputs in one parameter list, one unnamed shared return per function, recipient exactly `msg.sender`, explicit valued `return` inside a braced block, no assignment in the returned expression, and no rewrite site in a returned expression whose statement an R2 grant already claims. A call to a shared-return function types as `Unknown`. New codes FHE1015 (bad position or shape), FHE1016 (`<name>_shared` collision), FHE2012 (returned expression is not the declared encrypted type); a profile without a shared boundary for a type reuses FHE5001.
 - **0.4.0 (2026-08-27)** — §2.3 adds the explicit proof binder `in(proof) eT name`: the input verifies against an author-declared `bytes memory|calldata` parameter of the same list, which keeps its position, name, and data location, and nothing is appended to the parameter list, so an ERC-7984 `…AndCall` order (proof before `data`) is expressible. The implicit `in eT name` form and its trailing `bytes memory inputProof` are unchanged. New codes FHE1013 (binder does not name a same-list `bytes` parameter) and FHE1014 (one parameter list mixes the two forms or binds two different proofs).
 - **0.6.0 (2026-08-28)** — §2.9 adds explicit cast sugar: `eT(x)` is sugar for `FHE.as<T>(x)`, rewriting only the callee identifier and leaving the argument byte-identical, so the argument gets exactly the type-checking an author-written `FHE.as<T>(x)` call already receives. This is the first grammar-adjacent extension that adds zero new parser grammar: unlike §2.3, §2.7, and §2.8, it reuses the existing call-expression grammar and resolves purely through name resolution. New code FHE1018 (a call with an argument count other than one).
+- **0.6.1 (2026-08-28)** — FHE1007: the load stage warns when `project.include` matches no source files under `project.src`. Non-error FHE6000 diagnostics from files outside `project.src` are suppressed by default; `--all-solc-warnings` restores them. Errors from any file are still forwarded.
+- **0.6.2 (2026-08-28)** — FHE1003 carries a `safe: true` fix-it when swapping the dialect extension of a relative import names a discovered unit file.

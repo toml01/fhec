@@ -6,7 +6,7 @@
 //! with spans remapped through the manifest onto the original `.fsol`
 //! positions.
 
-use crate::config::Target;
+use crate::config::Config;
 use crate::diag::{Diagnostic, Severity, Span};
 use crate::load::LoadedUnit;
 use crate::stages::{resolve_relative, FileOutput};
@@ -20,16 +20,52 @@ const INSTALL_HINT: &str =
     "install the library packages (e.g. `npm install @fhenixprotocol/cofhe-contracts` or \
      `pnpm add @fhenixprotocol/cofhe-contracts`), or pass --no-verify to skip the solc gate";
 
+/// True when a remapped solc span names a file under `project.src`.
+///
+/// Discovered unit files are stored as paths relative to `src`, so a match on
+/// `rel_path` counts. A path that is `src` itself or is prefixed by `src/` also
+/// counts. Bare specifiers such as `@openzeppelin/contracts/...` do not.
+pub(crate) fn solc_file_in_src(file: &str, unit: &LoadedUnit, src: &str) -> bool {
+    if unit.files.iter().any(|f| f.rel_path == file) {
+        return true;
+    }
+    let src = src.trim_end_matches('/');
+    if src.is_empty() {
+        return false;
+    }
+    file == src || file.starts_with(&format!("{src}/"))
+}
+
+/// Whether a forwarded solc diagnostic should be reported.
+///
+/// Errors from any file always pass through. Non-errors from outside
+/// `project.src` are suppressed unless `all_solc_warnings` is set.
+pub(crate) fn keep_forwarded_solc(
+    severity: Severity,
+    file: &str,
+    unit: &LoadedUnit,
+    src: &str,
+    all_solc_warnings: bool,
+) -> bool {
+    severity == Severity::Error || all_solc_warnings || solc_file_in_src(file, unit, src)
+}
+
 /// Runs the gate over the emitted outputs. Returns diagnostics; an empty
 /// list means the gate passed.
+///
+/// Non-error FHE6000 diagnostics whose file is outside `project.src` are
+/// dropped unless `all_solc_warnings` is true. Errors from any file are kept.
 pub fn run_gate(
     root: &Path,
-    out_dir_name: &str,
     outputs: &[FileOutput],
     manifest: &Manifest,
     unit: &LoadedUnit,
-    target: &Target,
+    config: &Config,
+    all_solc_warnings: bool,
 ) -> Vec<Diagnostic> {
+    let out_dir_name = config.project.out.as_str();
+    let src = config.project.src.as_str();
+    let target = &config.target;
     let mut diags = Vec::new();
 
     // 1. Source closure.
@@ -108,6 +144,9 @@ pub fn run_gate(
                 .push_str(" (position is inside code fhec generated from this construct)");
         }
         d.rule = vd.rule.clone();
+        if !keep_forwarded_solc(severity, &d.span.file, unit, src, all_solc_warnings) {
+            continue;
+        }
         diags.push(d);
     }
     diags
@@ -364,5 +403,78 @@ mod tests {
                 "./C.sol".to_string()
             ]
         );
+    }
+
+    fn unit_with(rel: &str) -> LoadedUnit {
+        LoadedUnit {
+            files: vec![crate::load::SourceFile {
+                rel_path: rel.into(),
+                abs_path: PathBuf::from(rel),
+                content: String::new(),
+                dialect: crate::load::Dialect::Sol,
+            }],
+        }
+    }
+
+    #[test]
+    fn src_warnings_are_kept_and_third_party_warnings_are_dropped() {
+        let unit = unit_with("Vault.fsol");
+        assert!(solc_file_in_src("Vault.fsol", &unit, "contracts"));
+        assert!(solc_file_in_src("contracts/Vault.fsol", &unit, "contracts"));
+        assert!(!solc_file_in_src(
+            "@openzeppelin/contracts/utils/TransientSlot.sol",
+            &unit,
+            "contracts"
+        ));
+        // A third-party path that merely contains the src directory name
+        // must not count as in-src.
+        assert!(!solc_file_in_src(
+            "@openzeppelin/contracts/token/ERC20/ERC20.sol",
+            &unit,
+            "contracts"
+        ));
+
+        assert!(keep_forwarded_solc(
+            Severity::Warning,
+            "Vault.fsol",
+            &unit,
+            "contracts",
+            false
+        ));
+        assert!(!keep_forwarded_solc(
+            Severity::Warning,
+            "@openzeppelin/contracts/utils/TransientSlot.sol",
+            &unit,
+            "contracts",
+            false
+        ));
+        assert!(keep_forwarded_solc(
+            Severity::Error,
+            "@openzeppelin/contracts/utils/TransientSlot.sol",
+            &unit,
+            "contracts",
+            false
+        ));
+        assert!(keep_forwarded_solc(
+            Severity::Warning,
+            "@openzeppelin/contracts/utils/TransientSlot.sol",
+            &unit,
+            "contracts",
+            true
+        ));
+        assert!(keep_forwarded_solc(
+            Severity::Note,
+            "Vault.fsol",
+            &unit,
+            "contracts",
+            false
+        ));
+        assert!(!keep_forwarded_solc(
+            Severity::Note,
+            "noisy/Lib.sol",
+            &unit,
+            "contracts",
+            false
+        ));
     }
 }

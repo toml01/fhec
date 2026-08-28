@@ -29,6 +29,8 @@ pub struct GlobalArgs {
     pub self_check: bool,
     /// Rebuild or recheck when dialect sources or `fhec.toml` change.
     pub watch: bool,
+    /// Forward non-error solc diagnostics from files outside `project.src`.
+    pub all_solc_warnings: bool,
 }
 
 impl GlobalArgs {
@@ -127,7 +129,9 @@ pub fn cmd_check(g: &GlobalArgs) -> i32 {
     let mut diags = pre_diags;
     diags.extend(result.diagnostics);
     let code = finish(&diags, &loaded, &unit, g);
-    if code == 0 && g.verbose {
+    // Human `check` always prints this line so a clean run is distinct from
+    // "found nothing to do". `--json` stays silent (spec §10.2 array only).
+    if code == 0 && !g.json {
         eprintln!(
             "fhec: {} file(s) checked clean, {} rewrite site(s) (config hash {})",
             unit.files.len(),
@@ -255,11 +259,11 @@ pub fn cmd_build(g: &GlobalArgs) -> i32 {
         if !g.no_verify {
             diags.extend(crate::gate::run_gate(
                 &loaded.root,
-                &loaded.config.project.out,
                 &result.outputs,
                 &manifest,
                 &unit,
-                &loaded.config.target,
+                &loaded.config,
+                g.all_solc_warnings,
             ));
         }
         return finish(&diags, &loaded, &unit, g);
@@ -321,11 +325,11 @@ pub fn cmd_build(g: &GlobalArgs) -> i32 {
     if !g.no_verify {
         let gate_diags = crate::gate::run_gate(
             &loaded.root,
-            &loaded.config.project.out,
             &result.outputs,
             &manifest,
             &unit,
-            &loaded.config.target,
+            &loaded.config,
+            g.all_solc_warnings,
         );
         diags.extend(gate_diags);
     } else if g.verbose {
