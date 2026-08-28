@@ -355,6 +355,7 @@ impl<'ast> FnChecker<'_, 'ast> {
                             callee_span: *callee_span,
                             callee_is_ident: *callee_is_ident,
                             args: enc_args,
+                            is_view_or_pure: self.is_view_or_pure,
                             function: self.fid,
                             file: self.file,
                         };

@@ -359,6 +359,15 @@ pub struct EncryptedArgCall {
     pub callee_is_ident: bool,
     /// The encrypted arguments: span and type each.
     pub args: Vec<(Span, EType)>,
+    /// Whether the enclosing function is `view` or `pure` (no insertion;
+    /// warning FHE4002). `allowTransient` is itself not `view`/`pure` — it
+    /// makes a real external call — so inserting it into a `view` function's
+    /// body would produce invalid Solidity. A `pure` function cannot make an
+    /// external call at all, so this rule's site (an external call) can
+    /// never arise in one; the field exists for symmetry with
+    /// [`EncryptedReturn::is_view_or_pure`] so both rules' guards read the
+    /// same way.
+    pub is_view_or_pure: bool,
     /// The enclosing function.
     pub function: FunctionId,
     /// The file containing the call.

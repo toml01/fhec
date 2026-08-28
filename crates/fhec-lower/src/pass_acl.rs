@@ -294,6 +294,28 @@ fn rule_r2<'ast>(
     plan: &mut FilePlan,
     outcome: &mut AclOutcome,
 ) -> Result<()> {
+    if c.is_view_or_pure {
+        // Neither a `view` nor a `pure` function can make the external call
+        // `allowTransient` requires (spec §8.2, §8.4) — inserting it would
+        // not compile, so this warns instead of guessing a grant. `pure`
+        // cannot reach this rule to begin with: it cannot make an external
+        // call at all, so R2's site (an external call) never exists in a
+        // `pure` function. `view` CAN legally call another `view`/`pure`
+        // external function, so this guard is the reachable case; leaving
+        // the statement alone (no `owned_stmts` claim) lets pass 1 still
+        // lower any operator sites inside the call's arguments normally.
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4002",
+            severity: Severity::Warning,
+            span: c.call_span,
+            message: "a `view` or `pure` function cannot grant ACL access to this call's \
+                      encrypted argument; the callee must have been granted access elsewhere"
+                .to_string(),
+            fixits: Vec::new(),
+            rule: Some("§8.2"),
+        });
+        return Ok(());
+    }
     let callee_text = strip_parens(&ctx.snippet(c.callee_span)).to_string();
     let window = backward_window(ctx, c.function, c.stmt_span);
     let transient = ctx
