@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract CastWidening {
+    euint8 small;
+    euint32 big;
+
+    function widen(in euint8 amount) public {
+        small = amount;
+        big = euint32(small);
+    }
+}

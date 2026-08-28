@@ -1,0 +1,13 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract CastNestedCondition {
+    ebool cond;
+    euint32 total;
+
+    function pick() public {
+        total = cond ? euint32(1) : euint32(2);
+    }
+}

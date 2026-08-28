@@ -87,6 +87,9 @@ impl<'r, 'a, 'ast> Renderer<'r, 'a, 'ast> {
         if let Some(&i) = self.ctx.terns_by_span.get(&e.span) {
             return self.render_ternary_site(e, i);
         }
+        if let Some(&i) = self.ctx.cast_sugar_by_span.get(&e.span) {
+            return self.render_cast_sugar_site(e, i);
+        }
         // No rewrite at this node: render children and splice the changes into
         // the original text.
         let mut subs: Vec<(fhec_ir::ByteRange, String)> = Vec::new();
@@ -190,6 +193,29 @@ impl<'r, 'a, 'ast> Renderer<'r, 'a, 'ast> {
                 message: format!("profile refused a checked select: {err} (internal)"),
                 code: None,
             })
+    }
+
+    /// Renders an explicit cast sugar call `eT(x)` (spec §2.9) as
+    /// `FHE.as<T>(x)`, recursively rendering the single argument so a
+    /// rewrite site nested inside it (an operator, a ternary, another cast)
+    /// still lowers correctly.
+    fn render_cast_sugar_site(&self, e: &'ast ast::Expr<'ast>, i: usize) -> Result<String> {
+        let site = &self.ctx.checked.cast_sugar_sites[i];
+        let ast::ExprKind::Call(_, args) = &e.kind else {
+            return fail(
+                e.span,
+                "cast sugar site does not match the expression shape (internal)",
+            );
+        };
+        let arg_exprs = crate::expr::call_arg_exprs(args);
+        let [arg] = arg_exprs.as_slice() else {
+            return fail(e.span, "cast sugar site arity mismatch (internal)");
+        };
+        let rendered_arg = self.render_expr(arg)?;
+        Ok(format!(
+            "{}({rendered_arg})",
+            self.ctx.profile.conversion_fn(site.ty)
+        ))
     }
 
     /// Applies an operand's conversion plan to its rendered text.

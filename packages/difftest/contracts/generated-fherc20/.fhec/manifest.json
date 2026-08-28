@@ -515,12 +515,23 @@
         },
         {
           "output_range": [
+            14735,
+            14762
+          ],
+          "source_range": [
+            13914,
+            13935
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
             14860,
             14889
           ],
           "source_range": [
-            14039,
-            14060
+            14033,
+            14054
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -530,8 +541,8 @@
             14949
           ],
           "source_range": [
-            14078,
-            14113
+            14072,
+            14107
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -541,8 +552,8 @@
             15026
           ],
           "source_range": [
-            14131,
-            14180
+            14125,
+            14174
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -552,8 +563,8 @@
             15234
           ],
           "source_range": [
-            14329,
-            14363
+            14323,
+            14357
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -563,8 +574,8 @@
             15510
           ],
           "source_range": [
-            14611,
-            14632
+            14605,
+            14626
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -574,8 +585,8 @@
             15583
           ],
           "source_range": [
-            14646,
-            14680
+            14640,
+            14674
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -585,8 +596,8 @@
             15648
           ],
           "source_range": [
-            14694,
-            14737
+            14688,
+            14731
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -596,8 +607,8 @@
             16059
           ],
           "source_range": [
-            15099,
-            15140
+            15093,
+            15134
           ],
           "rule": "§4.1 operator-lowering"
         },
@@ -607,8 +618,8 @@
             16262
           ],
           "source_range": [
-            15292,
-            15335
+            15286,
+            15329
           ],
           "rule": "§4.1 operator-lowering"
         }
@@ -629,6 +640,28 @@
             148
           ],
           "rule": "§2.6 import-rewrite"
+        },
+        {
+          "output_range": [
+            586,
+            622
+          ],
+          "source_range": [
+            587,
+            617
+          ],
+          "rule": "§4.1 operator-lowering"
+        },
+        {
+          "output_range": [
+            697,
+            733
+          ],
+          "source_range": [
+            692,
+            722
+          ],
+          "rule": "§4.1 operator-lowering"
         }
       ]
     }

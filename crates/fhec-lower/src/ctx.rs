@@ -22,6 +22,9 @@ pub(crate) struct Ctx<'a, 'ast> {
     pub ops_by_span: FxHashMap<Span, usize>,
     /// Ternary sites indexed by their whole-expression span.
     pub terns_by_span: FxHashMap<Span, usize>,
+    /// Explicit cast sugar sites (spec §2.9) indexed by their whole
+    /// call-expression span.
+    pub cast_sugar_by_span: FxHashMap<Span, usize>,
     /// Compound-assignment sites indexed by their `L op= R` span.
     pub compounds_by_span: FxHashMap<Span, usize>,
     /// Inc/dec sites indexed by their span (statement or expression).
@@ -48,6 +51,10 @@ impl<'a, 'ast> Ctx<'a, 'ast> {
         let mut terns_by_span = FxHashMap::default();
         for (i, s) in checked.ternary_sites.iter().enumerate() {
             terns_by_span.insert(s.span, i);
+        }
+        let mut cast_sugar_by_span = FxHashMap::default();
+        for (i, s) in checked.cast_sugar_sites.iter().enumerate() {
+            cast_sugar_by_span.insert(s.call_span, i);
         }
         let mut compounds_by_span = FxHashMap::default();
         for (i, s) in checked.compound_sites.iter().enumerate() {
@@ -95,6 +102,7 @@ impl<'a, 'ast> Ctx<'a, 'ast> {
             texts,
             ops_by_span,
             terns_by_span,
+            cast_sugar_by_span,
             compounds_by_span,
             incdecs_by_span,
             ifs_by_span,

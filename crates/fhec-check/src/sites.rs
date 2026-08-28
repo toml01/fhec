@@ -259,6 +259,24 @@ pub struct SharedReturnSite {
     pub file: FileId,
 }
 
+/// One `eT(x)` explicit cast sugar call to rewrite to `FHE.as<T>(x)` (spec
+/// §2.9). The argument list is left byte-identical: only the callee is
+/// rewritten.
+#[derive(Clone, Debug)]
+pub struct CastSugarSite {
+    /// Span of the whole call expression, callee through the closing `)`.
+    pub call_span: Span,
+    /// Span of the callee identifier alone (`ebool`/`euint32`/...): the patch
+    /// range the lowerer replaces. Excludes the parens and argument list.
+    pub callee_span: Span,
+    /// The target encrypted type.
+    pub ty: EType,
+    /// The enclosing function.
+    pub function: FunctionId,
+    /// The file containing the site.
+    pub file: FileId,
+}
+
 /// The one legal `precondition { ... }` block of a function (spec §2.7).
 ///
 /// Only *legal* blocks become sites: the block is the first statement of a
@@ -401,6 +419,8 @@ pub struct CheckedUnit {
     pub shared_return_sites: Vec<SharedReturnSite>,
     /// Legal `precondition` blocks, at most one per function (spec §2.7).
     pub precondition_sites: Vec<PreconditionSite>,
+    /// `eT(x)` explicit cast sugar sites (spec §2.9).
+    pub cast_sugar_sites: Vec<CastSugarSite>,
     /// ACL facts (spec §8).
     pub acl: AclFacts,
     /// Diagnostics (spec §9). Any `Severity::Error` entry MUST abort
@@ -428,5 +448,6 @@ impl CheckedUnit {
             + self.shared_input_sites.len()
             + self.shared_return_sites.len()
             + self.precondition_sites.len()
+            + self.cast_sugar_sites.len()
     }
 }
