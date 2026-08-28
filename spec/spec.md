@@ -430,11 +430,11 @@ Naive per-assignment select-rewriting is unsound: because both branches execute,
 1. **Legality.** Check both branches against §7. Any violation rejects the whole statement.
 2. **Condition hoisting.** Evaluate the condition exactly once into a fresh temp: `ebool __fhe_cond_n = <cond>;`.
 3. **Write set.** Compute the set of locations written in either branch: local variables, state variables, mapping/array slots, struct fields. For indexed locations, hoist each plaintext index key into a temp before the branches (`__fhe_key_n`). Two indexed writes denote the same location if and only if their keys are the same hoisted temp, or are distinct literals (then they are different locations). If the transpiler cannot decide aliasing (two syntactically different non-literal keys), it MUST reject with FHE3011.
-4. **Pre-values.** For every location `L` in the write set, read a pre-value temp before the branches: `__fhe_pre_n = L;`.
-5. **Branch environments.** Walk the then-branch and the else-branch with *separate* environments, each seeded from the pre-value temps. Each assignment in a branch produces a fresh temp holding the assigned value; subsequent reads in the SAME branch see that temp; reads in the OTHER branch see the pre-value.
+4. **Pre-values.** For each location `L` in the write set, read a pre-value temp before the branches **only if** either branch reads `L` before assigning it, or either branch does not assign `L`: `__fhe_pre_n = L;`. A location assigned on both branches before either branch reads its incoming value MUST NOT read or declare a pre-value.
+5. **Branch environments.** Walk the then-branch and the else-branch with *separate* environments, each seeded from the required pre-value temps. Each assignment in a branch produces a fresh temp holding the assigned value; subsequent reads in the SAME branch see that temp; reads in the OTHER branch see the pre-value when one is required.
 6. **Merge.** After both branch bodies, for every location `L`:
    `L = FHE.select(__fhe_cond_n, <thenVal or pre>, <elseVal or pre>);`
-   where `thenVal`/`elseVal` are the final temps of `L` in each branch environment, defaulting to the pre-value temp when a branch did not write `L`.
+   where `thenVal`/`elseVal` are the final temps of `L` in each branch environment, defaulting to the pre-value temp when a branch did not write `L`. When both arms assign `L` without reading its incoming value, both operands MUST be branch values and no pre-value exists.
 
 Merge writes MUST be emitted in a deterministic order (**⚠ Draft decision:** order of first write occurrence in source).
 

@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract T {
+    function pair(euint64 a) internal returns (ebool, euint64) {
+        return (FHE.asEbool(true), a);
+    }
+
+    // Every named tuple-assignment component is initialized.
+    function tupleAssign(euint64 a) external returns (euint64 r) {
+        ebool ok;
+        euint64 v;
+        (ok, v) = pair(a);
+        r = ok ? v : euint64(0);
+    }
+
+    // Tuple declarations already had the same behavior and remain clean.
+    function tupleDecl(euint64 a) external returns (euint64 r) {
+        (ebool ok, euint64 v) = pair(a);
+        r = ok ? v : euint64(0);
+    }
+
+    // A genuine uninitialized read remains rejected.
+    function stillUninitialized(euint64 a) external returns (euint64 r) {
+        euint64 v;
+        r = v + a;
+    }
+}

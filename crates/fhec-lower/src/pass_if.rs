@@ -5,8 +5,8 @@
 //! 2. hoist the condition into `__fhe_cond_n`, evaluated once;
 //! 3. compute the write set of both branches; hoist non-literal index keys;
 //!    undecidable aliasing rejects with FHE3011;
-//! 4. read a pre-value temp per written location;
-//! 5. walk each branch with its own environment seeded from the pre-values;
+//! 4. read a pre-value temp only where a branch or merge needs it;
+//! 5. walk each branch with its own environment seeded from those pre-values;
 //!    every assignment makes a fresh temp;
 //! 6. merge per location, in first-write order:
 //!    `L = FHE.select(cond, thenVal-or-pre, elseVal-or-pre);`.
@@ -25,7 +25,7 @@
 //! alias a written location — is undecidable and rejects with FHE3011.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use fhec_bind::{Resolution, VarId};
 use fhec_check::{Severity, Ty};
@@ -150,6 +150,10 @@ impl KeyTable {
 /// The mutable state of one branch walk (spec §5.2 step 5).
 struct Env<'f> {
     versions: HashMap<LocKey, String>,
+    /// Pre-value temp names. A branch read of one is recorded so unused
+    /// incoming values can be omitted safely after rendering.
+    pre_of: &'f HashMap<LocKey, String>,
+    pre_used: &'f RefCell<HashSet<LocKey>>,
     writes: &'f [Loc],
     keys: &'f KeyTable,
     hint: TempHint,
@@ -163,10 +167,15 @@ impl Env<'_> {
     }
 
     fn read(&self, key: &LocKey, display: &str) -> String {
-        self.versions
+        let value = self
+            .versions
             .get(key)
             .cloned()
-            .unwrap_or_else(|| display.to_string())
+            .unwrap_or_else(|| display.to_string());
+        if self.pre_of.get(key) == Some(&value) {
+            self.pre_used.borrow_mut().insert(key.clone());
+        }
+        value
     }
 }
 
@@ -224,7 +233,10 @@ fn render_frame<'ast>(
         scan_branch(ictx, e, &mut writes, &mut keys)?;
     }
 
-    // Step 4: pre-values, read in the enclosing environment.
+    // Step 4: allocate candidate pre-values. Branch rendering records which
+    // ones are actually read; merge fallbacks do the same below, so a value
+    // assigned independently on both arms never reads an uninitialized
+    // handle just to feed a select.
     let mut pre_of: HashMap<LocKey, String> = HashMap::new();
     let mut pre_decls: Vec<String> = Vec::new();
     for loc in &writes {
@@ -236,10 +248,13 @@ fn render_frame<'ast>(
         pre_decls.push(format!("{} {} = {};", loc.ty.solidity_name(), temp, init));
         pre_of.insert(loc.key.clone(), temp);
     }
+    let pre_used = RefCell::new(HashSet::new());
 
     // Step 5: branch walks with separate environments.
     let then_env = RefCell::new(Env {
         versions: pre_of.clone(),
+        pre_of: &pre_of,
+        pre_used: &pre_used,
         writes: &writes,
         keys: &keys,
         hint: TempHint::Then,
@@ -252,6 +267,8 @@ fn render_frame<'ast>(
         Some(e) => {
             let env = RefCell::new(Env {
                 versions: pre_of.clone(),
+                pre_of: &pre_of,
+                pre_used: &pre_used,
                 writes: &writes,
                 keys: &keys,
                 hint: TempHint::Else,
@@ -267,10 +284,31 @@ fn render_frame<'ast>(
     let mut merge_lines: Vec<String> = Vec::new();
     for loc in &writes {
         let pre = &pre_of[&loc.key];
-        let then_v = then_env.read(&loc.key, pre);
-        let else_v = else_env
-            .as_ref()
-            .map_or_else(|| pre.clone(), |e| e.read(&loc.key, pre));
+        let then_v = then_env
+            .versions
+            .get(&loc.key)
+            .cloned()
+            .unwrap_or_else(|| pre.clone());
+        if then_v == *pre {
+            pre_used.borrow_mut().insert(loc.key.clone());
+        }
+        let else_v = else_env.as_ref().map_or_else(
+            || {
+                pre_used.borrow_mut().insert(loc.key.clone());
+                pre.clone()
+            },
+            |e| {
+                let value = e
+                    .versions
+                    .get(&loc.key)
+                    .cloned()
+                    .unwrap_or_else(|| pre.clone());
+                if value == *pre {
+                    pre_used.borrow_mut().insert(loc.key.clone());
+                }
+                value
+            },
+        );
         let select = ctx
             .profile
             .render_call(
@@ -348,6 +386,9 @@ fn render_frame<'ast>(
         }
     }
 
+    let then_decls = then_env.decls;
+    let else_decls = else_env.map(|env| env.decls);
+
     // Assemble the replacement block.
     let mut out = String::new();
     out.push_str("{\n");
@@ -355,10 +396,13 @@ fn render_frame<'ast>(
     for (canon, temp, ty_text) in &keys.rows {
         out.push_str(&format!("{i1}{ty_text} {temp} = {canon};\n"));
     }
-    for d in &pre_decls {
-        out.push_str(&format!("{i1}{d}\n"));
+    let pre_used = pre_used.into_inner();
+    for (loc, d) in writes.iter().zip(&pre_decls) {
+        if pre_used.contains(&loc.key) {
+            out.push_str(&format!("{i1}{d}\n"));
+        }
     }
-    for (ty, name) in &then_env.decls {
+    for (ty, name) in &then_decls {
         out.push_str(&format!("{i1}{} {name};\n", ty.solidity_name()));
     }
     out.push_str(&format!("{i1}{{\n"));
@@ -366,8 +410,8 @@ fn render_frame<'ast>(
         out.push_str(&format!("{i2}{l}\n"));
     }
     out.push_str(&format!("{i1}}}\n"));
-    if let Some(env) = &else_env {
-        for (ty, name) in &env.decls {
+    if let Some(decls) = &else_decls {
+        for (ty, name) in decls {
             out.push_str(&format!("{i1}{} {name};\n", ty.solidity_name()));
         }
         out.push_str(&format!("{i1}{{\n"));

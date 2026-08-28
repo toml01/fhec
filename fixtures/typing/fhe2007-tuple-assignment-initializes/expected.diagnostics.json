@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2007",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 845,
+      "end_byte": 846,
+      "start_line": 28,
+      "start_col": 13,
+      "end_line": 28,
+      "end_col": 14
+    },
+    "message": "possibly uninitialized encrypted variable used as an operand of a lowered FHE operation; CoFHE silently substitutes a default ciphertext for uninitialized handles",
+    "rule": "§6"
+  }
+]

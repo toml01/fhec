@@ -743,24 +743,22 @@ impl<'ast> FnChecker<'_, 'ast> {
         rhs: &'ast ast::Expr<'ast>,
     ) -> Ty {
         let rty = self.type_expr(rhs);
+
+        // A tuple assignment has one write target for each named component,
+        // not one opaque tuple target. In particular, `(, x, y) = f()`
+        // definitely assigns both `x` and `y`; treating the tuple expression
+        // as an ordinary lvalue would leave their definite-assignment slots
+        // untouched and later report FHE2007 falsely.
+        if op.is_none() && matches!(lhs.peel_parens().kind, ast::ExprKind::Tuple(_)) {
+            self.assign_tuple_lvalues(lhs);
+            return Ty::Plain(PlainTy::Opaque);
+        }
+
         let (lty, lv) = self.analyze_lvalue(lhs);
 
         match op {
             None => {
-                if lty == Ty::Plain(PlainTy::Bool) && rty == Ty::Encrypted(EType::Ebool) {
-                    self.error(
-                        codes::EBOOL_AS_BOOL,
-                        rhs.span,
-                        "`ebool` cannot be assigned to a plaintext `bool`; decryption \
-                         is an explicit asynchronous operation",
-                    );
-                }
-                match &lty {
-                    Ty::Encrypted(t) => {
-                        self.finish_encrypted_write(&lv, lhs.span, *t);
-                    }
-                    _ => self.plain_write(&lv, lhs.span, &lty),
-                }
+                self.simple_assign(lhs, rhs.span, &rty, &lty, &lv);
             }
             Some(binop) => match &lty {
                 Ty::Encrypted(t) => {
@@ -780,6 +778,54 @@ impl<'ast> FnChecker<'_, 'ast> {
             },
         }
         lty
+    }
+
+    /// Applies the simple-assignment bookkeeping to every present tuple
+    /// component. Holes have no target, while nested tuples are flattened
+    /// recursively so every named lvalue receives its own assignment state.
+    fn assign_tuple_lvalues(&mut self, lhs: &'ast ast::Expr<'ast>) {
+        if let ast::ExprKind::Tuple(els) = &lhs.peel_parens().kind {
+            for el in els.iter() {
+                if let Some(el) = el.as_ref().unspan() {
+                    self.assign_tuple_lvalues(el);
+                }
+            }
+            return;
+        }
+
+        let (lty, lv) = self.analyze_lvalue(lhs);
+        // The checker intentionally does not model individual tuple-result
+        // types. Solidity checks component compatibility; the checker only
+        // needs the target type here to record the definite assignment.
+        self.record_simple_write(lhs, &lty, &lv);
+    }
+
+    /// Shared simple-assignment checks and write bookkeeping.
+    fn simple_assign(
+        &mut self,
+        lhs: &'ast ast::Expr<'ast>,
+        rhs_span: Span,
+        rty: &Ty,
+        lty: &Ty,
+        lv: &LvalueInfo,
+    ) {
+        if *lty == Ty::Plain(PlainTy::Bool) && *rty == Ty::Encrypted(EType::Ebool) {
+            self.error(
+                codes::EBOOL_AS_BOOL,
+                rhs_span,
+                "`ebool` cannot be assigned to a plaintext `bool`; decryption \
+                 is an explicit asynchronous operation",
+            );
+        }
+        self.record_simple_write(lhs, lty, lv);
+    }
+
+    /// Records the mutation represented by one simple-assignment target.
+    fn record_simple_write(&mut self, lhs: &'ast ast::Expr<'ast>, lty: &Ty, lv: &LvalueInfo) {
+        match lty {
+            Ty::Encrypted(t) => self.finish_encrypted_write(lv, lhs.span, *t),
+            _ => self.plain_write(lv, lhs.span, lty),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
