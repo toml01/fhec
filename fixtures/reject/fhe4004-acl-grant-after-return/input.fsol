@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// An internal function states no R3 return fact, so nothing owns the
+// statement and the R1 grants would land after the `return`. Spec §8.0:
+// refuse rather than emit a grant that never runs.
+contract GrantAfterReturn {
+    euint32 balance;
+
+    function set(euint32 amount) internal returns (euint32) {
+        return balance = amount;
+    }
+}

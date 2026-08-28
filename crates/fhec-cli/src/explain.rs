@@ -64,6 +64,7 @@ pub static CATALOG: &[CatalogEntry] = &[
     CatalogEntry { code: "FHE4001", severity: "warning", name: "non-sender-keyed-encrypted-write", rule: "§8.1", summary: "ACL grant inserted for a slot keyed by an address other than msg.sender; possible confidentiality issue." },
     CatalogEntry { code: "FHE4002", severity: "warning", name: "view-return-without-acl", rule: "§8.4", summary: "View function returns an encrypted value; ACL cannot be granted in view context." },
     CatalogEntry { code: "FHE4003", severity: "error", name: "acl-callee-type-underivable", rule: "§8.2", summary: "R2 callee hoisting: the callee expression's declared type cannot be derived; restructure the callee into a cast or a typed variable." },
+    CatalogEntry { code: "FHE4004", severity: "error", name: "acl-position-illegal", rule: "§8", summary: "An ACL grant would have to be written where no statement may go (a `for` header); move the statement above the loop." },
     CatalogEntry { code: "FHE4010", severity: "note", name: "suggest-allow-after-write", rule: "§8.1", summary: "--acl=suggest: a storage write would receive allowThis/allowSender here." },
     CatalogEntry { code: "FHE4011", severity: "note", name: "suggest-transient-for-argument", rule: "§8.2", summary: "--acl=suggest: an encrypted call argument would receive allowTransient here." },
     CatalogEntry { code: "FHE4012", severity: "note", name: "suggest-transient-for-return", rule: "§8.3", summary: "--acl=suggest: an encrypted return would receive allowTransient here." },

@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE4004",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 425,
+      "end_byte": 449,
+      "start_line": 13,
+      "start_col": 9,
+      "end_line": 13,
+      "end_col": 33
+    },
+    "message": "the encrypted storage write in `return balance = amount;` cannot receive its ACL grants: inserted before the statement the slot does not hold the value yet, and inserted after it the function has already returned (spec §8.0); split the statement into a write and a `return`",
+    "rule": "§8.1"
+  }
+]

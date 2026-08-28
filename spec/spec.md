@@ -507,6 +507,16 @@ Every FHE3xxx diagnostic MUST carry the source span of the offending construct a
 
 ACL insertion is always on. With `--acl=suggest`, insertions are downgraded to fix-it diagnostics (FHE4010–FHE4012, severity `note`) and NOT applied; the rest of the transpile proceeds unchanged. These notes appear on `check` as well as `build`. The R1 suggest fix-it is the canonical `safe: true` fix-it that `--fix` auto-applies; fix-its that change semantics non-mechanically (e.g. the §3.3 unary-minus rewrite) MUST be marked `safe: false`.
 
+### §8.0 Braceless branch bodies
+
+A trigger statement MAY be the lone, braceless body of an `if`, `else`, `while`, `do` or `for`. A grant written next to such a statement would change control flow: an insertion *before* it (R2, R3) becomes the branch body and pushes the guarded statement out of the branch, and an insertion *after* it (R1) lands outside the branch and runs unconditionally. When a rule inserts at either boundary of such a statement, the transpiler MUST wrap the statement and the inserted grants in a block, so the branch keeps exactly the statements it had plus the grants. A statement that carries more than one ACL fact is wrapped once.
+
+The wrap is part of the insertion, never of the no-op path: when every grant for a statement is already present (§8.6), the transpiler MUST NOT add braces, so §1.4 holds byte-for-byte.
+
+Where no statement may be written at all — a trigger statement that is the initializer of a `for` header — the transpiler MUST refuse the file with FHE4004 rather than emit a grant in the wrong place.
+
+A single statement MAY state both an R1 write and an R3 return (`return slot = value;`). R1's insertion point is exactly the end of the text R3 replaces, so an independent R1 insertion would land after the `return` and never run. R3 MUST emit the R1 grants inside its own replacement, before the `return`. When R3 does not rewrite the statement (an internal function, a `view` function, or a §8.6 dedupe hit), no legal position is left — before the statement the slot does not hold the value yet, and after it the function has returned — and the transpiler MUST refuse the file with FHE4004.
+
 ### §8.1 R1 — storage writes
 
 After each storage write whose right-hand value is encrypted (state variable, mapping slot, array element, struct field), the transpiler MUST insert:
@@ -631,6 +641,7 @@ Assigned in this version:
 | FHE4001 | warning | non-sender-keyed-encrypted-write (§8.1) |
 | FHE4002 | warning | view-return-without-acl (§8.4) |
 | FHE4003 | error | acl-callee-type-underivable (§8.2) |
+| FHE4004 | error | acl-position-illegal (§8) |
 | FHE4010 | note | suggest-allow-after-write (`--acl=suggest`) |
 | FHE4011 | note | suggest-transient-for-argument (`--acl=suggest`) |
 | FHE4012 | note | suggest-transient-for-return (`--acl=suggest`) |
