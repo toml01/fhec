@@ -1,4 +1,5 @@
 import { PLUGIN_NAME } from "./types";
+import type { Manifest } from "./types";
 
 /**
  * One `solidity.overrides` key that still used the fhec source directory
@@ -17,6 +18,23 @@ export interface OverrideNotice {
   action: "rewritten" | "skipped";
 }
 
+function normalizeDir(dir: string): string {
+  return dir.replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+}
+
+function normalizeKey(key: string): string {
+  return key.replace(/\\/g, "/").replace(/^\.\/+/, "");
+}
+
+/** Splits a `path[:Contract]` override key on its last `:`. */
+function splitContractSuffix(key: string): { path: string; suffix: string } {
+  const idx = key.lastIndexOf(":");
+  if (idx === -1) {
+    return { path: key, suffix: "" };
+  }
+  return { path: key.slice(0, idx), suffix: key.slice(idx) };
+}
+
 /**
  * If `key` is a Hardhat source name under `srcDir`, return the same name
  * under `outDir`. Otherwise return `undefined` (leave the key alone).
@@ -24,11 +42,17 @@ export interface OverrideNotice {
  * Keys are project-root-relative (Hardhat's `solidity.overrides` form). A
  * `:Contract` suffix is preserved so a fully-qualified name is rewritten
  * too, even though overrides usually omit it.
+ *
+ * A plain `.sol` pass-through file keeps its own name — only the directory
+ * prefix changes, and this needs no manifest. A `.fsol` file is renamed by
+ * fhec, so its new name is looked up in `manifest`; without a manifest
+ * entry a `.fsol` key is left alone rather than guessed at.
  */
-export function mapSrcKeyToOut(
+export function mapOverrideKey(
   key: string,
   srcDir: string,
   outDir: string,
+  manifest: Manifest | undefined,
 ): string | undefined {
   const src = normalizeDir(srcDir);
   const out = normalizeDir(outDir);
@@ -36,18 +60,29 @@ export function mapSrcKeyToOut(
     return undefined;
   }
 
-  const normalized = normalizePathKey(key);
-  if (normalized === out || normalized.startsWith(`${out}/`)) {
+  const { path: filePath, suffix } = splitContractSuffix(normalizeKey(key));
+  if (filePath === out || filePath.startsWith(`${out}/`)) {
     return undefined;
   }
-  if (normalized === src) {
-    return out;
+
+  let rel: string | undefined;
+  if (filePath === src) {
+    rel = "";
+  } else if (filePath.startsWith(`${src}/`)) {
+    rel = filePath.slice(src.length + 1);
+  } else {
+    return undefined;
   }
-  const srcPrefix = `${src}/`;
-  if (normalized.startsWith(srcPrefix)) {
-    return `${out}/${normalized.slice(srcPrefix.length)}`;
+
+  if (rel.endsWith(".fsol")) {
+    const entry = manifest?.files.find((candidate) => candidate.source.replace(/\\/g, "/") === rel);
+    if (entry === undefined) {
+      return undefined;
+    }
+    return `${out}/${entry.output}${suffix}`;
   }
-  return undefined;
+
+  return rel.length > 0 ? `${out}/${rel}${suffix}` : `${out}${suffix}`;
 }
 
 /**
@@ -62,10 +97,11 @@ export function rewriteSolidityOverrides<T>(
   overrides: Record<string, T>,
   srcDir: string,
   outDir: string,
+  manifest: Manifest | undefined,
 ): OverrideNotice[] {
   const notices: OverrideNotice[] = [];
   for (const key of Object.keys(overrides)) {
-    const to = mapSrcKeyToOut(key, srcDir, outDir);
+    const to = mapOverrideKey(key, srcDir, outDir, manifest);
     if (to === undefined || to === key) {
       continue;
     }
@@ -113,15 +149,7 @@ export function formatOverrideWarning(
   }
 
   lines.push(
-    `Also update getContractFactory, deployments.deploy({ contract }), and verify:verify to the '${out}/' form.`,
+    `Also update getContractFactory and deployments.deploy({ contract }) to the '${out}/' form, or the '.fsol' form if this version of the plugin supports it.`,
   );
   return lines.join("\n");
-}
-
-function normalizePathKey(key: string): string {
-  return key.replace(/\\/g, "/").replace(/^\.\//, "");
-}
-
-function normalizeDir(dir: string): string {
-  return dir.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
 }

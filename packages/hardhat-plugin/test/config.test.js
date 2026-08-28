@@ -11,7 +11,7 @@ const { spawnSync } = require("node:child_process");
 const { parseFhecToml, findConfig } = require("../dist/toml");
 const { versionSatisfies, parseSemver } = require("../dist/version");
 const {
-  mapSrcKeyToOut,
+  mapOverrideKey,
   rewriteSolidityOverrides,
   formatOverrideWarning,
 } = require("../dist/overrides");
@@ -73,40 +73,40 @@ test("findConfig walks upward and returns the nearest fhec.toml", () => {
   }
 });
 
-test("mapSrcKeyToOut rewrites a source-tree override key to out/", () => {
+test("mapOverrideKey rewrites a source-tree override key to out/", () => {
   assert.equal(
-    mapSrcKeyToOut("contracts/Foo.sol", "contracts", "generated"),
+    mapOverrideKey("contracts/Foo.sol", "contracts", "generated", undefined),
     "generated/Foo.sol",
   );
   assert.equal(
-    mapSrcKeyToOut("contracts/Path/File.sol", "contracts", "generated"),
+    mapOverrideKey("contracts/Path/File.sol", "contracts", "generated", undefined),
     "generated/Path/File.sol",
   );
   assert.equal(
-    mapSrcKeyToOut("contracts/Lib.sol:Lib", "contracts", "generated"),
+    mapOverrideKey("contracts/Lib.sol:Lib", "contracts", "generated", undefined),
     "generated/Lib.sol:Lib",
   );
   assert.equal(
-    mapSrcKeyToOut("./contracts/Foo.sol", "contracts", "generated"),
+    mapOverrideKey("./contracts/Foo.sol", "contracts", "generated", undefined),
     "generated/Foo.sol",
   );
 });
 
-test("mapSrcKeyToOut leaves keys that are not under srcDir", () => {
+test("mapOverrideKey leaves keys that are not under srcDir", () => {
   assert.equal(
-    mapSrcKeyToOut("generated/Foo.sol", "contracts", "generated"),
+    mapOverrideKey("generated/Foo.sol", "contracts", "generated", undefined),
     undefined,
   );
   assert.equal(
-    mapSrcKeyToOut("other/Foo.sol", "contracts", "generated"),
+    mapOverrideKey("other/Foo.sol", "contracts", "generated", undefined),
     undefined,
   );
   assert.equal(
-    mapSrcKeyToOut("contracts-extra/Foo.sol", "contracts", "generated"),
+    mapOverrideKey("contracts-extra/Foo.sol", "contracts", "generated", undefined),
     undefined,
   );
   assert.equal(
-    mapSrcKeyToOut("contracts/Foo.sol", "contracts", "contracts"),
+    mapOverrideKey("contracts/Foo.sol", "contracts", "contracts", undefined),
     undefined,
   );
 });

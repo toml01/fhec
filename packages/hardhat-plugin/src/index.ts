@@ -6,15 +6,13 @@ import {
   TASK_COMPILE_SOLIDITY_RUN_SOLC,
   TASK_COMPILE_SOLIDITY_RUN_SOLCJS,
 } from "hardhat/builtin-tasks/task-names";
-import { extendConfig, subtask, task } from "hardhat/config";
+import { extendConfig, extendEnvironment, subtask, task } from "hardhat/config";
 import { HardhatPluginError } from "hardhat/plugins";
 import type { HardhatConfig, HardhatUserConfig } from "hardhat/types";
 
+import { wrapArtifacts } from "./artifacts";
 import { runFhecBuild } from "./build";
-import {
-  formatOverrideWarning,
-  rewriteSolidityOverrides,
-} from "./overrides";
+import { formatOverrideWarning, rewriteSolidityOverrides } from "./overrides";
 import { loadManifest, remapSolcOutput, type RemapContext } from "./remap";
 import { loadFhecToml, resolveTomlPath } from "./toml";
 import {
@@ -24,6 +22,7 @@ import {
   PLUGIN_NAME,
   type FhecConfig,
 } from "./types";
+import { installVerifyOverride } from "./verify";
 
 import "./type-extensions";
 
@@ -32,11 +31,14 @@ export { parseFhecToml, findConfig, resolveTomlPath } from "./toml";
 export { remapRange, matchManifestFile, displaySourcePath, remapSolcOutput } from "./remap";
 export { versionSatisfies, parseSemver } from "./version";
 export {
-  mapSrcKeyToOut,
+  mapOverrideKey,
   rewriteSolidityOverrides,
   formatOverrideWarning,
 } from "./overrides";
 export type { OverrideNotice } from "./overrides";
+export { translateFsolFqn } from "./fqn";
+export { wrapArtifacts } from "./artifacts";
+export { installVerifyOverride } from "./verify";
 
 extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) => {
   const user = userConfig.fhec ?? {};
@@ -68,21 +70,32 @@ extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) =>
       resolved.outDir = parsed.out;
       resolved.profileVersion = parsed.version;
       config.paths.sources = path.resolve(config.paths.root, parsed.out);
-      const overrides = config.solidity?.overrides;
-      if (overrides !== undefined) {
-        const notices = rewriteSolidityOverrides(
-          overrides,
-          parsed.src,
-          parsed.out,
-        );
-        if (notices.length > 0) {
-          console.warn(formatOverrideWarning(notices, parsed.src, parsed.out));
-        }
+
+      // The manifest from a previous `fhec build` may already be on disk;
+      // if not, `.fsol` override keys are left alone (see overrides.ts),
+      // and plain `.sol` keys are still moved to `out/`.
+      const manifest = loadManifest(config.paths.sources);
+      const notices = rewriteSolidityOverrides(
+        config.solidity.overrides,
+        parsed.src,
+        parsed.out,
+        manifest,
+      );
+      if (notices.length > 0) {
+        console.warn(formatOverrideWarning(notices, parsed.src, parsed.out));
       }
     }
   }
 
   config.fhec = resolved;
+});
+
+extendEnvironment((hre) => {
+  if (!hre.config.fhec.enabled) {
+    return;
+  }
+  (hre as { artifacts: typeof hre.artifacts }).artifacts = wrapArtifacts(hre);
+  installVerifyOverride(hre);
 });
 
 task(TASK_COMPILE, async (args, hre, runSuper) => {
