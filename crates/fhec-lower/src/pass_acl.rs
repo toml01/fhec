@@ -522,6 +522,18 @@ fn rule_r3<'ast>(
     if !r.is_public_or_external {
         return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
+    if r.in_library {
+        // A library's `public`/`external` members are delegatecall-linked:
+        // `msg.sender` and storage are the host's, so the real caller is
+        // whatever host code invoked this library function in the same
+        // transaction, not an independent external actor. R3 exists to grant
+        // *that* caller access; the host already decides what to share (via
+        // its own R3 grant, typically through a `shared(...)` return), so
+        // inserting a grant here would be redundant — and would move the
+        // bytecode of an address-linked library that may be pinned for
+        // reproducible deployment (spec §8.3).
+        return refuse_pending_r1(ctx, r.stmt_span, outcome);
+    }
     if r.is_view {
         diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4002",

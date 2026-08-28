@@ -519,6 +519,58 @@ fn r3_internal_gets_nothing() {
 }
 
 // ---------------------------------------------------------------------------
+// R3 does not apply inside a library (spec §8.3, issue #88): a library's
+// public/external members are delegatecall-linked, so `msg.sender` and
+// storage are the host's — there is no external caller for R3 to serve.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn r3_skips_public_library_function_but_still_fires_on_the_host() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         library L {\n\
+         \x20   function work(euint32 a) public returns (euint32) {\n\
+         \x20       return a;\n\
+         \x20   }\n\
+         \n\
+         \x20   function internalWork(euint32 a) internal returns (euint32) {\n\
+         \x20       return a;\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function run() public returns (euint32) {\n\
+         \x20       return L.work(a);\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         library L {\n\
+         \x20   function work(euint32 a) public returns (euint32) {\n\
+         \x20       return a;\n\
+         \x20   }\n\
+         \n\
+         \x20   function internalWork(euint32 a) internal returns (euint32) {\n\
+         \x20       return a;\n\
+         \x20   }\n\
+         }\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function run() public returns (euint32) {\n\
+         \x20       euint32 __fhe_ret_0 = L.work(a);\n\
+         \x20       FHE.allowTransient(__fhe_ret_0, msg.sender);\n\
+         \x20       return __fhe_ret_0;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // in-sugar (spec §2.3)
 // ---------------------------------------------------------------------------
 

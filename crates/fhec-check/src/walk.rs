@@ -63,6 +63,11 @@ pub(crate) struct FnChecker<'a, 'ast> {
     pub(crate) is_view_or_pure: bool,
     pub(crate) is_view: bool,
     pub(crate) is_public_or_external: bool,
+    /// Whether this function is declared inside a `library`. A library's
+    /// `public`/`external` members are delegatecall-linked: they share the
+    /// host's `msg.sender` and storage, so R3's "grant the external caller"
+    /// premise never applies here regardless of visibility (spec §8.3).
+    pub(crate) in_library: bool,
     /// Whether the `returns` list carries a §2.8 shared-boundary marker. Such
     /// a function states no R3 fact: a legal shared return grants through
     /// `FHE.shareT(..., msg.sender)` instead of `allowTransient`, and an
@@ -128,6 +133,9 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 visibility,
                 Some(ast::Visibility::Public) | Some(ast::Visibility::External)
             ),
+            in_library: f
+                .contract
+                .is_some_and(|c| unit.contract(c).kind == ast::ContractKind::Library),
             has_shared_return: crate::shared::declares_shared_return(f.ast),
             slots: Vec::new(),
             scopes: vec![FxHashMap::default()],
@@ -416,6 +424,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                                 value_ty: t,
                                 is_public_or_external: self.is_public_or_external,
                                 is_view: self.is_view,
+                                in_library: self.in_library,
                                 function: self.fid,
                                 file: self.file,
                             };

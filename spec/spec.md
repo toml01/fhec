@@ -577,6 +577,8 @@ inserted before `return __fhe_ret_n;`.
 
 R3 does **not** apply to a function whose return is declared `shared(...)` (§2.8): the share call already directs the handle at the caller, and inserting `allowTransient` as well would grant twice.
 
+R3 does **not** apply to a `public`/`external` function declared inside a `library`. Such a function is linked by address and reached through `DELEGATECALL`, which preserves the caller's `msg.sender` and storage context: the library function's real caller is same-transaction host code, not an independent external actor, and it is the host's own return (typically its own R3 grant, or a `shared(...)` return) that decides what the transaction sender may read. Inserting `allowTransient` inside the library would be redundant and would move the bytecode of a library that may be pinned by address for reproducible deployment. This exception applies regardless of visibility — it is not conditioned on whether the library function is actually inlined, since a `public`/`external` library member is always delegatecall-linked. `internal` library functions never state an R3 fact in the first place: they have no visibility that qualifies, since they are inlined into the caller with no delegatecall boundary at all.
+
 ### §8.4 View functions
 
 ACL operations cannot execute in `view` context. A `view` function returning an encrypted value gets NO insertion and warning FHE4002 (the caller must have been granted access elsewhere; the getter itself cannot grant it).
