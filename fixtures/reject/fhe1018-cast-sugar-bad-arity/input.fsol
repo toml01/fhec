@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract CastBadArity {
+    euint32 amount;
+    ebool flag;
+
+    // Too many arguments.
+    function tooMany() public {
+        amount = euint32(1, 2);
+    }
+
+    // Too few arguments.
+    function tooFew() public {
+        flag = ebool();
+    }
+}
