@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 0.5.0 |
+| **Version** | 0.6.0 |
 | **Status** | Draft |
-| **Date** | 2026-08-27 |
+| **Date** | 2026-08-28 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** in this document are to be interpreted as described in RFC 2119 and RFC 8174 when, and only when, they appear in all capitals, as shown here.
@@ -304,6 +304,21 @@ Restrictions 6, 7, and 9 are conservative refusals, not statements about what is
 
 **No-op.** Explicit `FHE.receive*` / `FHE.share*` calls written by the author are plain CoFHE Solidity and carry no marker, so they are reproduced byte for byte (§1.4). The output of this section is exactly such a source, so `T(T(x)) == T(x)`.
 
+### §2.9 Explicit cast sugar
+
+`eT(x)`, where `eT` is one of the profile's encrypted value types (§1.5), is sugar for `FHE.as<T>(x)` (e.g. `ebool(true)` for `FHE.asEbool(true)`, `euint32(x)` for `FHE.asEuint32(x)`).
+
+Unlike §2.3, §2.7, and §2.8, this section adds **no new grammar production** to the forked parser. `eT(x)` already parses as an ordinary call expression whose callee is a plain identifier — the same shape as any user-defined type cast (`uint32(x)`) or function call. The sugar is a pure naming convention resolved at check time by ordinary name resolution: the callee identifier must denote an encrypted value type of the pinned profile, and it must not be shadowed by an in-scope declaration of another kind (a local, parameter, contract, or user type named `euint32` takes priority, exactly as plain Solidity name resolution already requires). Nothing about this construct is ambiguous with valid Solidity, since `eT` is never itself a valid Solidity type name outside the dialect's trusted profile bindings.
+
+**Expansion.** The call is rewritten in place: the callee identifier `eT` becomes `FHE.as<T>`, and the argument list is left byte-identical — only the callee text is replaced.
+
+**Restrictions.**
+
+1. The call MUST have exactly one argument; a different argument count is FHE1018.
+2. The argument is subject to exactly the same rules as an author-written `FHE.as<T>(x)` call (§3.3 Coercions): a plaintext argument must be convertible per coercion rule 1 (else FHE2008), a literal argument is range-checked per rule 2 (else FHE2003), and an already-encrypted argument follows the no-narrowing rule of rule 3 (else FHE2004). This sugar introduces no additional argument-type validation beyond what the equivalent explicit call already receives.
+
+**No-op.** An explicit `FHE.as<T>(x)` call written by the author carries no bare-identifier callee, so it is reproduced byte for byte (§1.4); `eT(x)` never appears in plain CoFHE Solidity output, so `T(T(x)) == T(x)`.
+
 ---
 
 ## §3 Encryptedness typing
@@ -581,6 +596,7 @@ Assigned in this version:
 | FHE1015 | error | shared-boundary-bad-position (§2.8) |
 | FHE1016 | error | shared-boundary-name-collision (§2.8) |
 | FHE1017 | error | precondition-bad-position (§2.7) |
+| FHE1018 | error | cast-sugar-bad-arity (§2.9) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
 | FHE2002 | error | incompatible-encrypted-operands (e.g. eaddress + euint32) |
@@ -691,3 +707,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.3.0 (2026-08-27)** — second grammar extension: §2.7 adds the contextual `precondition` block, which moves a function's generated encrypted-input materializers after an author-written plaintext guard; §2.3 renames its insertion point to the *materialization point* and drops the "single v1 grammar extension" claim from its title; §2.1 lists both extensions; new codes FHE1017 (position), FHE3014 (managed input named in the block), FHE3015 (forbidden effect).
 - **0.5.0 (2026-08-27)** — third grammar extension: §2.8 adds the shared boundary. `in shared eT name` lowers a parameter to the profile's `sharedT` wire type and receives it at the materialization point, with no input proof and no batching; `returns (shared(msg.sender) eT)` makes the ABI result `sharedT` and wraps every returned expression in one `share` call, in place, so single evaluation and nested operator lowering both hold by construction. A shared return replaces the §8.3 R3 grant and never costs any other ACL grant. MVP limits: `in shared` on `external` functions only, no data location on either marker, no mixing of shared and external inputs in one parameter list, one unnamed shared return per function, recipient exactly `msg.sender`, explicit valued `return` inside a braced block, no assignment in the returned expression, and no rewrite site in a returned expression whose statement an R2 grant already claims. A call to a shared-return function types as `Unknown`. New codes FHE1015 (bad position or shape), FHE1016 (`<name>_shared` collision), FHE2012 (returned expression is not the declared encrypted type); a profile without a shared boundary for a type reuses FHE5001.
 - **0.4.0 (2026-08-27)** — §2.3 adds the explicit proof binder `in(proof) eT name`: the input verifies against an author-declared `bytes memory|calldata` parameter of the same list, which keeps its position, name, and data location, and nothing is appended to the parameter list, so an ERC-7984 `…AndCall` order (proof before `data`) is expressible. The implicit `in eT name` form and its trailing `bytes memory inputProof` are unchanged. New codes FHE1013 (binder does not name a same-list `bytes` parameter) and FHE1014 (one parameter list mixes the two forms or binds two different proofs).
+- **0.6.0 (2026-08-28)** — §2.9 adds explicit cast sugar: `eT(x)` is sugar for `FHE.as<T>(x)`, rewriting only the callee identifier and leaving the argument byte-identical, so the argument gets exactly the type-checking an author-written `FHE.as<T>(x)` call already receives. This is the first grammar-adjacent extension that adds zero new parser grammar: unlike §2.3, §2.7, and §2.8, it reuses the existing call-expression grammar and resolves purely through name resolution. New code FHE1018 (a call with an argument count other than one).

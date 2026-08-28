@@ -89,6 +89,8 @@ pub mod codes {
     pub const SHARED_BOUNDARY_NAME_COLLISION: &str = "FHE1016";
     /// precondition-bad-position (§2.7).
     pub const PRECONDITION_BAD_POSITION: &str = "FHE1017";
+    /// cast-sugar-bad-arity (§2.9).
+    pub const CAST_SUGAR_BAD_ARITY: &str = "FHE1018";
     /// encrypted-meets-unknown (§3.2).
     pub const ENCRYPTED_MEETS_UNKNOWN: &str = "FHE2001";
     /// incompatible-encrypted-operands (§3.3, §4.1).

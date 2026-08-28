@@ -6,8 +6,8 @@ use solar_ast as ast;
 use solar_interface::Span;
 
 use crate::decl::{custom_ty, declared_ty, elementary};
-use crate::diag::codes;
-use crate::sites::{EncryptedArgCall, IncDecSite};
+use crate::diag::{codes, Diagnostic};
+use crate::sites::{CastSugarSite, EncryptedArgCall, IncDecSite};
 use crate::trust::{cast_target_by_name, op_by_name};
 use crate::ty::{PlainTy, Ty};
 use crate::walk::FnChecker;
@@ -547,20 +547,26 @@ impl<'ast> FnChecker<'_, 'ast> {
                         // A contract cast: `IERC20(addr)`.
                         (CallClass::Builtin, Ty::Plain(PlainTy::ContractInstance(c)))
                     }
-                    Some(Resolution::TypeName(td)) => {
-                        let ty = match &self.unit.type_decl(td).kind {
-                            TypeDeclKind::Struct(_) => Ty::Plain(PlainTy::Struct(td)),
-                            TypeDeclKind::Enum(_) => Ty::Plain(PlainTy::Enum(td)),
-                            TypeDeclKind::Udvt(_) => Ty::Unknown,
-                        };
-                        (CallClass::Builtin, ty)
-                    }
-                    Some(r @ (Resolution::External { .. } | Resolution::Unresolved(_))) => {
-                        if let Some(t) = self.trust.encrypted_type(self.unit, id.as_str(), &r) {
-                            // `euint32(...)` is not a valid cast; still type it.
-                            let _ = t;
+                    Some(Resolution::TypeName(td)) => match &self.unit.type_decl(td).kind {
+                        TypeDeclKind::Struct(_) => {
+                            (CallClass::Builtin, Ty::Plain(PlainTy::Struct(td)))
                         }
-                        (CallClass::Opaque, Ty::Unknown)
+                        TypeDeclKind::Enum(_) => (CallClass::Builtin, Ty::Plain(PlainTy::Enum(td))),
+                        TypeDeclKind::Udvt(_) => {
+                            let r = Resolution::TypeName(td);
+                            match self.trust.encrypted_type(self.unit, id.as_str(), &r) {
+                                // `eT(x)` explicit cast sugar (spec §2.9).
+                                Some(t) => (CallClass::Fhe, self.cast_sugar_call(callee, args, t)),
+                                None => (CallClass::Builtin, Ty::Unknown),
+                            }
+                        }
+                    },
+                    Some(r @ (Resolution::External { .. } | Resolution::Unresolved(_))) => {
+                        match self.trust.encrypted_type(self.unit, id.as_str(), &r) {
+                            // `eT(x)` explicit cast sugar (spec §2.9).
+                            Some(t) => (CallClass::Fhe, self.cast_sugar_call(callee, args, t)),
+                            None => (CallClass::Opaque, Ty::Unknown),
+                        }
                     }
                     _ => (CallClass::Opaque, Ty::Unknown),
                 }
@@ -571,6 +577,40 @@ impl<'ast> FnChecker<'_, 'ast> {
                 (CallClass::Opaque, Ty::Unknown)
             }
         }
+    }
+
+    /// Handles the bare-cast-sugar callee shape `eT(x)` (spec §2.9): `callee`
+    /// already resolved to the trusted encrypted type `ty`. Requires exactly
+    /// one argument (else FHE1018) and, on success, states a
+    /// [`CastSugarSite`] for the lowerer — the argument itself gets exactly
+    /// the type-checking an author-written `FHE.as<T>(x)` call already gets
+    /// (arguments are typed by the caller's `type_args`, before this runs).
+    fn cast_sugar_call(
+        &mut self,
+        callee: &'ast ast::Expr<'ast>,
+        args: &'ast ast::CallArgs<'ast>,
+        ty: EType,
+    ) -> Ty {
+        if args.exprs().count() != 1 {
+            self.out.diagnostics.push(
+                Diagnostic::error(
+                    codes::CAST_SUGAR_BAD_ARITY,
+                    callee.span.to(args.span),
+                    "explicit cast sugar (`eT(...)`) called with a number of \
+                     arguments other than one",
+                )
+                .with_rule("§2.9"),
+            );
+            return Ty::Unknown;
+        }
+        self.out.cast_sugar_sites.push(CastSugarSite {
+            call_span: callee.span.to(args.span),
+            callee_span: callee.span,
+            ty,
+            function: self.fid,
+            file: self.file,
+        });
+        Ty::Encrypted(ty)
     }
 
     /// Result type of `FHE.<name>(...)` (or `None`-receiver profile lookups).

@@ -254,6 +254,21 @@ pub(crate) fn expand_sugar(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePl
         ));
     }
 
+    // Explicit cast sugar (spec §2.9): only the callee identifier is
+    // rewritten; the argument list is left byte-identical.
+    for site in ctx
+        .checked
+        .cast_sugar_sites
+        .iter()
+        .filter(|s| s.file.index() == file_idx)
+    {
+        plan.push(Patch::replace(
+            ctx.range(site.callee_span),
+            ctx.profile.conversion_fn(site.ty),
+            Provenance::new("§2.9 cast-sugar", ctx.range(site.callee_span)),
+        ));
+    }
+
     let mut sites: Vec<&fhec_check::InSugarSite> = ctx
         .checked
         .sugar_sites
