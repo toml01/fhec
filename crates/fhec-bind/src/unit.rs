@@ -149,6 +149,79 @@ impl<'ast> BoundUnit<'ast> {
         self.resolutions.get(&span)
     }
 
+    /// Resolves what an identifier written `name` (`text` for the file-scope
+    /// fallback) would refer to at the scope of `function` (if given) inside
+    /// `contract` (if given) in `file` — without a live per-block scope
+    /// stack.
+    ///
+    /// [`resolve`](Self::resolve)/[`resolve_span`](Self::resolve_span) only
+    /// answer for identifiers the binder actually saw while walking source.
+    /// This answers the same question for an identifier the *lowerer* is
+    /// about to write at a synthesized insertion point — the emit-time twin
+    /// of source-name resolution (spec §1.3): the generated text is only
+    /// semantics-preserving if the name it uses still means what the
+    /// transpiler assumes at that point.
+    ///
+    /// Local/parameter/named-return shadowing is checked across the *whole*
+    /// function rather than only the block containing the insertion point:
+    /// reconstructing the live block-scope stack outside the binder's single
+    /// walk is not worth the precision. Treating any same-named local,
+    /// parameter, or named return anywhere in the function as a shadow is a
+    /// safe over-approximation — it can only refuse a file the emitted code
+    /// would not actually miscompile, never the reverse.
+    pub fn resolve_name_in_scope(
+        &self,
+        function: Option<FunctionId>,
+        contract: Option<ContractId>,
+        file: FileId,
+        name: Symbol,
+        text: &str,
+    ) -> Resolution {
+        if let Some(f) = function {
+            let local = self.vars.iter().enumerate().find(|(_, v)| {
+                let in_function = matches!(
+                    v.owner,
+                    VarOwner::Local(fid) | VarOwner::Param(fid) | VarOwner::Return(fid)
+                        if fid == f
+                );
+                in_function && v.name.is_some_and(|n| n.name == name)
+            });
+            if let Some((i, v)) = local {
+                let vid = VarId::new(i);
+                return match v.owner {
+                    VarOwner::Param(_) => Resolution::Param(vid),
+                    _ => Resolution::Local(vid),
+                };
+            }
+        }
+        if let Some(contract) = contract {
+            if let Some(r) = self.own_member(contract, name) {
+                return r.clone();
+            }
+            let lin = &self.contracts[contract.index()].linearization;
+            if lin.complete {
+                if let Some(r) = self.inherited_member(contract, name) {
+                    return r;
+                }
+            } else {
+                if let Some(r) = self.inherited_member_in_known_prefix(contract, name) {
+                    return r;
+                }
+                // Same policy as live resolution (`resolve_name` in the
+                // binder): an unseen base may still shadow `name`, but
+                // rejecting on that possibility would refuse every
+                // inheriting contract. Defer to what file scope says and let
+                // the caller apply its own explicit trust policy.
+                let fallback = self.resolve_at_file(file, name, text);
+                return Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
+                    contract,
+                    fallback: Box::new(fallback),
+                });
+            }
+        }
+        self.resolve_at_file(file, name, text)
+    }
+
     /// The linearized inheritance of a contract (most-derived-first, starting with the
     /// contract itself). Check [`Linearization::complete`] before trusting the tail.
     pub fn linearization(&self, id: ContractId) -> &Linearization {

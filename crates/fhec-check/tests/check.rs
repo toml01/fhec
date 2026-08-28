@@ -2477,3 +2477,120 @@ fn a_precondition_keeps_an_inherited_call_when_every_base_is_visible() {
     let codes = codes_for_source(src);
     assert!(codes.is_empty(), "{codes:?}");
 }
+
+// ---- FHE1022: `FHE` shadowed at a generated-call insertion point --------------
+
+/// The repro from issue #60: a state variable named `FHE` shadows the
+/// profile library in the same contract a generated call would use it in.
+#[test]
+fn fhe1022_state_var_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            FakeLib FHE;
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A local variable named `FHE`, declared anywhere in the function, shadows
+/// the library for the whole function (a safe over-approximation of the
+/// live block scope).
+#[test]
+fn fhe1022_local_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            function f() external returns (euint32) {
+                FakeLib FHE = FakeLib(address(0));
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A parameter named `FHE` shadows the library for the whole function.
+#[test]
+fn fhe1022_param_shadows_the_library() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {
+            function add(euint32 x, euint32 y) external returns (euint32) { return x; }
+        }
+        contract Victim {
+            euint32 a;
+            euint32 b;
+            function f(FakeLib FHE) external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// A same-named local in an unrelated function of the same contract must
+/// not refuse a function that never needs a generated `FHE.` call itself.
+#[test]
+fn fhe1022_is_scoped_to_the_function_that_needs_the_call() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        contract C {
+            euint32 a;
+            euint32 b;
+            function untouched() external pure returns (uint256) {
+                FakeLib FHE = FakeLib(address(0));
+                return 1;
+            }
+            function f() external returns (euint32) {
+                return a + b;
+            }
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}
+
+/// Regression: an in-unit `bytes32` UDVT literally named `euint32`, with no
+/// `FHE` binding anywhere (no library, no import), types as encrypted
+/// through the checker's permissive in-unit-UDVT trust path — but `FHE`
+/// resolving to nothing at all (not to a competing declaration) must not be
+/// reported as FHE1022; it is a loud undefined-identifier failure at solc,
+/// not the silent-miscompile risk this rule guards against.
+#[test]
+fn fhe1022_does_not_fire_when_fhe_has_no_binding_at_all() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        type euint32 is bytes32;
+        contract C {
+            euint32 a;
+            euint32 b;
+            function f(in euint32 amount) public {
+                a = amount;
+            }
+        }
+    "#;
+    let codes = codes_for_source(src);
+    assert!(!codes.iter().any(|c| c == "FHE1022"), "{codes:?}");
+}

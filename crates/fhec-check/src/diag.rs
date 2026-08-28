@@ -109,6 +109,10 @@ pub mod codes {
     /// A selective import does not bring a symbol the sugar needs into
     /// scope, in the source or in the expansion (spec §2.3, §2.8).
     pub const SUGAR_SYMBOL_NOT_IMPORTED: &str = "FHE1021";
+    /// A declaration in scope shadows the identifier a generated call must
+    /// use (`FHE`), so the transpiler cannot write it without retargeting it
+    /// (spec §1.3).
+    pub const FHE_LIBRARY_IDENTIFIER_SHADOWED: &str = "FHE1022";
     /// encrypted-meets-unknown (§3.2).
     pub const ENCRYPTED_MEETS_UNKNOWN: &str = "FHE2001";
     /// incompatible-encrypted-operands (§3.3, §4.1).

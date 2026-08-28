@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.6.0 |
+| **Version** | 0.6.4 |
 | **Status** | Draft |
 | **Date** | 2026-08-28 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -32,6 +32,8 @@ A *conforming transpiler* is a program that, for every input compilation unit:
 When the transpiler cannot determine with certainty that a rewrite is semantics-preserving, it MUST emit an error and refuse to produce output for the affected contract. It MUST NOT guess, and it MUST NOT fall back to "best effort" output.
 
 *Rationale (informative):* the CoFHE `FHE.select` operation substitutes default values (`asEbool(false)`, `asEuintN(0)`) for uninitialized ciphertext handles instead of reverting. A miscompilation therefore tends to produce *wrong ciphertexts*, not reverts; the error is silent and may be irreversible. Refusal is always safer than guessing.
+
+Every rewrite the transpiler emits writes the literal identifier `FHE` (spec §1.5) expecting it to resolve to the profile library at the point the generated call lands. A state variable, local, parameter, inherited member, or member of a base outside the compilation unit named `FHE` can shadow it there and silently retarget the call and any ACL grant it carries. The transpiler MUST verify, for every function it writes a generated call into, that `FHE` resolves to the profile library at that function's scope, and refuse with FHE1022 otherwise — the same collision-refuses-rather-than-renames precedent as FHE1011 and FHE1016.
 
 ### §1.4 The no-op guarantee
 
@@ -632,6 +634,7 @@ Assigned in this version:
 | FHE1019 | error | sugar-name-in-modifier (§2.3, §2.8) |
 | FHE1021 | error | sugar-symbol-not-imported (§2.3, §2.8) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
+| FHE1022 | error | fhe-library-identifier-shadowed (§1.3) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
 | FHE2002 | error | incompatible-encrypted-operands (e.g. eaddress + euint32) |
 | FHE2003 | error | literal-out-of-range (§3.3) |
@@ -748,3 +751,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.6.1 (2026-08-28)** — FHE1007: the load stage warns when `project.include` matches no source files under `project.src`. Non-error FHE6000 diagnostics from files outside `project.src` are suppressed by default; `--all-solc-warnings` restores them. Errors from any file are still forwarded.
 - **0.6.2 (2026-08-28)** — FHE1003 carries a `safe: true` fix-it when swapping the dialect extension of a relative import names a discovered unit file.
 - **0.6.3 (2026-08-28)** — §5.2 permits rendering an `if`/`else` whose arms are each a single assignment of the same identifier as one `FHE.select` with no condition or branch temporaries, when the operands are free of side effects.
+- **0.6.4 (2026-08-28)** — §1.3 adds the emit-time trust rule: the transpiler MUST verify `FHE` resolves to the profile library at the scope of every function it writes a generated call into, and refuse with FHE1022 (new code) when a state variable, local, parameter, inherited member, or unseen-base member shadows it. Closes the gap where the checker's trust rule (§1.5) validated author-written reads of `FHE` but the lowerer never checked what it was about to write.

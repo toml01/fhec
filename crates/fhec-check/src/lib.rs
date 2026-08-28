@@ -38,6 +38,7 @@
 
 mod decl;
 mod diag;
+mod emit_trust;
 mod exprs;
 mod imports;
 mod ops;
@@ -88,5 +89,7 @@ pub fn check<'ast>(
     // Last: the shared-return type rule (FHE2012) reads the types the walk
     // recorded for each returned expression.
     shared::scan(files, unit, &trust, profile, &mut out);
+    // Emit-time trust (FHE1022): needs every site/fact vector above final.
+    emit_trust::scan(unit, &trust, &mut out);
     out
 }

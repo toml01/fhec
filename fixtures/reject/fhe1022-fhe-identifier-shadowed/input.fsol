@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract FakeLib {
+    function add(euint32 x, euint32 y) external returns (euint32) {
+        return x;
+    }
+
+    function allowTransient(euint32 x, address who) external {}
+}
+
+contract Victim {
+    euint32 a;
+    euint32 b;
+    FakeLib FHE;
+
+    function f() external returns (euint32) {
+        return a + b;
+    }
+}
