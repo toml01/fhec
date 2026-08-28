@@ -11,6 +11,5 @@ contract Ternary {
     function f() public {
         a = FHE.select(eb, a, b);
         FHE.allowThis(a);
-        FHE.allowSender(a);
     }
 }

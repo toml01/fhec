@@ -240,8 +240,10 @@ fn dialect_counter_lowers_and_compiles_with_real_solc() {
         "bytes memory inputProof",
         "euint32 newCount = FHE.asEuint32(newCount_input, inputProof);",
         "count = FHE.add(count, FHE.asEuint32(step));",
+        // `count` is a simple state variable (no key at all), so R1 only
+        // guesses `allowThis`: `allowSender` is never guessed for a slot not
+        // provably keyed by `msg.sender` (issue #70).
         "FHE.allowThis(count);",
-        "FHE.allowSender(count);",
         "FHE.select(",
         "FHE.allowTransient(count, address(sink));",
         "FHE.allowTransient(__fhe_ret_0, msg.sender);",
@@ -249,6 +251,10 @@ fn dialect_counter_lowers_and_compiles_with_real_solc() {
         assert!(output.contains(needle), "missing `{needle}` in:\n{output}");
     }
     assert!(!output.contains(" in euint32"), "sugar must be gone");
+    assert!(
+        !output.contains("FHE.allowSender(count)"),
+        "the sender grant must not be guessed for a slot with no owner key:\n{output}"
+    );
 
     // Idempotence on the full contract (spec §1.4).
     let (second, second_no_op) = transpile("contracts/EncryptedCounter.fsol", &output);

@@ -27,13 +27,10 @@ contract SugarProofBinderMulti {
         euint128 value = euint128.wrap(__fhe_hashes_1[2]);
         eb = flag;
         FHE.allowThis(eb);
-        FHE.allowSender(eb);
         ea = owner_;
         FHE.allowThis(ea);
-        FHE.allowSender(ea);
         ev = value;
         FHE.allowThis(ev);
-        FHE.allowSender(ev);
         tag;
     }
 }

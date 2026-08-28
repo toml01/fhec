@@ -12,13 +12,11 @@ contract PlainImport {
         euint64 amount = FHE.asEuint64(amount_input, inputProof);
         stored = amount;
         FHE.allowThis(stored);
-        FHE.allowSender(stored);
     }
 
     function receiveShared(sharedEuint64 amount_shared) external {
         euint64 amount = FHE.receiveEuint64Param(amount_shared);
         stored = amount;
         FHE.allowThis(stored);
-        FHE.allowSender(stored);
     }
 }

@@ -27,10 +27,8 @@ contract EncryptedCounterDialect {
         owner = msg.sender;
         count = FHE.asEuint32(initialValue);
         FHE.allowThis(count);
-        FHE.allowSender(count);
         cap = FHE.asEuint32(capValue);
         FHE.allowThis(cap);
-        FHE.allowSender(cap);
     }
 
     function getCount() external view returns (euint32) {
@@ -51,7 +49,6 @@ contract EncryptedCounterDialect {
             }
             count = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);
             FHE.allowThis(count);
-            FHE.allowSender(count);
         }
     }
 
@@ -59,6 +56,5 @@ contract EncryptedCounterDialect {
     function incrementByOne() external onlyOwner {
         count = FHE.add(count, FHE.asEuint32(1));
         FHE.allowThis(count);
-        FHE.allowSender(count);
     }
 }

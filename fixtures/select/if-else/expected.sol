@@ -12,7 +12,6 @@ contract IfElse {
         {
             a = FHE.select(eb, b, FHE.add(a, b));
             FHE.allowThis(a);
-            FHE.allowSender(a);
         }
     }
 }

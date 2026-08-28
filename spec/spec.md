@@ -543,7 +543,7 @@ FHE.allowSender(<lvalue>);
 
 immediately after the write statement.
 
-`FHE.allowThis` is unconditional: it grants the contract access to its own slot and cannot leak. `FHE.allowSender` is a claim about who owns the value. When the written slot is a mapping slot keyed by an address-typed expression that is not `msg.sender`, that claim is false in every operator-style flow — the value belongs to the key, not to the caller — so the transpiler MUST NOT insert `FHE.allowSender` there, and MUST emit warning FHE4001 naming the withheld grant. An author who intends an escrow writes the grant explicitly. Warning about a leak and then writing it is not an option a confidentiality tool has (spec §1.3).
+`FHE.allowThis` is unconditional: it grants the contract access to its own slot and cannot leak. `FHE.allowSender` is a claim about who owns the value, and the transpiler MUST NOT insert it unless the written slot is *provably* owned by `msg.sender` — a mapping slot keyed by exactly the expression `msg.sender`. Every other slot kind has no such proof: a simple state variable and a struct field carry no key at all, an array element is keyed by an index, not an owner, and a mapping keyed by anything else — a different address, or a non-address key — is filed under a key that is not the caller's. In every one of those cases the transpiler MUST NOT insert `FHE.allowSender`, and MUST emit warning FHE4001 naming the withheld grant. An author who intends an escrow, or a shared aggregate some other account must read, writes the grant explicitly. Warning about a leak and then writing it is not an option a confidentiality tool has (spec §1.3).
 
 ### §8.2 R2 — encrypted arguments to external calls
 

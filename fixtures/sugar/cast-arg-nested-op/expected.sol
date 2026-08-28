@@ -11,6 +11,5 @@ contract CastArgNestedOp {
     function check() public {
         flag = FHE.asEbool(FHE.add(x, y));
         FHE.allowThis(flag);
-        FHE.allowSender(flag);
     }
 }

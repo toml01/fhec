@@ -9,6 +9,5 @@ contract CastNestedOperator {
     function addFive(euint32 a) public {
         total = FHE.add(a, FHE.asEuint32(5));
         FHE.allowThis(total);
-        FHE.allowSender(total);
     }
 }

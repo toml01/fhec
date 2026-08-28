@@ -181,8 +181,7 @@ fn add_with_acl() {
     golden_body(
         "        a = a + b;",
         "        a = FHE.add(a, b);\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -191,8 +190,7 @@ fn literal_coercion() {
     golden_body(
         "        a = a + 1;",
         "        a = FHE.add(a, FHE.asEuint32(1));\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -201,8 +199,7 @@ fn plain_operand_coercion() {
     golden_body(
         "        a = a * p;",
         "        a = FHE.mul(a, FHE.asEuint32(p));\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -211,8 +208,7 @@ fn widening_picks_wider_side() {
     golden_body(
         "        a = a8 + a;",
         "        a = FHE.add(FHE.asEuint32(a8), a);\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -221,22 +217,21 @@ fn nested_expression_single_patch() {
     golden_body(
         "        a = a + b * a8;",
         "        a = FHE.add(a, FHE.mul(b, FHE.asEuint32(a8)));\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
 #[test]
 fn comparison_and_not() {
+    // `eb` is a simple state variable (no key at all), so R1 only guesses
+    // `allowThis` — the same withholding as a `SimpleVar` write (issue #70).
     golden_body(
         "        eb = a < b;\n\
          \x20       eb = !eb;",
         "        eb = FHE.lt(a, b);\n\
          \x20       FHE.allowThis(eb);\n\
-         \x20       FHE.allowSender(eb);\n\
          \x20       eb = FHE.not(eb);\n\
-         \x20       FHE.allowThis(eb);\n\
-         \x20       FHE.allowSender(eb);",
+         \x20       FHE.allowThis(eb);",
     );
 }
 
@@ -245,8 +240,7 @@ fn boolean_and_no_short_circuit() {
     golden_body(
         "        eb = eb && FHE.eq(a, b);",
         "        eb = FHE.and(eb, FHE.eq(a, b));\n\
-         \x20       FHE.allowThis(eb);\n\
-         \x20       FHE.allowSender(eb);",
+         \x20       FHE.allowThis(eb);",
     );
 }
 
@@ -255,8 +249,7 @@ fn ternary_to_select() {
     golden_body(
         "        a = eb ? a : b;",
         "        a = FHE.select(eb, a, b);\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -265,8 +258,7 @@ fn compound_assignment() {
     golden_body(
         "        a += b;",
         "        a = FHE.add(a, b);\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -275,8 +267,7 @@ fn increment_statement() {
     golden_body(
         "        a++;",
         "        a = FHE.add(a, FHE.asEuint32(1));\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -306,12 +297,15 @@ fn dedupe_suppresses_existing_acl() {
 
 #[test]
 fn dedupe_inserts_only_missing_call() {
+    // A mapping keyed by `msg.sender` still owes both grants (unlike a
+    // simple state variable), so it can still exercise "only the missing
+    // call is inserted".
     golden_body(
-        "        a = a + b;\n\
-         \x20       FHE.allowThis(a);",
-        "        a = FHE.add(a, b);\n\
-         \x20       FHE.allowSender(a);\n\
-         \x20       FHE.allowThis(a);",
+        "        balances[msg.sender] = a;\n\
+         \x20       FHE.allowThis(balances[msg.sender]);",
+        "        balances[msg.sender] = a;\n\
+         \x20       FHE.allowSender(balances[msg.sender]);\n\
+         \x20       FHE.allowThis(balances[msg.sender]);",
     );
 }
 
@@ -364,6 +358,52 @@ fn msg_sender_key_still_receives_both_grants() {
             "        balances[msg.sender] = a;\n\
              \x20       FHE.allowThis(balances[msg.sender]);\n\
              \x20       FHE.allowSender(balances[msg.sender]);"
+        )
+    );
+}
+
+#[test]
+fn simple_var_warns_and_withholds_the_sender_grant() {
+    // Issue #70: a simple state variable has no key at all, so it has no
+    // owner distinct from the contract — the same withholding as a mapping
+    // slot filed under another address.
+    let src = contract("        a = b;");
+    let out = transpile(&[("t.fsol", &src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(
+        out.files[0].1,
+        contract(
+            "        a = b;\n\
+             \x20       FHE.allowThis(a);"
+        )
+    );
+}
+
+#[test]
+fn non_address_mapping_key_warns_and_withholds_the_sender_grant() {
+    // Issue #70: R1's "unproven" case is not limited to a proven-other
+    // address — a mapping keyed by anything else (here a plain `uint256`) is
+    // just as unproven.
+    let src = contract("        byId[1] = a;");
+    let out = transpile(&[("t.fsol", &src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(
+        out.files[0].1,
+        contract(
+            "        byId[1] = a;\n\
+             \x20       FHE.allowThis(byId[1]);"
         )
     );
 }
@@ -503,7 +543,6 @@ fn sugar_expands_param_and_conversion() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -733,7 +772,6 @@ fn sugar_binder_uses_the_bound_proof_and_appends_nothing() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, sig);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20       data;\n\
          \x20   }\n\
          }\n",
@@ -774,10 +812,8 @@ fn sugar_binder_batches_in_encrypted_parameter_order() {
          \x20       euint32 y = euint32.wrap(__fhe_hashes_1[1]);\n\
          \x20       a = x;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20       a = y;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -807,7 +843,6 @@ fn sugar_binder_expands_a_constructor_parameter_list() {
          \x20       euint32 seed = FHE.asEuint32(seed_input, sig);\n\
          \x20       a = seed;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20       tag;\n\
          \x20   }\n\
          }\n",
@@ -853,7 +888,6 @@ fn shared_input_receives_at_body_entry() {
          \x20       euint32 amount = FHE.receiveEuint32Param(amount_shared);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20       tag;\n\
          \x20   }\n",
     );
@@ -873,10 +907,8 @@ fn several_shared_inputs_receive_one_by_one_in_parameter_order() {
          \x20       euint32 first = FHE.receiveEuint32Param(first_shared);\n\
          \x20       b = second;\n\
          \x20       FHE.allowThis(b);\n\
-         \x20       FHE.allowSender(b);\n\
          \x20       a = first;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n",
     );
 }
@@ -1086,7 +1118,6 @@ fn precondition_moves_the_conversion_after_the_block() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -1128,10 +1159,8 @@ fn precondition_batches_several_inputs_after_the_block() {
          \x20       euint32 y = euint32.wrap(__fhe_hashes_1[1]);\n\
          \x20       a = x;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20       a = y;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -1177,7 +1206,6 @@ fn precondition_local_declarations_stay_inside_the_block() {
          \x20       cap;\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -1226,7 +1254,6 @@ fn precondition_moves_a_bound_conversion_after_the_block() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, sig);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -1276,7 +1303,6 @@ fn precondition_sits_between_modifier_prelude_and_body() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -1314,7 +1340,6 @@ fn precondition_guards_a_constructor() {
          \x20       euint32 seed = FHE.asEuint32(seed_input, inputProof);\n\
          \x20       a = seed;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -1358,7 +1383,6 @@ fn if_else_simple() {
         "        {\n\
          \x20           a = FHE.select(eb, FHE.add(a, FHE.asEuint32(1)), b);\n\
          \x20           FHE.allowThis(a);\n\
-         \x20           FHE.allowSender(a);\n\
          \x20       }",
     );
 }
@@ -1378,7 +1402,6 @@ fn if_without_else_merges_with_pre() {
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);\n\
          \x20           FHE.allowThis(a);\n\
-         \x20           FHE.allowSender(a);\n\
          \x20       }",
     );
 }
@@ -1396,8 +1419,7 @@ fn if_else_without_an_incoming_value_omits_pre() {
         "        euint32 x;\n\
          \x20       x = FHE.select(eb, a, b);\n\
          \x20       a = x;\n\
-         \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);",
+         \x20       FHE.allowThis(a);",
     );
 }
 
@@ -1429,7 +1451,45 @@ fn if_mapping_write_hoists_key() {
              \x20           }\n\
              \x20           balances[__fhe_key_1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_2);\n\
              \x20           FHE.allowThis(balances[__fhe_key_1]);\n\
-             \x20           FHE.allowSender(balances[__fhe_key_1]);\n\
+             \x20       }"
+        )
+    );
+}
+
+#[test]
+fn if_merge_to_simple_var_warns_and_withholds_the_sender_grant() {
+    // Issue #70: the same withholding R1 does for a direct write applies to
+    // an encrypted-if merge write (`pass_if.rs`) — a simple state variable
+    // has no key at all, so its owner is not provably `msg.sender` there
+    // either.
+    let out = transpile(&[(
+        "t.fsol",
+        &contract(
+            "        if (eb) {\n\
+             \x20           a = b;\n\
+             \x20       }",
+        ),
+    )]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(
+        out.files[0].1,
+        contract(
+            "        {\n\
+             \x20           ebool __fhe_cond_0 = eb;\n\
+             \x20           euint32 __fhe_pre_1 = a;\n\
+             \x20           euint32 __fhe_then_2;\n\
+             \x20           {\n\
+             \x20               __fhe_then_2 = b;\n\
+             \x20           }\n\
+             \x20           a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);\n\
+             \x20           FHE.allowThis(a);\n\
              \x20       }"
         )
     );
@@ -1457,10 +1517,8 @@ fn if_distinct_literal_keys_are_distinct_locations() {
          \x20           }\n\
          \x20           byId[1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_1);\n\
          \x20           FHE.allowThis(byId[1]);\n\
-         \x20           FHE.allowSender(byId[1]);\n\
          \x20           byId[2] = FHE.select(__fhe_cond_0, __fhe_pre_2, __fhe_else_4);\n\
          \x20           FHE.allowThis(byId[2]);\n\
-         \x20           FHE.allowSender(byId[2]);\n\
          \x20       }",
     );
 }
@@ -1545,7 +1603,6 @@ fn if_read_after_write_uses_version() {
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_1);\n\
          \x20           FHE.allowThis(a);\n\
-         \x20           FHE.allowSender(a);\n\
          \x20       }",
     );
 }
@@ -1567,7 +1624,6 @@ fn if_branch_local_stays_direct() {
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);\n\
          \x20           FHE.allowThis(a);\n\
-         \x20           FHE.allowSender(a);\n\
          \x20       }",
     );
 }
@@ -1600,7 +1656,6 @@ fn nested_ifs_compose_innermost_first() {
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_6, __fhe_pre_1);\n\
          \x20           FHE.allowThis(a);\n\
-         \x20           FHE.allowSender(a);\n\
          \x20       }",
     );
 }
@@ -1942,7 +1997,6 @@ fn r1_grants_land_inside_the_r3_return_rewrite() {
                \x20   function set(euint32 amount) public returns (euint32) {\n\
                \x20       euint32 __fhe_ret_0 = balance = amount;\n\
                \x20       FHE.allowThis(balance);\n\
-               \x20       FHE.allowSender(balance);\n\
                \x20       FHE.allowTransient(__fhe_ret_0, msg.sender);\n\
                \x20       return __fhe_ret_0;\n\
                \x20   }\n\

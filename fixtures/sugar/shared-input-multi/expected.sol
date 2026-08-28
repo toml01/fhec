@@ -21,13 +21,10 @@ contract SharedInputMulti {
         ebool ok = FHE.receiveEboolParam(ok_shared);
         a = amount;
         FHE.allowThis(a);
-        FHE.allowSender(a);
         b = total;
         FHE.allowThis(b);
-        FHE.allowSender(b);
         flag = ok;
         FHE.allowThis(flag);
-        FHE.allowSender(flag);
         tag;
     }
 }

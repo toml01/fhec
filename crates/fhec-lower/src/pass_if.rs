@@ -131,8 +131,12 @@ struct Loc {
     display: String,
     ty: EType,
     is_storage: bool,
-    /// Mapping slot keyed by a plaintext address other than `msg.sender`.
-    addr_key_not_sender: bool,
+    /// Why this location's owner is not provably `msg.sender` (spec §8.1,
+    /// issue #70), or `None` when it is a mapping keyed by exactly
+    /// `msg.sender` and the sender grant is sound. Computed independently of
+    /// the `key`/aliasing classification above — this is about ownership,
+    /// never about write-set identity.
+    sender_unproven: Option<&'static str>,
     /// First write (diagnostics anchor + first-write merge order).
     first_write: Span,
 }
@@ -428,23 +432,26 @@ fn try_direct_select<'ast>(
     let mut keys = KeyTable { rows: Vec::new() };
     let then_canon = classify(ictx, then_lhs, &mut keys, false)?;
     let else_canon = classify(ictx, else_lhs, &mut keys, false)?;
-    let (key, display, is_storage, addr_key_not_sender) = match (then_canon, else_canon) {
+    let (key, display, is_storage) = match (then_canon, else_canon) {
         (
-            Canon::Path(then_key, then_disp, then_storage, then_addr),
-            Canon::Path(else_key, else_disp, else_storage, else_addr),
+            Canon::Path(then_key, then_disp, then_storage),
+            Canon::Path(else_key, else_disp, else_storage),
         ) if then_key == else_key
             && then_key.segs.is_empty()
             && then_disp == else_disp
-            && then_storage == else_storage
-            && then_addr == else_addr =>
+            && then_storage == else_storage =>
         {
-            (then_key, then_disp, then_storage, then_addr)
+            (then_key, then_disp, then_storage)
         }
         _ => return Ok(None),
     };
     if !keys.rows.is_empty() {
         return Ok(None);
     }
+    // Both arms write the same identifier (`then_disp == else_disp`), so the
+    // ownership shape (spec §8.1, issue #70) is the same regardless of which
+    // arm's lvalue is inspected.
+    let sender_unproven = sender_unproven_reason(ictx, then_lhs);
 
     let then_ty = write_type(ictx, then_s, then_e, then_lhs)?;
     let else_ty = write_type(ictx, else_s, else_e, else_lhs)?;
@@ -474,7 +481,7 @@ fn try_direct_select<'ast>(
         display,
         ty: then_ty,
         is_storage,
-        addr_key_not_sender,
+        sender_unproven,
         first_write: then_lhs.span,
     };
     let target = match outer {
@@ -621,23 +628,32 @@ fn append_storage_acl(
     stmt_span: Span,
     lines: &mut Vec<String>,
 ) -> Result<()> {
-    if loc.addr_key_not_sender {
+    // `allowThis` is always sound; `allowSender` is only sound for a slot
+    // provably owned by `msg.sender` (spec §8.1, issue #70) — a mapping
+    // keyed by exactly `msg.sender`. Everything else (no key at all, or a
+    // key that is not provably `msg.sender`) withholds the sender grant and
+    // warns, the same as `pass_acl::rule_r1`.
+    let ops: &[FheOp] = if let Some(reason) = loc.sender_unproven {
         ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4001",
             severity: Severity::Warning,
             span: loc.first_write,
             message: format!(
-                "encrypted write to `{}` is keyed by an address that is not `msg.sender`; \
-                 the transaction sender gains read access to a ciphertext filed under \
-                 another address",
+                "encrypted write to `{}` {reason}, so its owner is not provably \
+                 `msg.sender`; the sender grant is withheld here, so the transaction \
+                 sender does not gain read access to a ciphertext that is not provably \
+                 its own. Add an explicit grant if that is what you intend",
                 loc.display
             ),
             fixits: Vec::new(),
             rule: Some("§8.1"),
         });
-    }
+        &[FheOp::AllowThis]
+    } else {
+        &[FheOp::AllowThis, FheOp::AllowSender]
+    };
     if ictx.acl_insert {
-        for op in [FheOp::AllowThis, FheOp::AllowSender] {
+        for &op in ops {
             let call = ictx
                 .ctx
                 .profile
@@ -650,14 +666,27 @@ fn append_storage_acl(
             lines.push(format!("{call};"));
         }
     } else {
+        let calls: String = ops
+            .iter()
+            .map(|op| {
+                ictx.ctx
+                    .profile
+                    .render_call(*op, &[loc.ty], &[&loc.display])
+                    .map(|c| format!("{c}; "))
+            })
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| LowerFailure {
+                span: stmt_span,
+                message: format!("profile refused an ACL call: {e} (internal)"),
+                code: None,
+            })?;
         ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4010",
             severity: Severity::Note,
             span: loc.first_write,
             message: format!(
-                "ACL suggestion: after the merged write, add \
-                 `FHE.allowThis({0}); FHE.allowSender({0});`",
-                loc.display
+                "ACL suggestion: after the merged write, add `{}`",
+                calls.trim_end()
             ),
             fixits: Vec::new(),
             rule: Some("§8.1"),
@@ -671,7 +700,7 @@ fn append_storage_acl(
 // ---------------------------------------------------------------------------
 
 enum Canon {
-    Path(LocKey, String, bool, bool), // key, display, is_storage, addr_key_not_sender
+    Path(LocKey, String, bool), // key, display, is_storage
     BranchLocal,
     Undecidable(Span, String),
 }
@@ -698,7 +727,6 @@ fn classify<'ast>(
                     },
                     name,
                     true,
-                    false,
                 )),
                 Some(Resolution::Local(v)) | Some(Resolution::Param(v)) => {
                     let decl_span = ctx.unit.var(*v).decl.span;
@@ -717,7 +745,6 @@ fn classify<'ast>(
                         },
                         name,
                         is_storage,
-                        false,
                     ))
                 }
                 _ => Ok(Canon::Undecidable(
@@ -727,29 +754,22 @@ fn classify<'ast>(
             }
         }
         ast::ExprKind::Member(base, field) => match classify(ictx, base, keys, hoist)? {
-            Canon::Path(mut key, display, is_storage, addr) => {
+            Canon::Path(mut key, display, is_storage) => {
                 key.segs.push(Seg::Field(field.to_string()));
-                Ok(Canon::Path(
-                    key,
-                    format!("{display}.{field}"),
-                    is_storage,
-                    addr,
-                ))
+                Ok(Canon::Path(key, format!("{display}.{field}"), is_storage))
             }
             other => Ok(other),
         },
         ast::ExprKind::Index(base, ast::IndexKind::Index(Some(k))) => {
             match classify(ictx, base, keys, hoist)? {
-                Canon::Path(mut key, display, is_storage, addr) => {
-                    let (key_id, key_text, is_addr_key) = classify_key(ictx, base, k, keys, hoist)?;
-                    let not_sender =
-                        is_addr_key && strip_parens(&ctx.snippet(k.span)) != "msg.sender";
+                Canon::Path(mut key, display, is_storage) => {
+                    let (key_id, key_text, _is_addr_key) =
+                        classify_key(ictx, base, k, keys, hoist)?;
                     key.segs.push(Seg::Key(key_id));
                     Ok(Canon::Path(
                         key,
                         format!("{display}[{key_text}]"),
                         is_storage,
-                        addr || not_sender,
                     ))
                 }
                 other => Ok(other),
@@ -835,6 +855,37 @@ fn base_key_type<'ast>(ictx: &IfCtx<'_, '_, 'ast>, base: &'ast ast::Expr<'ast>) 
         ast::TypeKind::Mapping(m) => Some(ctx.snippet(m.key.span)),
         ast::TypeKind::Array(_) => Some("uint256".to_string()),
         _ => None,
+    }
+}
+
+/// Why a merged write's owner is not provably `msg.sender` (spec §8.1, issue
+/// #70), or `None` when it is: mirrors `pass_acl::rule_r1`'s slot-kind check
+/// — only a mapping keyed by exactly `msg.sender` at the write's own top
+/// level earns the sender grant. Everything else (no key at all, a struct
+/// field, an array element, or a mapping keyed by anything else) withholds
+/// it. This looks only at the top-level shape of `lhs`, independent of the
+/// `LocKey` path classification above, which exists for aliasing, not
+/// ownership.
+fn sender_unproven_reason<'ast>(
+    ictx: &IfCtx<'_, '_, 'ast>,
+    lhs: &'ast ast::Expr<'ast>,
+) -> Option<&'static str> {
+    let ctx = ictx.ctx;
+    match &lhs.kind {
+        ast::ExprKind::Tuple(items) if items.len() == 1 => match items[0].as_deref().unspan() {
+            Some(inner) => sender_unproven_reason(ictx, inner),
+            None => Some("targets a location that carries no owner key"),
+        },
+        ast::ExprKind::Index(base, ast::IndexKind::Index(Some(k))) => {
+            let is_addr_key = base_key_type(ictx, base).as_deref() == Some("address");
+            let is_sender = strip_parens(&ctx.snippet(k.span)) == "msg.sender";
+            match (is_addr_key, is_sender) {
+                (true, true) => None,
+                (true, false) => Some("is keyed by an address that is not `msg.sender`"),
+                (false, _) => Some("targets a location that carries no owner key"),
+            }
+        }
+        _ => Some("targets a location that carries no owner key"),
     }
 }
 
@@ -990,7 +1041,7 @@ fn record_write<'ast>(
             message: msg,
             code: None,
         }),
-        Canon::Path(key, display, is_storage, addr_key_not_sender) => {
+        Canon::Path(key, display, is_storage) => {
             if writes.iter().any(|l| l.key == key) {
                 return Ok(());
             }
@@ -1011,7 +1062,7 @@ fn record_write<'ast>(
                 display,
                 ty,
                 is_storage,
-                addr_key_not_sender,
+                sender_unproven: sender_unproven_reason(ictx, lhs),
                 first_write: lhs.span,
             });
             Ok(())
@@ -1090,7 +1141,7 @@ fn make_subst<'r, 'f, 'a, 'ast>(
             classify(ictx, e, &mut scratch, false)
         };
         match canon {
-            Ok(Canon::Path(key, display, _, _)) => {
+            Ok(Canon::Path(key, display, _)) => {
                 let env = env.borrow();
                 if env.has(&key) {
                     return Some(env.read(&key, &display));
@@ -1294,7 +1345,7 @@ fn read_lvalue<'ast>(
         rows: env.borrow().keys.rows.clone(),
     };
     match classify(ictx, lhs, &mut scratch, false)? {
-        Canon::Path(key, display, _, _) => Ok(env.borrow().read(&key, &display)),
+        Canon::Path(key, display, _) => Ok(env.borrow().read(&key, &display)),
         Canon::BranchLocal => Ok(ictx.ctx.snippet(lhs.span)),
         Canon::Undecidable(span, msg) => Err(LowerFailure {
             span,
@@ -1326,7 +1377,7 @@ fn write_versioned<'ast>(
             message: msg,
             code: None,
         }),
-        Canon::Path(key, display, _, _) => {
+        Canon::Path(key, display, _) => {
             let mut env = env.borrow_mut();
             if !env.has(&key) {
                 return fail(

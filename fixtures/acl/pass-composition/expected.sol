@@ -35,7 +35,6 @@ contract PassComposition {
     function c(bool ok, euint64 amt) public returns (euint64) {
         if (ok) { euint64 __fhe_ret_0 = _total = amt;
         FHE.allowThis(_total);
-        FHE.allowSender(_total);
         FHE.allowTransient(__fhe_ret_0, msg.sender);
         return __fhe_ret_0;
         }

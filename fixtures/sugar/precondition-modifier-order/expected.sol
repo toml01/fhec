@@ -30,6 +30,5 @@ contract PreconditionModifierOrder {
         euint32 fee = euint32.wrap(__fhe_hashes_1[1]);
         balance = FHE.add(amount, fee);
         FHE.allowThis(balance);
-        FHE.allowSender(balance);
     }
 }

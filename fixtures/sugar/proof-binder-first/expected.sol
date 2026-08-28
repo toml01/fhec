@@ -13,7 +13,6 @@ contract SugarProofBinderFirst {
         euint8 v = FHE.asEuint8(v_input, proof);
         small = v;
         FHE.allowThis(small);
-        FHE.allowSender(small);
     }
 
     function setBoth(
@@ -29,9 +28,7 @@ contract SugarProofBinderFirst {
         euint16 b = euint16.wrap(__fhe_hashes_1[1]);
         small = a;
         FHE.allowThis(small);
-        FHE.allowSender(small);
         mid = b;
         FHE.allowThis(mid);
-        FHE.allowSender(mid);
     }
 }

@@ -17,7 +17,6 @@ contract SugarProofBinderBasic {
         euint32 amount = FHE.asEuint32(amount_input, inputProof);
         a = amount;
         FHE.allowThis(a);
-        FHE.allowSender(a);
         to;
         data;
     }

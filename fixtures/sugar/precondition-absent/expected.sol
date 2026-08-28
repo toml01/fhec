@@ -20,6 +20,5 @@ contract PreconditionAbsent {
         if (!isOperator(from, msg.sender)) revert UnauthorizedSpender(from, msg.sender);
         balance = amount;
         FHE.allowThis(balance);
-        FHE.allowSender(balance);
     }
 }

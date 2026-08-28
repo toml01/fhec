@@ -267,7 +267,10 @@ contract Vault {
     assert!(!notes.is_empty(), "expected FHE4010 notes: {parsed}");
     assert_eq!(notes[0]["severity"], "note");
 
-    // --fix applies the safe insertion to the original source.
+    // --fix applies the safe insertion to the original source. `count` is a
+    // simple state variable (no key at all), so R1 only guesses `allowThis`
+    // (issue #70): guessing `allowSender` for a slot not provably keyed by
+    // `msg.sender` would be a confidentiality leak.
     let out = fhec(root, &["check", "--fix"]);
     assert_eq!(out.status.code(), Some(0), "fix: {}", stderr(&out));
     let fixed = read(&src_path);
@@ -276,8 +279,8 @@ contract Vault {
         "fix-it not applied:\n{fixed}"
     );
     assert!(
-        fixed.contains("FHE.allowSender(count);"),
-        "fix-it not applied:\n{fixed}"
+        !fixed.contains("FHE.allowSender(count);"),
+        "the sender grant must not be guessed for a slot with no owner key:\n{fixed}"
     );
 
     // Idempotent: the grants exist now, so no note and nothing to fix.

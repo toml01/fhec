@@ -18,7 +18,6 @@ contract ElseLessState {
             }
             a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);
             FHE.allowThis(a);
-            FHE.allowSender(a);
         }
     }
 }

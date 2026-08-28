@@ -8,6 +8,5 @@ contract ImportRewrite is CounterBase {
     function bump() public {
         total = FHE.add(total, FHE.asEuint32(1));
         FHE.allowThis(total);
-        FHE.allowSender(total);
     }
 }
