@@ -116,36 +116,62 @@ fn rule_r1(
     }
     let lvalue = strip_parens(&ctx.snippet(w.lvalue_span)).to_string();
 
-    if let SlotKind::Mapping {
-        key_is_msg_sender,
-        key_is_address,
-        ..
-    } = &w.slot
-    {
-        if *key_is_address && !*key_is_msg_sender {
-            diags.borrow_mut().push(fhec_check::Diagnostic {
-                code: "FHE4001",
-                severity: Severity::Warning,
-                span: w.lvalue_span,
-                message: format!(
-                    "encrypted write to `{lvalue}` is keyed by an address that is not \
-                     `msg.sender`; the transaction sender gains read access to a ciphertext \
-                     filed under another address"
-                ),
-                fixits: Vec::new(),
-                rule: Some("§8.1"),
-            });
+    // Whether the slot is filed under an address that is not the caller. The
+    // caller must not be handed read access to it (spec §8.1).
+    let filed_under_another = matches!(
+        &w.slot,
+        SlotKind::Mapping {
+            key_is_msg_sender: false,
+            key_is_address: true,
+            ..
         }
+    );
+    if filed_under_another {
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4001",
+            severity: Severity::Warning,
+            span: w.lvalue_span,
+            message: format!(
+                "encrypted write to `{lvalue}` is keyed by an address that is not \
+                 `msg.sender`; the sender grant is withheld here, so the transaction \
+                 sender does not gain read access to a ciphertext filed under another \
+                 address. Add an explicit grant if that is what you intend"
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.1"),
+        });
     }
 
+    // `allowThis` is always right: it grants the contract access to its own
+    // slot. `allowSender` is a claim about who owns the value, and on a slot
+    // filed under another address that claim is a confidentiality leak — so
+    // it is never guessed there (spec §1.3, §8.1).
+    let ops: &[FheOp] = if filed_under_another {
+        &[FheOp::AllowThis]
+    } else {
+        &[FheOp::AllowThis, FheOp::AllowSender]
+    };
+
     let window = forward_window(ctx, w.function, w.stmt_span, &lvalue);
+    // `FHE.allowThis(ptr); slot = ptr;` grants the same handle the store
+    // files, so it counts (spec §8.6).
+    let local = assigned_local(ctx, w.function, w.stmt_span, &lvalue);
+    let local_window = local
+        .as_deref()
+        .map(|l| local_grant_window(ctx, w.function, w.stmt_span, l))
+        .unwrap_or_default();
     let mut missing: Vec<FheOp> = Vec::new();
-    for op in [FheOp::AllowThis, FheOp::AllowSender] {
+    for &op in ops {
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
-        if !window
+        let granted = window
             .iter()
             .any(|s| acl_call_matches(ctx, s, &name, &lvalue, None))
-        {
+            || local.as_deref().is_some_and(|l| {
+                local_window
+                    .iter()
+                    .any(|s| acl_call_matches(ctx, s, &name, l, None))
+            });
+        if !granted {
             missing.push(op);
         }
     }
@@ -270,15 +296,18 @@ fn rule_r2<'ast>(
     let needs_insert = args.iter().any(|a| !a.deduped);
     if !needs_insert {
         // Everything is already granted; only apply expression lowering.
-        for a in &args {
-            if a.rendered != a.original {
-                plan.push(Patch::replace(
-                    ctx.range(a.span),
-                    a.rendered.clone(),
-                    Provenance::new("§4.1 operator-lowering", ctx.range(a.span)),
-                ));
-            }
+        let replaced: Vec<(Span, String)> = args
+            .iter()
+            .filter(|a| a.rendered != a.original)
+            .map(|a| (a.span, a.rendered.clone()))
+            .collect();
+        if replaced.is_empty() {
+            return Ok(());
         }
+        // A patch inside the statement means pass 1 must not render it again
+        // (it would overlap, spec §2.5 FHE9001).
+        push_arg_rewrites(ctx, c, &replaced, plan)?;
+        outcome.owned_stmts.push(c.stmt_span);
         return Ok(());
     }
 
@@ -342,14 +371,11 @@ fn rule_r2<'ast>(
         format!("address({temp})")
     };
 
+    let mut replaced: Vec<(Span, String)> = Vec::new();
     for a in &args {
         if a.deduped {
             if a.rendered != a.original {
-                plan.push(Patch::replace(
-                    ctx.range(a.span),
-                    a.rendered.clone(),
-                    Provenance::new("§4.1 operator-lowering", ctx.range(a.span)),
-                ));
+                replaced.push((a.span, a.rendered.clone()));
             }
             continue;
         }
@@ -365,11 +391,7 @@ fn rule_r2<'ast>(
                 temp,
                 a.rendered
             ));
-            plan.push(Patch::replace(
-                ctx.range(a.span),
-                temp.clone(),
-                Provenance::new("§8.2 R2 arg-hoist", ctx.range(a.span)),
-            ));
+            replaced.push((a.span, temp.clone()));
             temp
         };
         let call = ctx
@@ -386,8 +408,61 @@ fn rule_r2<'ast>(
         insertion,
         Provenance::new("§8.2 R2", ctx.range(c.call_span)).with_code("FHE4011"),
     ));
-    outcome.owned_stmts.push(c.stmt_span);
+    let callee_hoisted = !(c.callee_is_ident || is_simple_path(&callee_text));
+    if push_arg_rewrites(ctx, c, &replaced, plan)? || callee_hoisted {
+        // R2 replaced text inside the statement, so pass 1 must leave the
+        // whole statement alone or the two patches overlap.
+        outcome.owned_stmts.push(c.stmt_span);
+    }
     Ok(())
+}
+
+/// Pushes the replacements R2 owes for its rewritten arguments.
+///
+/// An argument that sits inside a larger operator, ternary or cast site is
+/// not replaced on its own: that whole site is rendered here with the
+/// argument substituted, because pass 1 never re-enters a statement R2 owns
+/// and would otherwise leave the outer operator unlowered.
+///
+/// Returns whether anything was pushed.
+fn push_arg_rewrites<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    c: &EncryptedArgCall,
+    replaced: &[(Span, String)],
+    plan: &mut FilePlan,
+) -> Result<bool> {
+    if replaced.is_empty() {
+        return Ok(false);
+    }
+    let inner: Vec<Span> = replaced.iter().map(|(s, _)| *s).collect();
+    let straddling = straddling_sites(ctx, c.stmt_span, &inner);
+    let subst = |e: &'ast ast::Expr<'ast>| -> Option<String> {
+        replaced
+            .iter()
+            .find(|(s, _)| *s == e.span)
+            .map(|(_, text)| text.clone())
+    };
+    for site in &straddling {
+        let node = find_expr(ctx, c.function, *site)
+            .ok_or_else(|| lost(*site, "R2 straddling operator site"))?;
+        let rendered = Renderer::with_subst(ctx, &subst).render_expr(node)?;
+        plan.push(Patch::replace(
+            ctx.range(*site),
+            rendered,
+            Provenance::new("§8.2 R2 straddling-site", ctx.range(*site)),
+        ));
+    }
+    for (span, text) in replaced {
+        if straddling.iter().any(|s| ctx.contains(*s, *span)) {
+            continue; // already inside a rendered site
+        }
+        plan.push(Patch::replace(
+            ctx.range(*span),
+            text.clone(),
+            Provenance::new("§8.2 R2 arg-rewrite", ctx.range(*span)),
+        ));
+    }
+    Ok(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -481,6 +556,48 @@ fn rule_r3<'ast>(
     ));
     outcome.owned_stmts.push(r.stmt_span);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// R2 rewrites that straddle a rewritten argument
+// ---------------------------------------------------------------------------
+
+/// Every operator, ternary and cast-sugar site the lowerer knows inside
+/// `stmt_span`.
+fn sites_in(ctx: &Ctx<'_, '_>, stmt_span: Span) -> Vec<Span> {
+    let mut out: Vec<Span> = ctx
+        .ops_by_span
+        .keys()
+        .chain(ctx.terns_by_span.keys())
+        .chain(ctx.cast_sugar_by_span.keys())
+        .copied()
+        .filter(|s| ctx.contains(stmt_span, *s))
+        .collect();
+    out.sort_by_key(|s| (s.lo(), std::cmp::Reverse(s.hi())));
+    out
+}
+
+/// The outermost sites that *contain* one of `inner` without being contained
+/// by any of them.
+///
+/// R2 replaces each `inner` span with a temp, and pass 1 never re-enters a
+/// statement R2 owns, so a site that straddles a replaced argument has to be
+/// rendered here or it is never lowered at all.
+fn straddling_sites(ctx: &Ctx<'_, '_>, stmt_span: Span, inner: &[Span]) -> Vec<Span> {
+    let mut out: Vec<Span> = Vec::new();
+    for site in sites_in(ctx, stmt_span) {
+        if inner.iter().any(|i| ctx.contains(*i, site)) {
+            continue; // inside a replaced argument: R2 already rendered it
+        }
+        if !inner.iter().any(|i| ctx.contains(site, *i)) {
+            continue; // unrelated to any replaced argument
+        }
+        if out.iter().any(|o| ctx.contains(*o, site)) {
+            continue; // already covered by an outer straddling site
+        }
+        out.push(site);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -752,6 +869,64 @@ fn search_stmt<'ast>(
             }
         }
     }
+}
+
+/// The identifier a storage write copies, for `slot = local;` exactly.
+///
+/// CoFHE files ACL permissions against the ciphertext *handle*, so a grant on
+/// `local` already covers `slot` once the handle is stored there. The
+/// idiomatic shape is compute into a local, grant on the local, then store
+/// (spec §8.6).
+fn assigned_local<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+    stmt_span: Span,
+    lvalue: &str,
+) -> Option<String> {
+    let (stmts, idx) = enclosing_block(ctx, function, stmt_span)?;
+    let ast::StmtKind::Expr(e) = &stmts[idx].kind else {
+        return None;
+    };
+    let ast::ExprKind::Assign(lhs, None, rhs) = &e.kind else {
+        return None;
+    };
+    if strip_parens(&ctx.snippet(lhs.span)) != lvalue {
+        return None;
+    }
+    let text = strip_parens(&ctx.snippet(rhs.span)).to_string();
+    is_ident_text(&text).then_some(text)
+}
+
+/// Whether a statement declares a variable named `name`.
+fn declares<'ast>(stmt: &'ast ast::Stmt<'ast>, name: &str) -> bool {
+    match &stmt.kind {
+        ast::StmtKind::DeclSingle(v) => v.name.is_some_and(|n| n.as_str() == name),
+        ast::StmtKind::DeclMulti(vars, _) => vars.iter().any(|v| {
+            v.as_ref()
+                .unspan()
+                .and_then(|v| v.name)
+                .is_some_and(|n| n.as_str() == name)
+        }),
+        _ => false,
+    }
+}
+
+/// Statements before the trigger that can still hold a grant on `local`:
+/// nearest first, stopping at the statement that reassigns or declares it.
+fn local_grant_window<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+    trigger: Span,
+    local: &str,
+) -> Vec<&'ast ast::Stmt<'ast>> {
+    let mut out = Vec::new();
+    for s in backward_window(ctx, function, trigger) {
+        if writes_to(ctx, s, local) || declares(s, local) {
+            break;
+        }
+        out.push(s);
+    }
+    out
 }
 
 /// Whether a statement is an assignment to (or inc/dec of) `lvalue`.

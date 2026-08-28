@@ -529,7 +529,9 @@ FHE.allowThis(<lvalue>);
 FHE.allowSender(<lvalue>);
 ```
 
-immediately after the write statement. When the written slot is keyed by an address-typed expression that is not `msg.sender`, the transpiler MUST additionally emit warning FHE4001 (the sender gains read access to a ciphertext filed under another address — likely confidentiality bug or intended escrow; the author must decide).
+immediately after the write statement.
+
+`FHE.allowThis` is unconditional: it grants the contract access to its own slot and cannot leak. `FHE.allowSender` is a claim about who owns the value. When the written slot is a mapping slot keyed by an address-typed expression that is not `msg.sender`, that claim is false in every operator-style flow — the value belongs to the key, not to the caller — so the transpiler MUST NOT insert `FHE.allowSender` there, and MUST emit warning FHE4001 naming the withheld grant. An author who intends an escrow writes the grant explicitly. Warning about a leak and then writing it is not an option a confidentiality tool has (spec §1.3).
 
 ### §8.2 R2 — encrypted arguments to external calls
 
@@ -540,6 +542,8 @@ FHE.allowTransient(a, address(<callee>));
 ```
 
 The second argument of `allowTransient` is an `address`; contract-typed callee expressions do not convert implicitly, so the transpiler MUST wrap the callee in an explicit `address(...)` cast.
+
+R2 MUST claim ownership of the statement it rewrote, and only then: pass 1 skips any statement R2 owns, so claiming a statement R2 did not rewrite leaves that statement's other operators unlowered, and claiming nothing while rewriting an argument makes the two passes patch the same bytes (FHE9001). When a rewritten argument sits inside a larger operator, ternary or cast site, R2 MUST render that whole site with the argument substituted, because pass 1 will not re-enter the statement.
 
 **⚠ Draft decision (callee hoisting):** when the callee expression is not a plain identifier, `this`-derived constant, or literal, it MUST be hoisted to a temp `__fhe_callee_n` **of the callee's declared type** and that temp used in both the `allowTransient` call (wrapped in `address(...)`) and the call itself, preserving single evaluation. When the declared type cannot be derived, the transpiler MUST refuse the file with FHE4003 rather than guess.
 
@@ -568,6 +572,8 @@ The transpiler MUST NOT auto-insert `FHE.allow(x, <address>)` for any address ot
 ### §8.6 Dedupe and idempotence
 
 An insertion is suppressed when an equivalent call is already present. **⚠ Draft decision (dedupe window):** "already present" means: a statement calling the same ACL function with an argument that is syntactically identical (after trivial parenthesis stripping) to the would-be inserted argument. For R1 the window looks **forward**: in the same block after the triggering statement and before the next write to the same location, the next external call, or the end of the block, whichever comes first. For R2 and R3 the window looks **backward**: in the same block before the triggering call or `return`, after the previous write to the granted value, since the grant must precede the statement it serves. Method-syntax calls (`x.allowThis()`) count as equivalent to library-syntax calls (`FHE.allowThis(x)`). An existing grant modulo the `address(...)` wrapper counts as equivalent for R2.
+
+CoFHE files ACL permissions against the ciphertext *handle*, not against the storage location, so for R1 a grant on the copied value counts as a grant on the slot. When the triggering statement is exactly `slot = local;` with `local` a plain identifier, the R1 window additionally looks **backward** for a grant whose argument is `local`, stopping at the statement that reassigns or declares `local`. This is the most common CoFHE idiom — compute into a local, grant on the local, then store — and without it every such site receives a redundant on-chain grant.
 
 This rule is what makes §1.4 idempotence hold through the ACL pass: re-transpiling output inserts nothing.
 
