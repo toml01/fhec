@@ -1803,7 +1803,7 @@ fn shared_returns_accept_calls_with_named_or_unnamed_return_parameters() {
 }
 
 #[test]
-fn incomplete_inheritance_preserves_known_call_types() {
+fn incomplete_inheritance_keeps_inherited_members_in_the_known_prefix() {
     let src = r#"
         pragma solidity ^0.8.25;
         import "@fhenixprotocol/cofhe-contracts/FHE.sol";
@@ -1817,11 +1817,6 @@ fn incomplete_inheritance_preserves_known_call_types() {
                 return L.pub(value);
             }
         }
-        contract TDirty is ReentrancyGuardTransient {
-            function c1(euint64 value) external returns (shared(msg.sender) euint64) {
-                return L.pub(value);
-            }
-        }
         contract HelperBase is ReentrancyGuardTransient {
             function helper(euint64 value) internal returns (euint64) { return value; }
         }
@@ -1831,9 +1826,41 @@ fn incomplete_inheritance_preserves_known_call_types() {
             }
         }
     "#;
+    // `helper` is declared by the in-unit base that precedes every opaque
+    // base in the linearization, so it resolves and the shared return types.
+    // This is the shape a real contract hits: a helper on a base that itself
+    // inherits from node_modules.
     with_checked(&[("t.fsol", src)], |c, _| {
         assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
-        assert_eq!(c.shared_return_sites.len(), 3);
+        assert_eq!(c.shared_return_sites.len(), 2);
+    });
+}
+
+#[test]
+fn a_file_scope_name_under_an_unseen_base_still_degrades() {
+    // An inherited member shadows a file-scope name, so under an unseen base
+    // `L` cannot be resolved positively (spec §1.3). The refusal is the
+    // point: resolving it would also skip the §7 branch legality check.
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+        library L {
+            function pub(euint64 value) internal returns (euint64 out) { out = value; }
+        }
+        contract TDirty is ReentrancyGuardTransient {
+            function c1(euint64 value) external returns (shared(msg.sender) euint64) {
+                return L.pub(value);
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(
+            c.diagnostics.iter().any(|d| d.code == "FHE2012"),
+            "{:?}",
+            c.diagnostics
+        );
     });
 }
 
@@ -2038,4 +2065,58 @@ fn modifier_invocation_naming_an_in_shared_parameter_rejects_with_fhe1019() {
         codes.iter().any(|c| c == "FHE1019"),
         "expected FHE1019, got {codes:?}"
     );
+}
+
+#[test]
+fn a_file_scope_name_under_an_unseen_base_keeps_branch_legality() {
+    // Regression: resolving the file-scope `Helper` here would classify the
+    // call as a builtin and skip the §7 branch legality check, so the
+    // side effect of the base's `Helper(...)` would run unconditionally
+    // after the encrypted `if` is flattened.
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ExternalBase} from "@vendor/External.sol";
+
+        struct Helper { uint256 a; }
+
+        contract Vault is ExternalBase {
+            function f(euint64 x, ebool c) public returns (euint64) {
+                euint64 y = x;
+                if (c) {
+                    Helper(1);
+                    y = FHE.add(x, x);
+                }
+                return y;
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(
+            c.diagnostics.iter().any(|d| d.code == "FHE3008"),
+            "an unverified call in an encrypted branch must be refused: {:?}",
+            c.diagnostics
+        );
+    });
+}
+
+#[test]
+fn an_unnamed_return_type_reaches_operator_lowering() {
+    // The unnamed-return fix makes the call's type a fact, so an operator
+    // over it lowers instead of refusing with FHE2001.
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract C {
+            function g(euint64 v) internal returns (euint64) { return v; }
+            function f(euint64 x) public returns (euint64) {
+                return g(x) + x;
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        assert_eq!(c.operator_sites.len(), 1);
+    });
 }

@@ -17,7 +17,9 @@ contract TClean {
 }
 
 contract TDirty is ReentrancyGuardTransient {
-    // The external base cannot erase the precise file-scope library binding.
+    // An inherited member shadows a file-scope name, so under an unseen base
+    // even a resolvable library call must stay Unknown: resolving it would
+    // also hand the call the §7 branch-legality permission of a builtin.
     function libraryCall(euint64 value) external returns (shared(msg.sender) euint64) {
         return L.pub(value);
     }

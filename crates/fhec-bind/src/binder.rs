@@ -953,13 +953,15 @@ impl<'a, 'ast> Walker<'a, 'ast> {
                 {
                     return r;
                 }
+                // Past the known prefix the name may still be a member of a
+                // base this unit cannot see, and an inherited member shadows
+                // a file-scope name of the same identifier. Returning the
+                // file-scope binding here would hand a *permission* — the
+                // call would classify as a builtin and skip the §7 branch
+                // legality check — on a guess. Degrade instead, and carry
+                // what file scope would have said for the policies that ask
+                // for it explicitly (`trust.rs`, `precondition.rs`).
                 let fallback = self.binder.unit.resolve_at_file(self.file, name, text);
-                // A positive file-scope binding is a fact independent of how
-                // much of the inherited surface is visible. Preserve it;
-                // only a genuine file-scope miss may come from an unseen base.
-                if !matches!(fallback, Resolution::Unresolved(_)) {
-                    return fallback;
-                }
                 return Resolution::Unresolved(UnresolvedReason::IncompleteInheritance {
                     contract,
                     fallback: Box::new(fallback),

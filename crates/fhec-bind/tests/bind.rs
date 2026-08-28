@@ -376,7 +376,7 @@ fn external_base_makes_inherited_surface_incomplete() {
 }
 
 #[test]
-fn file_scope_names_survive_incomplete_inheritance() {
+fn file_scope_names_degrade_under_incomplete_inheritance() {
     let src = r#"
         pragma solidity ^0.8.25;
         import {ExternalBase, importedFn} from "@vendor/External.sol";
@@ -390,22 +390,39 @@ fn file_scope_names_survive_incomplete_inheritance() {
             }
         }
     "#;
+    // An inherited member shadows a file-scope name of the same identifier,
+    // and `ExternalBase` is outside the unit, so none of these names can be
+    // resolved positively here: returning the file-scope binding would let a
+    // call classify as a builtin and skip the §7 branch legality check.
+    // The file-scope answer is carried as the `fallback` for the policies
+    // that ask for it explicitly.
     with_bound(&[("t.sol", src)], |bound, asts| {
-        assert!(matches!(
-            resolutions_of(bound, asts[0], "L").as_slice(),
-            [Resolution::Contract(_)]
-        ));
-        assert!(matches!(
-            resolutions_of(bound, asts[0], "freeFn").as_slice(),
-            [Resolution::Function(_)]
-        ));
-        assert!(matches!(
-            resolutions_of(bound, asts[0], "importedFn").as_slice(),
-            [Resolution::External { .. }]
-        ));
+        for name in ["L", "freeFn", "importedFn"] {
+            assert!(
+                matches!(
+                    resolutions_of(bound, asts[0], name).as_slice(),
+                    [Resolution::Unresolved(
+                        UnresolvedReason::IncompleteInheritance { .. }
+                    )]
+                ),
+                "{name} must degrade under an unseen base"
+            );
+        }
+        let free = resolutions_of(bound, asts[0], "freeFn");
+        let [Resolution::Unresolved(UnresolvedReason::IncompleteInheritance { fallback, .. })] =
+            free.as_slice()
+        else {
+            panic!("expected an IncompleteInheritance resolution");
+        };
+        assert!(
+            matches!(**fallback, Resolution::Function(_)),
+            "the file-scope answer must still be carried"
+        );
         assert!(matches!(
             resolutions_of(bound, asts[0], "msg").as_slice(),
-            [Resolution::Builtin(_)]
+            [Resolution::Unresolved(
+                UnresolvedReason::IncompleteInheritance { .. }
+            )]
         ));
     });
 }

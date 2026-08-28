@@ -4,11 +4,26 @@
     "severity": "error",
     "span": {
       "file": "input.fsol",
-      "start_byte": 897,
-      "end_byte": 920,
-      "start_line": 27,
+      "start_byte": 841,
+      "end_byte": 853,
+      "start_line": 24,
       "start_col": 16,
-      "end_line": 27,
+      "end_line": 24,
+      "end_col": 28
+    },
+    "message": "this function shares `euint64`, but `L.pub` resolves to `Unknown` because contract `TDirty` inherits `ReentrancyGuardTransient`, which is outside the compilation unit",
+    "rule": "§2.8"
+  },
+  {
+    "code": "FHE2012",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1048,
+      "end_byte": 1071,
+      "start_line": 29,
+      "start_col": 16,
+      "end_line": 29,
       "end_col": 39
     },
     "message": "this function shares `euint64`, but `couldBeInherited` resolves to `Unknown` because contract `TDirty` inherits `ReentrancyGuardTransient`, which is outside the compilation unit",
