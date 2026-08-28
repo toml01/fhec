@@ -35,7 +35,7 @@
 //!
 //! Anything not covered types as `Unknown` — never a guess.
 
-use fhec_bind::{BoundUnit, FileId, Resolution, TypeDeclKind, UnresolvedReason};
+use fhec_bind::{BoundUnit, FileId, FunctionId, Resolution, TypeDeclKind, UnresolvedReason};
 use fhec_ir::{EType, FheOp};
 use fhec_targets::TargetProfile;
 use solar_ast as ast;
@@ -247,6 +247,35 @@ impl Trust {
             unwrapped => self.resolution_trusted(unwrapped).then_some(ety),
         }
     }
+}
+
+/// Whether `fid` is declared by the trusted profile library module (spec
+/// §8.6): the recognized in-unit `library FHE` itself (rule 4), or a
+/// library declared in the same file — CoFHE's per-type `BindingsEuintN`
+/// method-syntax extensions live alongside `library FHE` in `FHE.sol` and
+/// forward to it, so the same-file check already recognizes the file.
+///
+/// Used by the lowerer's ACL pass (spec §8.6) to gate a method-syntax
+/// broad-grant match (`ptr.allowPublic()`) the same way library syntax
+/// (`FHE.allowPublic(ptr)`) is gated on [`crate::PlainTy::FheLib`]: an
+/// in-unit, non-profile `using` binding (e.g. a synthetic `using FakeAcl for
+/// euint32;`) resolves to a candidate function outside the profile module
+/// and this returns `false` for it (issue #87). A method call with **no**
+/// in-unit candidate at all — the ordinary real-world case, since CoFHE's
+/// `using BindingsEuintN for euintN global;` lives inside `FHE.sol`,
+/// invisible to the binder unless that file is itself part of the
+/// compilation unit — is not covered by this function; the caller treats
+/// that absence as trusted by default.
+pub fn is_profile_library_function(
+    unit: &BoundUnit<'_>,
+    profile: &dyn TargetProfile,
+    fid: FunctionId,
+) -> bool {
+    let Some(cid) = unit.function(fid).contract else {
+        return false;
+    };
+    let file = unit.contract(cid).file;
+    Trust::new(profile).file_is_profile_module(unit, file)
 }
 
 /// `euint32` → `EType::Euint(W32)`, etc.
