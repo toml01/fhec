@@ -86,6 +86,7 @@ preserved byte-for-byte — comments, formatting, everything.
 | `--fix` | Apply safe fix-its to the source |
 | `--acl=insert\|suggest` | Insert ACL grants (default) or downgrade them to fix-it notes |
 | `--no-verify` | Skip the solc gate |
+| `--all-solc-warnings` | Forward solc warnings from files outside `project.src` (suppressed by default; errors from any file still come through) |
 | `--watch` | Rebuild or recheck when dialect sources or `fhec.toml` change (`build` / `check` only) |
 
 Diagnostics carry stable codes (`FHE1xxx` load/parse … `FHE9xxx` internal),

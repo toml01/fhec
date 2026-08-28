@@ -17,10 +17,11 @@ pub struct CatalogEntry {
 pub static CATALOG: &[CatalogEntry] = &[
     CatalogEntry { code: "FHE1001", severity: "error", name: "unsupported-pragma-range", rule: "§2.1", summary: "The file's pragma solidity range is not within >=0.8.25 <0.9.0." },
     CatalogEntry { code: "FHE1002", severity: "error", name: "dialect-parse-error", rule: "§2.2", summary: "The source does not parse under the .fsol dialect grammar." },
-    CatalogEntry { code: "FHE1003", severity: "error", name: "import-not-found", rule: "§2.2", summary: "An import specifier cannot be resolved." },
+    CatalogEntry { code: "FHE1003", severity: "error", name: "import-not-found", rule: "§2.2", summary: "An import specifier cannot be resolved. A relative .sol/.fsol swap that names a discovered unit file carries a safe fix-it." },
     CatalogEntry { code: "FHE1004", severity: "error", name: "config-not-found (draft)", rule: "—", summary: "No fhec.toml was found upward from the working directory (draft code, pending spec §9 inclusion)." },
     CatalogEntry { code: "FHE1005", severity: "error", name: "config-invalid (draft)", rule: "—", summary: "fhec.toml is unreadable or invalid (draft code, pending spec §9 inclusion)." },
     CatalogEntry { code: "FHE1006", severity: "error", name: "frozen-drift (draft)", rule: "§1.4", summary: "--frozen: regenerating the out dir would change it; run `fhec build` and commit (draft code, pending spec §9 inclusion)." },
+    CatalogEntry { code: "FHE1007", severity: "warning", name: "no-files-matched", rule: "§2.1", summary: "project.include matched no .fsol/.sol files under project.src; this is almost always a misconfigured src or include glob." },
     CatalogEntry { code: "FHE1020", severity: "error", name: "duplicate-definition", rule: "§9", summary: "The same name is declared twice in one scope." },
     CatalogEntry { code: "FHE1010", severity: "error", name: "in-sugar-non-encrypted-type", rule: "§2.3", summary: "`in` parameter sugar used with a type that is not an encrypted value type." },
     CatalogEntry { code: "FHE1011", severity: "error", name: "in-sugar-name-collision", rule: "§2.3", summary: "The generated `<name>_input` identifier collides with an existing declaration." },

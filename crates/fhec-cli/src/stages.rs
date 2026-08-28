@@ -179,6 +179,7 @@ pub fn run(unit: &LoadedUnit, config: &Config, opts: &StageOptions) -> StagesRes
                 d.message.clone(),
             );
             diag.rule = Some("§2.2".to_string());
+            attach_unresolved_import_fixit(&mut diag, unit, &mut result.safe_fixits);
             result.diagnostics.push(diag);
         }
 
@@ -341,6 +342,83 @@ fn unrewrite_imports(
         }
     }
     out
+}
+
+/// If `spec` ends in `.sol` or `.fsol`, returns it with the other dialect
+/// extension. `.fsol` is checked first so it is not treated as `.sol`.
+fn swapped_dialect_spec(spec: &str) -> Option<String> {
+    if let Some(stem) = spec.strip_suffix(".fsol") {
+        Some(format!("{stem}.sol"))
+    } else {
+        spec.strip_suffix(".sol").map(|stem| format!("{stem}.fsol"))
+    }
+}
+
+/// Reads the import specifier out of an FHE1003 diagnostic: prefer the span
+/// text (quotes stripped), then the binder message which quotes the specifier.
+fn specifier_from_fhe1003(diag: &Diagnostic, content: &str) -> Option<String> {
+    if let Some(snippet) = content.get(diag.span.start_byte..diag.span.end_byte) {
+        let trimmed = snippet.trim();
+        let inner = trimmed
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix('\'')
+                    .and_then(|s| s.strip_suffix('\''))
+            })
+            .unwrap_or(trimmed);
+        if inner.starts_with('.') {
+            return Some(inner.to_string());
+        }
+    }
+    let rest = diag
+        .message
+        .strip_prefix("cannot resolve relative import `")?;
+    let spec = rest.split_once('`')?.0;
+    Some(spec.to_string())
+}
+
+/// When a relative import fails to resolve and swapping `.sol` ↔ `.fsol`
+/// names a file the unit actually discovered, attach a `safe: true` fix-it.
+fn attach_unresolved_import_fixit(
+    diag: &mut Diagnostic,
+    unit: &LoadedUnit,
+    safe_fixits: &mut Vec<(String, ByteRange, String)>,
+) {
+    if diag.code != "FHE1003" {
+        return;
+    }
+    let Some(file) = unit.files.iter().find(|f| f.rel_path == diag.span.file) else {
+        return;
+    };
+    let Some(spec) = specifier_from_fhe1003(diag, &file.content) else {
+        return;
+    };
+    let Some(swapped) = swapped_dialect_spec(&spec) else {
+        return;
+    };
+    let resolved = resolve_relative(&diag.span.file, &swapped);
+    if !unit.files.iter().any(|f| f.rel_path == resolved) {
+        return;
+    }
+    let Some(snippet) = file.content.get(diag.span.start_byte..diag.span.end_byte) else {
+        return;
+    };
+    if !snippet.contains(&spec) {
+        return;
+    }
+    let replacement = snippet.replacen(&spec, &swapped, 1);
+    safe_fixits.push((
+        diag.span.file.clone(),
+        ByteRange::new(diag.span.start_byte, diag.span.end_byte),
+        replacement.clone(),
+    ));
+    diag.fixits.push(FixIt {
+        span: diag.span.clone(),
+        replacement,
+        safe: true,
+    });
 }
 
 /// Resolves a possibly-relative import specifier against the importer's
@@ -566,6 +644,21 @@ mod tests {
         assert_eq!(
             resolve_relative("a/B.fsol", "@scope/pkg/C.sol"),
             "@scope/pkg/C.sol"
+        );
+    }
+
+    #[test]
+    fn swapped_dialect_spec_does_not_treat_fsol_as_sol() {
+        assert_eq!(swapped_dialect_spec("./A.sol").as_deref(), Some("./A.fsol"));
+        assert_eq!(swapped_dialect_spec("./A.fsol").as_deref(), Some("./A.sol"));
+        assert_eq!(
+            swapped_dialect_spec("../lib/X.sol").as_deref(),
+            Some("../lib/X.fsol")
+        );
+        assert_eq!(swapped_dialect_spec("./A.txt"), None);
+        assert_eq!(
+            swapped_dialect_spec("@p/q/A.sol").as_deref(),
+            Some("@p/q/A.fsol")
         );
     }
 

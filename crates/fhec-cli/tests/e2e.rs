@@ -309,3 +309,126 @@ fn missing_node_modules_gives_install_advice() {
     assert_eq!(out.status.code(), Some(0), "stderr: {}", stderr(&out));
     assert!(root.join("generated/Counter.sol").is_file());
 }
+
+#[test]
+fn third_party_solc_warnings_are_suppressed_by_default() {
+    if !have_solc() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("fhec.toml"), "[project]\nsrc = \"contracts\"\n").unwrap();
+    std::fs::create_dir_all(root.join("contracts")).unwrap();
+    std::fs::create_dir_all(root.join("node_modules/noisy")).unwrap();
+    std::fs::write(
+        root.join("node_modules/noisy/Lib.sol"),
+        "\
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+contract Lib {
+    function f() public pure returns (uint) {
+        return 1;
+        uint x = 2;
+    }
+}
+",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("contracts/User.sol"),
+        "\
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+import \"noisy/Lib.sol\";
+contract User is Lib {
+    function g() public pure returns (uint) {
+        return 1;
+        uint y = 2;
+    }
+}
+",
+    )
+    .unwrap();
+
+    let out = fhec(root, &["build", "--json"]);
+    assert_eq!(out.status.code(), Some(0), "build: {}", stderr(&out));
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout(&out)).unwrap_or_else(|_| serde_json::json!([]));
+    let arr = parsed.as_array().cloned().unwrap_or_default();
+    let warnings: Vec<_> = arr
+        .iter()
+        .filter(|d| d["code"] == "FHE6000" && d["severity"] == "warning")
+        .collect();
+    assert!(
+        warnings.iter().any(|d| d["span"]["file"] == "User.sol"),
+        "expected an in-src warning: {arr:?}"
+    );
+    assert!(
+        warnings
+            .iter()
+            .all(|d| d["span"]["file"] != "noisy/Lib.sol"),
+        "third-party warning leaked: {arr:?}"
+    );
+
+    let out = fhec(root, &["build", "--json", "--all-solc-warnings"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "build --all-solc-warnings: {}",
+        stderr(&out)
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout(&out)).unwrap_or_else(|_| serde_json::json!([]));
+    let arr = parsed.as_array().cloned().unwrap_or_default();
+    assert!(
+        arr.iter()
+            .any(|d| d["code"] == "FHE6000" && d["span"]["file"] == "noisy/Lib.sol"),
+        "flag must restore the third-party warning: {arr:?}"
+    );
+}
+
+#[test]
+fn third_party_solc_errors_are_always_forwarded() {
+    if !have_solc() {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(root.join("fhec.toml"), "[project]\nsrc = \"contracts\"\n").unwrap();
+    std::fs::create_dir_all(root.join("contracts")).unwrap();
+    std::fs::create_dir_all(root.join("node_modules/noisy")).unwrap();
+    std::fs::write(
+        root.join("node_modules/noisy/Lib.sol"),
+        "\
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+contract Lib {
+    function f() public pure {
+        missingFn();
+    }
+}
+",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("contracts/User.sol"),
+        "\
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+import \"noisy/Lib.sol\";
+contract User is Lib {}
+",
+    )
+    .unwrap();
+
+    let out = fhec(root, &["build", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "build: {}", stderr(&out));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("json diagnostics");
+    let arr = parsed.as_array().unwrap();
+    assert!(
+        arr.iter().any(|d| d["code"] == "FHE6000"
+            && d["severity"] == "error"
+            && d["span"]["file"] == "noisy/Lib.sol"),
+        "expected a forwarded third-party error: {arr:?}"
+    );
+}
