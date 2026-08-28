@@ -1837,10 +1837,11 @@ fn incomplete_inheritance_keeps_inherited_members_in_the_known_prefix() {
 }
 
 #[test]
-fn a_file_scope_name_under_an_unseen_base_still_degrades() {
+fn a_file_scope_name_under_an_unseen_base_warns_but_still_rewrites() {
     // An inherited member shadows a file-scope name, so under an unseen base
-    // `L` cannot be resolved positively (spec §1.3). The refusal is the
-    // point: resolving it would also skip the §7 branch legality check.
+    // `L` cannot be resolved positively (spec §1.3). The shared return is
+    // still rewritten: it takes the encrypted type from the declaration, so
+    // solc checks the assumption (spec §2.8).
     let src = r#"
         pragma solidity ^0.8.25;
         import "@fhenixprotocol/cofhe-contracts/FHE.sol";
@@ -1856,11 +1857,41 @@ fn a_file_scope_name_under_an_unseen_base_still_degrades() {
         }
     "#;
     with_checked(&[("t.fsol", src)], |c, _| {
-        assert!(
-            c.diagnostics.iter().any(|d| d.code == "FHE2012"),
-            "{:?}",
-            c.diagnostics
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE2012")
+            .unwrap_or_else(|| panic!("expected FHE2012, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Warning);
+        assert!(!c.has_errors(), "{:?}", c.diagnostics);
+        assert_eq!(
+            c.shared_return_sites.len(),
+            1,
+            "the site must still be stated"
         );
+    });
+}
+
+#[test]
+fn a_proven_type_mismatch_on_a_shared_return_stays_an_error() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract C {
+            function bad(uint256 p) external returns (shared(msg.sender) euint64) {
+                return p;
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let d = c
+            .diagnostics
+            .iter()
+            .find(|d| d.code == "FHE2012")
+            .unwrap_or_else(|| panic!("expected FHE2012, got {:?}", c.diagnostics));
+        assert_eq!(d.severity, Severity::Error);
+        assert!(c.shared_return_sites.is_empty());
     });
 }
 
@@ -1880,13 +1911,19 @@ fn unseen_base_call_stays_unknown_and_explains_why() {
     with_checked(&[("t.fsol", src)], |c, _| {
         assert_eq!(c.diagnostics.len(), 1, "{:?}", c.diagnostics);
         assert_eq!(c.diagnostics[0].code, "FHE2012");
-        assert_eq!(
-            c.diagnostics[0].message,
-            "this function shares `euint64`, but `couldBeInherited` resolves to `Unknown` \
-             because contract `TDirty` inherits `ReentrancyGuardTransient`, which is outside \
-             the compilation unit"
+        assert_eq!(c.diagnostics[0].severity, Severity::Warning);
+        assert!(
+            c.diagnostics[0].message.starts_with(
+                "this function shares `euint64`, but `couldBeInherited` resolves to `Unknown` \
+                 because contract `TDirty` inherits `ReentrancyGuardTransient`, which is \
+                 outside the compilation unit"
+            ),
+            "{}",
+            c.diagnostics[0].message
         );
-        assert!(c.shared_return_sites.is_empty());
+        // The site is still stated: the rewrite reads the declared type, and
+        // solc checks the assumption (spec §2.8).
+        assert_eq!(c.shared_return_sites.len(), 1);
     });
 }
 

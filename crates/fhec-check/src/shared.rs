@@ -524,8 +524,32 @@ fn scan_returns<'ast>(
                     continue;
                 }
             }
-            match out.types.get(e.span) {
+            let recorded = out.types.get(e.span);
+            match recorded {
                 Some(Ty::Encrypted(t)) if *t == ety => return_exprs.push(e.span),
+                // An unreadable base is the one cause fhec cannot rule out by
+                // reading harder, and it is also the one cause the output
+                // checks for itself: the rewrite takes the encrypted type
+                // from the *declared* return, so a wrong assumption reaches
+                // solc as a type error on `FHE.shareT(...)`, never as a
+                // silent ciphertext. Warn and proceed rather than refuse
+                // every contract that inherits from a package.
+                None | Some(Ty::Unknown) if incomplete_inheritance_call(unit, e).is_some() => {
+                    return_exprs.push(e.span);
+                    out.diagnostics.push(
+                        Diagnostic::warning(
+                            codes::SHARED_BOUNDARY_TYPE_MISMATCH,
+                            e.span,
+                            format!(
+                                "this function shares `{}`, but {}; the rewrite assumes the \
+                                 declared type, and solc rejects the output if that is wrong",
+                                ety.solidity_name(),
+                                describe_mismatch(unit, e, recorded)
+                            ),
+                        )
+                        .with_rule(RULE),
+                    );
+                }
                 other => {
                     refused = true;
                     out.diagnostics.push(

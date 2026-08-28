@@ -282,6 +282,8 @@ Several shared inputs of one function receive **independently**, one statement e
 
 On a **bodiless** declaration (an interface member or an abstract function) the expansion generates no local, so the parameter keeps the author's name and only its type changes. That name is ABI-visible: on a published interface it is what integrators read and what named-argument call sites bind to, and a signature-only rewrite must not change it.
 
+FHE2012 is an **error** when the returned expression has a type the checker proved is not the declared one. It is a **warning** when the checker could not prove any type *and* the only obstacle is an inherited surface outside the compilation unit (§1.3). The rewrite takes the encrypted type from the declared return, never from the expression, so a wrong assumption reaches solc as a type error on the generated `share` call rather than as a wrong ciphertext. Refusing every contract that inherits from a package would cost more than the warning does.
+
 **⚠ Draft decision (generated name):** the wire parameter is named `<name>_shared`. If that identifier is already used anywhere in the function's scope, the transpiler MUST reject with FHE1016 rather than rename silently.
 
 #### Shared return — `returns (shared(recipient) eT)`

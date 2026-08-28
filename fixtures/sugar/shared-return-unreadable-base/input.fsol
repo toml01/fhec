@@ -2,6 +2,9 @@
 pragma solidity ^0.8.25;
 
 import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+// The solc gate is off for this case: the base comes from a package the
+// fixture harness does not stage, and `couldBeInherited` deliberately exists
+// only in that unreadable base.
 import { ReentrancyGuardTransient } from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 
 library L {
@@ -18,8 +21,10 @@ contract TClean {
 
 contract TDirty is ReentrancyGuardTransient {
     // An inherited member shadows a file-scope name, so under an unseen base
-    // even a resolvable library call must stay Unknown: resolving it would
-    // also hand the call the §7 branch-legality permission of a builtin.
+    // even a resolvable library call stays Unknown: resolving it would also
+    // hand the call the §7 branch-legality permission of a builtin. The
+    // shared return is still rewritten, because it takes the encrypted type
+    // from the declaration and solc checks the assumption (§2.8).
     function libraryCall(euint64 value) external returns (shared(msg.sender) euint64) {
         return L.pub(value);
     }

@@ -58,6 +58,18 @@ impl Diagnostic {
         }
     }
 
+    /// Creates a warning diagnostic.
+    pub fn warning(code: &'static str, span: Span, message: impl Into<String>) -> Self {
+        Diagnostic {
+            code,
+            severity: Severity::Warning,
+            span,
+            message: message.into(),
+            fixits: Vec::new(),
+            rule: None,
+        }
+    }
+
     /// Attaches the defining spec section.
     pub fn with_rule(mut self, rule: &'static str) -> Self {
         self.rule = Some(rule);
