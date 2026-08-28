@@ -2208,6 +2208,102 @@ fn r1_dedupe_broad_grant_on_stored_local_suppresses_only_allow_this() {
 }
 
 #[test]
+fn r1_broad_grant_window_stops_at_writes_in_nested_statements() {
+    // A sibling statement is a barrier when any nested path can replace the
+    // granted handle. The later store may copy that replacement at runtime.
+    let cases = [
+        ("allowPublic", "        if (p != 0) { ptr = b; }"),
+        ("allowGlobal", "        if (p == 0) {} else { ptr = b; }"),
+        ("allowPublic", "        { { ptr = b; } }"),
+        ("allowGlobal", "        while (p != 0) { ptr = b; break; }"),
+        ("allowPublic", "        do { ptr = b; } while (false);"),
+        (
+            "allowGlobal",
+            "        for (uint256 i = 0; i < 1; ++i) { ptr = b; }",
+        ),
+    ];
+    for (grant, barrier) in cases {
+        let input = format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             {barrier}\n\
+             \x20       a = ptr;"
+        );
+        let expected = format!("{input}\n        FHE.allowThis(a);");
+        golden_body(&input, &expected);
+    }
+}
+
+#[test]
+fn r1_broad_grant_window_stops_at_tuple_component_write() {
+    for grant in ["allowPublic", "allowGlobal"] {
+        let input = format!(
+            "        euint32 ptr = a;\n\
+             \x20       euint32 other = b;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       (ptr, other) = (other, ptr);\n\
+             \x20       a = ptr;"
+        );
+        let expected = format!("{input}\n        FHE.allowThis(a);");
+        golden_body(&input, &expected);
+    }
+}
+
+#[test]
+fn r1_broad_grant_requires_a_trusted_fhe_library_base() {
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = format!(
+            "pragma solidity ^0.8.25;\n\
+             import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+             \n\
+             library FakeAcl {{\n\
+             \x20   function {grant}(euint32) internal {{}}\n\
+             }}\n\
+             \n\
+             contract C {{\n\
+             \x20   euint32 a;\n\
+             \x20   function f() public {{\n\
+             \x20       euint32 ptr = a;\n\
+             \x20       FakeAcl.{grant}(ptr);\n\
+             \x20       a = ptr;\n\
+             \x20   }}\n\
+             }}\n"
+        );
+        let expected = src.replace(
+            "        a = ptr;\n",
+            "        a = ptr;\n        FHE.allowThis(a);\n",
+        );
+        golden(&src, &expected);
+    }
+}
+
+#[test]
+fn r1_dedupe_accepts_broad_grant_method_syntax() {
+    // CoFHE 0.2.0 exposes both calls through global encrypted-type bindings.
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       ptr.{grant}();\n\
+             \x20       a = ptr;"
+        ));
+        golden(&src, &src);
+    }
+}
+
+#[test]
+fn r1_broad_grant_leaves_existing_sender_grant_alone() {
+    for grant in ["allowPublic", "allowGlobal"] {
+        let src = contract(&format!(
+            "        euint32 ptr = a;\n\
+             \x20       FHE.{grant}(ptr);\n\
+             \x20       FHE.allowSender(ptr);\n\
+             \x20       balances[msg.sender] = ptr;"
+        ));
+        golden(&src, &src);
+    }
+}
+
+#[test]
 fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
     let src = contract(
         "        euint32 ptr = a;\n\

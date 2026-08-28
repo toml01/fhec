@@ -21,7 +21,9 @@
 
 use std::cell::RefCell;
 
-use fhec_check::{EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, Severity, SlotKind};
+use fhec_check::{
+    EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, PlainTy, Severity, SlotKind, Ty,
+};
 use fhec_emit::{TempHint, TempNamer};
 use fhec_ir::{EType, FheOp, FilePlan, Patch, Provenance};
 use solar_ast as ast;
@@ -968,26 +970,84 @@ fn local_grant_window<'ast>(
     out
 }
 
-/// Whether a statement is an assignment to (or inc/dec of) `lvalue`.
+/// Whether a statement can assign to, delete, or inc/dec `lvalue` anywhere
+/// in its subtree.
+///
+/// This is deliberately conservative: assembly and parser-recovery nodes are
+/// barriers because proving that they leave the tracked value untouched would
+/// require semantics this pass does not model (spec §1.3).
 fn writes_to<'ast>(ctx: &Ctx<'_, 'ast>, stmt: &'ast ast::Stmt<'ast>, lvalue: &str) -> bool {
-    let ast::StmtKind::Expr(e) = &stmt.kind else {
-        return false;
-    };
-    match &e.kind {
-        ast::ExprKind::Assign(lhs, _, _) => strip_parens(&ctx.snippet(lhs.span)) == lvalue,
-        ast::ExprKind::Unary(op, x)
-            if matches!(
-                op.kind,
-                ast::UnOpKind::PreInc
-                    | ast::UnOpKind::PreDec
-                    | ast::UnOpKind::PostInc
-                    | ast::UnOpKind::PostDec
-            ) =>
-        {
-            strip_parens(&ctx.snippet(x.span)) == lvalue
-        }
-        _ => false,
+    use solar_ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Search<'a, 'ctx, 'ast> {
+        ctx: &'a Ctx<'ctx, 'ast>,
+        lvalue: &'a str,
     }
+
+    impl<'ast> Search<'_, '_, 'ast> {
+        fn lvalue_matches(&self, lhs: &'ast ast::Expr<'ast>) -> bool {
+            if strip_parens(&self.ctx.snippet(lhs.span)) == self.lvalue {
+                return true;
+            }
+            match &lhs.peel_parens().kind {
+                ast::ExprKind::Tuple(items) => items.iter().any(|item| {
+                    item.as_ref()
+                        .unspan()
+                        .is_some_and(|item| self.lvalue_matches(item))
+                }),
+                // Every valid non-tuple Solidity lvalue has one of these
+                // shapes. A different shape is a recovery/unsupported case,
+                // where stopping is the only sound answer.
+                ast::ExprKind::Ident(_)
+                | ast::ExprKind::Member(_, _)
+                | ast::ExprKind::Index(_, _) => false,
+                _ => true,
+            }
+        }
+    }
+
+    impl<'ast> Visit<'ast> for Search<'_, '_, 'ast> {
+        type BreakValue = ();
+
+        fn visit_stmt(&mut self, stmt: &'ast ast::Stmt<'ast>) -> ControlFlow<()> {
+            if matches!(
+                stmt.kind,
+                ast::StmtKind::Assembly(_) | ast::StmtKind::Placeholder
+            ) {
+                return ControlFlow::Break(());
+            }
+            self.walk_stmt(stmt)
+        }
+
+        fn visit_expr(&mut self, e: &'ast ast::Expr<'ast>) -> ControlFlow<()> {
+            let writes = match &e.kind {
+                ast::ExprKind::Assign(lhs, _, _) | ast::ExprKind::Delete(lhs) => {
+                    self.lvalue_matches(lhs)
+                }
+                ast::ExprKind::Unary(op, target)
+                    if matches!(
+                        op.kind,
+                        ast::UnOpKind::PreInc
+                            | ast::UnOpKind::PreDec
+                            | ast::UnOpKind::PostInc
+                            | ast::UnOpKind::PostDec
+                    ) =>
+                {
+                    self.lvalue_matches(target)
+                }
+                ast::ExprKind::Err(_) => true,
+                _ => false,
+            };
+            if writes {
+                ControlFlow::Break(())
+            } else {
+                self.walk_expr(e)
+            }
+        }
+    }
+
+    Search { ctx, lvalue }.visit_stmt(stmt).is_break()
 }
 
 /// Strips one `address(...)` wrapper, then parentheses.
@@ -1028,10 +1088,19 @@ fn acl_call_matches_normalized<'ast>(
         .collect();
     let base_text = strip_parens(&ctx.snippet(base.span)).to_string();
     let account_matches = |t: &str| strip_address_cast(t) == account_key;
-    // Library syntax: FHE.name(handle, account).
-    let lib = arg_texts.len() == 2 && arg_texts[0] == arg0 && account_matches(&arg_texts[1]);
+    // Library syntax: FHE.name(handle, account). The checker only records
+    // `FheLib` after its resolution-based profile-library trust check.
+    let lib = matches!(
+        ctx.checked.types.get(base.span),
+        Some(Ty::Plain(PlainTy::FheLib))
+    ) && arg_texts.len() == 2
+        && arg_texts[0] == arg0
+        && account_matches(&arg_texts[1]);
     // Method syntax: handle.name(account).
-    let method_syn = base_text == arg0 && arg_texts.len() == 1 && account_matches(&arg_texts[0]);
+    let method_syn = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(_)))
+        && base_text == arg0
+        && arg_texts.len() == 1
+        && account_matches(&arg_texts[0]);
     lib || method_syn
 }
 
@@ -1109,8 +1178,12 @@ fn acl_call_matches<'ast>(
         .collect();
     let base_text = strip_parens(&ctx.snippet(base.span)).to_string();
 
-    // Library syntax: FHE.name(handle[, account]) — the base is the library.
-    let lib_match = match (arg_texts.first(), arg1) {
+    // Library syntax: FHE.name(handle[, account]) — the base must have
+    // passed the checker's resolution-based profile-library trust rule.
+    let lib_match = matches!(
+        ctx.checked.types.get(base.span),
+        Some(Ty::Plain(PlainTy::FheLib))
+    ) && match (arg_texts.first(), arg1) {
         (Some(a0), None) => a0 == arg0 && arg_texts.len() == 1,
         (Some(a0), Some(a1)) => {
             a0 == arg0 && arg_texts.get(1).map(String::as_str) == Some(a1) && arg_texts.len() == 2
@@ -1118,7 +1191,8 @@ fn acl_call_matches<'ast>(
         (None, _) => false,
     };
     // Method syntax: handle.name([account]) — the base is the handle.
-    let method_match = base_text == arg0
+    let method_match = matches!(ctx.checked.types.get(base.span), Some(Ty::Encrypted(_)))
+        && base_text == arg0
         && match arg1 {
             None => arg_texts.is_empty(),
             Some(a1) => arg_texts.len() == 1 && arg_texts[0] == a1,
