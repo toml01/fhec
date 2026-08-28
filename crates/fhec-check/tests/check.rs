@@ -3878,6 +3878,17 @@ fn fhe1022_batch_materializer_external_wire_type_is_shadowed() {
 
 /// Item 3: the plain encrypted type name side (`eT.wrap(...)`), not just the
 /// external wire-type side.
+///
+/// `ebool` here is both the state variable's name AND the literal type
+/// written on the `in` parameter itself (`in ebool flag`) — unlike the
+/// `externalEbool` wire-type case above, these two uses cannot be pulled
+/// apart: shadowing the name also shadows the parameter's own declared
+/// type. Since issue #92's fix gave parameter types their owning
+/// contract's scope during signature-level resolution (matching what
+/// function bodies already did), that shadow is now caught right there —
+/// `in` applied to a type that no longer resolves to the real `ebool` is
+/// FHE1010, refused before the function ever registers as a batch-
+/// materializer candidate for the later FHE1022 emit-time scan to reach.
 #[test]
 fn fhe1022_batch_materializer_plain_type_is_shadowed() {
     let src = r#"
@@ -3890,7 +3901,7 @@ fn fhe1022_batch_materializer_plain_type_is_shadowed() {
             function f(in ebool flag, in eaddress owner_) public {}
         }
     "#;
-    assert_eq!(codes_for_source(src), ["FHE1022"]);
+    assert_eq!(codes_for_source(src), ["FHE1010"]);
 }
 
 /// Item 5 (round-3 review): a bodiless multi-`in` declaration never reaches
