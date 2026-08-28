@@ -570,6 +570,30 @@ fn r3_skips_public_library_function_but_still_fires_on_the_host() {
     );
 }
 
+#[test]
+fn r3_library_view_member_still_warns_only() {
+    // A library's `view` member is unlike its state-changing members: Solidity's
+    // library-call protection only reverts a direct `CALL` for a state-changing
+    // function, so a `view` library member stays directly, independently
+    // callable — R3's `view` exception (FHE4002) must fire here exactly as it
+    // would for a non-library function, not the silent `in_library` skip.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         library L {\n\
+         \x20   function peek(euint32 a) public view returns (euint32) {\n\
+         \x20       return a;\n\
+         \x20   }\n\
+         }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(!out.any_patches);
+    assert!(out
+        .lower_diag_codes
+        .iter()
+        .any(|d| d.starts_with("FHE4002")));
+    assert_eq!(out.files[0].1, src);
+}
+
 // ---------------------------------------------------------------------------
 // in-sugar (spec §2.3)
 // ---------------------------------------------------------------------------

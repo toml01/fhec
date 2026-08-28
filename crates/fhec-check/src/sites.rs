@@ -379,10 +379,11 @@ pub struct EncryptedReturn {
     /// Whether the function is `view` (no insertion; warning FHE4002).
     pub is_view: bool,
     /// Whether the function is declared inside a `library`. A library's
-    /// `public`/`external` members run via `DELEGATECALL`, preserving
-    /// `msg.sender` and storage context from the host: there is no external
-    /// caller for R3's grant to serve, so R3 never fires here regardless of
-    /// visibility (spec §8.3).
+    /// state-changing `public`/`external` members run via `DELEGATECALL`,
+    /// preserving `msg.sender` and storage context from the host: there is
+    /// no external caller for R3's grant to serve there. A `view` library
+    /// member is directly, independently callable, so it is not covered by
+    /// this and gets the `is_view` treatment instead (spec §8.3, §8.4).
     pub in_library: bool,
     /// The enclosing function.
     pub function: FunctionId,

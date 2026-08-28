@@ -64,9 +64,13 @@ pub(crate) struct FnChecker<'a, 'ast> {
     pub(crate) is_view: bool,
     pub(crate) is_public_or_external: bool,
     /// Whether this function is declared inside a `library`. A library's
-    /// `public`/`external` members are delegatecall-linked: they share the
-    /// host's `msg.sender` and storage, so R3's "grant the external caller"
-    /// premise never applies here regardless of visibility (spec §8.3).
+    /// state-changing `public`/`external` members are delegatecall-linked:
+    /// they share the host's `msg.sender` and storage, so R3's "grant the
+    /// external caller" premise does not apply there — but a library's
+    /// `view` member IS directly, independently callable (Solidity's
+    /// library-call protection only reverts a direct `CALL` for
+    /// state-changing members), so the `view` exception still applies to it
+    /// first (spec §8.3, §8.4).
     pub(crate) in_library: bool,
     /// Whether the `returns` list carries a §2.8 shared-boundary marker. Such
     /// a function states no R3 fact: a legal shared return grants through
