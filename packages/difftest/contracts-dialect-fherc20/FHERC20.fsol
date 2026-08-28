@@ -331,7 +331,7 @@ contract FHERC20 is IFHERC20, ERC165, ReentrancyGuardTransient {
             // overflow and keep the old supply.
             ebool success;
             if (!FHE.isInitialized(_totalSupply)) {
-                success = FHE.asEbool(true);
+                success = ebool(true);
                 _totalSupply = amount;
             } else {
                 euint64 newSupply = _totalSupply + amount;
