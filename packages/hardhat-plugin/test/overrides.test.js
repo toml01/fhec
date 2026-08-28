@@ -92,6 +92,28 @@ test("rewriteSolidityOverrides moves matching keys in place and reports notices"
   assert.ok(notices.every((n) => n.action === "rewritten"));
 });
 
+test("a .fsol override key is rewritten only after a manifest appears", () => {
+  const overrides = {
+    "contracts/ERC20Confidential/ERC20ConfidentialLib.fsol": { version: "0.8.26" },
+  };
+  const before = rewriteSolidityOverrides(overrides, "contracts", "generated", undefined);
+  assert.deepEqual(before, []);
+  assert.deepEqual(Object.keys(overrides), [
+    "contracts/ERC20Confidential/ERC20ConfidentialLib.fsol",
+  ]);
+
+  const after = rewriteSolidityOverrides(overrides, "contracts", "generated", sampleManifest());
+  assert.deepEqual(after, [
+    {
+      from: "contracts/ERC20Confidential/ERC20ConfidentialLib.fsol",
+      to: "generated/ERC20Confidential/ERC20ConfidentialLib.sol",
+      action: "rewritten",
+    },
+  ]);
+  assert.deepEqual(Object.keys(overrides), ["generated/ERC20Confidential/ERC20ConfidentialLib.sol"]);
+  assert.equal(overrides["generated/ERC20Confidential/ERC20ConfidentialLib.sol"].version, "0.8.26");
+});
+
 test("rewriteSolidityOverrides skips a rewrite that would clobber an existing destination", () => {
   const overrides = {
     "contracts/B.sol": { version: "0.8.26" },
