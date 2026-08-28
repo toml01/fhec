@@ -108,6 +108,10 @@ pub(crate) fn scan<'ast>(
                 );
                 continue;
             }
+            if let Some(span) = modifier_reference(f.ast, name.as_str()) {
+                refuse_modifier_reference(out, span, name.as_str(), &generated, "§2.3");
+                continue;
+            }
             out.sugar_sites.push(InSugarSite {
                 param_span: v.decl.span,
                 params_span: f.ast.header.parameters.span,
@@ -330,6 +334,72 @@ fn bad_position(out: &mut CheckedUnit, span: Span, position: &str) {
             ),
         )
         .with_rule("§2.3"),
+    );
+}
+
+/// The span of the first modifier-invocation argument that names `needle`.
+///
+/// A modifier invocation belongs to the function *header* and is evaluated
+/// before the body opens, but a dialect-managed parameter only exists as
+/// `<name>` from the materializer onwards — in the header the parameter is
+/// the wire name. A reference from a modifier argument would therefore emit
+/// an undeclared identifier (spec §2.3, §2.8).
+pub(crate) fn modifier_reference<'ast>(
+    f: &'ast ast::ItemFunction<'ast>,
+    needle: &str,
+) -> Option<Span> {
+    use ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Search<'x> {
+        needle: &'x str,
+    }
+    impl<'ast> Visit<'ast> for Search<'_> {
+        type BreakValue = Span;
+        fn visit_ident(
+            &mut self,
+            ident: &'ast solar_interface::Ident,
+        ) -> ControlFlow<Self::BreakValue> {
+            if ident.as_str() == self.needle {
+                ControlFlow::Break(ident.span)
+            } else {
+                ControlFlow::Continue(())
+            }
+        }
+    }
+    for m in f.header.modifiers.iter() {
+        // Only the arguments: the modifier's own name cannot shadow a
+        // parameter.
+        if let Some(args) = m.arguments.exprs().next().map(|_| &m.arguments) {
+            for e in args.exprs() {
+                if let ControlFlow::Break(span) = (Search { needle }).visit_expr(e) {
+                    return Some(span);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Emits the "a modifier invocation cannot name this parameter" refusal.
+pub(crate) fn refuse_modifier_reference(
+    out: &mut CheckedUnit,
+    span: Span,
+    name: &str,
+    wire: &str,
+    rule: &'static str,
+) {
+    out.diagnostics.push(
+        Diagnostic::error(
+            codes::SUGAR_NAME_IN_MODIFIER,
+            span,
+            format!(
+                "a modifier invocation cannot name `{name}`: the header declares the \
+                 parameter as `{wire}`, and `{name}` only exists from the start of the \
+                 function body; move the check into the body"
+            ),
+        )
+        .with_rule(rule),
     );
 }
 

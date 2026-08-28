@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE1019",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 477,
+      "end_byte": 483,
+      "start_line": 16,
+      "start_col": 54,
+      "end_line": 16,
+      "end_col": 60
+    },
+    "message": "a modifier invocation cannot name `amount`: the header declares the parameter as `amount_input`, and `amount` only exists from the start of the function body; move the check into the body",
+    "rule": "§2.3"
+  }
+]

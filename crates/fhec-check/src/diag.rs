@@ -91,6 +91,9 @@ pub mod codes {
     pub const PRECONDITION_BAD_POSITION: &str = "FHE1017";
     /// cast-sugar-bad-arity (§2.9).
     pub const CAST_SUGAR_BAD_ARITY: &str = "FHE1018";
+    /// A modifier invocation names a parameter the dialect renames in the
+    /// header (spec §2.3, §2.8).
+    pub const SUGAR_NAME_IN_MODIFIER: &str = "FHE1019";
     /// encrypted-meets-unknown (§3.2).
     pub const ENCRYPTED_MEETS_UNKNOWN: &str = "FHE2001";
     /// incompatible-encrypted-operands (§3.3, §4.1).

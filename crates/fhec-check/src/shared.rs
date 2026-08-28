@@ -274,6 +274,11 @@ fn scan_params<'ast>(
             );
             continue;
         }
+        if let Some(span) = crate::sugar::modifier_reference(f.ast, name.as_str()) {
+            refused = true;
+            crate::sugar::refuse_modifier_reference(out, span, name.as_str(), &generated, RULE);
+            continue;
+        }
         sites.push(SharedInputSite {
             param_span: decl.span,
             ty: ety,

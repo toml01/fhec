@@ -154,6 +154,8 @@ The bound parameter is an ordinary author-declared parameter everywhere else: it
 
 **⚠ Draft decision (data location):** the *appended* proof parameter uses `memory`. `calldata` is not used in v1. A *bound* proof keeps whichever of `memory` or `calldata` the author declared.
 
+A modifier invocation is part of the function *header* and is evaluated before the body opens, but `<name>` only exists from the materialization point onwards. A modifier argument that names an `in` / `in(proof)` / `in shared` parameter would therefore reference an identifier the output does not declare there, so the transpiler MUST refuse with FHE1019 rather than emit it.
+
 **⚠ Draft decision (generated names):** the raw-input parameter is named `<name>_input`, and, in the implicit form, the appended proof parameter is named `inputProof`. If `<name>_input` is already declared anywhere in the function's scope (parameters, locals, contract members referenced unqualified), the transpiler MUST reject with FHE1011 rather than rename silently; the same applies to `inputProof` in the implicit form. The explicit binder introduces **no** new fixed generated name — it reuses the author's own parameter name verbatim — so `inputProof` is not reserved in a bound function and a parameter of that name is the ordinary case there.
 
 **Restrictions.**
@@ -607,6 +609,7 @@ Assigned in this version:
 | FHE1016 | error | shared-boundary-name-collision (§2.8) |
 | FHE1017 | error | precondition-bad-position (§2.7) |
 | FHE1018 | error | cast-sugar-bad-arity (§2.9) |
+| FHE1019 | error | sugar-name-in-modifier (§2.3, §2.8) |
 | FHE1020 | error | duplicate-definition (same name declared twice in one scope) |
 | FHE2001 | error | encrypted-meets-unknown (§3.2) |
 | FHE2002 | error | incompatible-encrypted-operands (e.g. eaddress + euint32) |
