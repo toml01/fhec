@@ -1,0 +1,27 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// The header recipient `msg.sender` resolves to the builtin fine (nothing
+// named `msg` is in scope yet at the header). But the lowerer re-emits the
+// literal text `msg.sender` fresh at every `return`, and a local declared
+// later in the body shadows the builtin in Solidity from its declaration
+// point onward — so a `return` reached after it would read the local
+// instead of the real transaction sender (issue #61 follow-up).
+struct Msg {
+    address sender;
+}
+
+contract BodyLocalShadowsMsg {
+    euint32 a;
+
+    function f(bool c) external returns (shared(msg.sender) euint32) {
+        if (c) {
+            Msg memory msg;
+            msg.sender = address(0);
+            return a;
+        }
+        return a;
+    }
+}

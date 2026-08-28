@@ -46,17 +46,6 @@ contract PassComposition {
 
     // encrypted if/else assigning both arms, no pre-value needed
     function d(ebool cond, euint64 p, euint64 q) public returns (euint64 r) {
-        {
-            ebool __fhe_cond_0 = cond;
-            euint64 __fhe_then_2;
-            {
-                __fhe_then_2 = p;
-            }
-            euint64 __fhe_else_3;
-            {
-                __fhe_else_3 = q;
-            }
-            r = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_else_3);
-        }
+        r = FHE.select(cond, p, q);
     }
 }

@@ -190,8 +190,9 @@ contract FHERC20 is IFHERC20, ERC165, ReentrancyGuardTransient {
     function confidentialTransferFrom(
         address from,
         address to,
-        externalEuint64 encryptedAmount_input
-    , bytes memory inputProof) public nonReentrant returns (sharedEuint64) {
+        externalEuint64 encryptedAmount_input,
+        bytes memory inputProof
+    ) public nonReentrant returns (sharedEuint64) {
         {
             if (!isOperator(from, msg.sender)) revert FHERC20UnauthorizedSpender(from, msg.sender);
         }

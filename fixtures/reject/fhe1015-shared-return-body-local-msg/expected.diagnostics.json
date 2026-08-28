@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE1015",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 740,
+      "end_byte": 743,
+      "start_line": 21,
+      "start_col": 24,
+      "end_line": 21,
+      "end_col": 27
+    },
+    "message": "this function declares a local named `msg`, which shadows the builtin from here onward; the shared return's recipient, `msg.sender`, is re-emitted at every `return` and would then read this declaration instead of the real transaction sender — rename it",
+    "rule": "§2.8"
+  }
+]

@@ -510,6 +510,203 @@ fn sugar_expands_param_and_conversion() {
 }
 
 #[test]
+fn sugar_appends_proof_on_its_own_line_in_a_multiline_param_list() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint64 a;\n\
+         \x20   function transfer(\n\
+         \x20       address to,\n\
+         \x20       in euint64 amount\n\
+         \x20   ) external {\n\
+         \x20       a = amount;\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint64 a;\n\
+         \x20   function transfer(\n\
+         \x20       address to,\n\
+         \x20       externalEuint64 amount_input,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) external {\n\
+         \x20       euint64 amount = FHE.asEuint64(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_appends_proof_after_the_last_param_of_a_multiline_list() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function transfer(\n\
+         \x20       in euint32 amount,\n\
+         \x20       address to\n\
+         \x20   ) external {\n\
+         \x20       a = amount;\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function transfer(\n\
+         \x20       externalEuint32 amount_input,\n\
+         \x20       address to,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) external {\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20       to;\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_does_not_put_the_comma_inside_a_trailing_line_comment() {
+    // A `//` comment runs to end-of-line. Attaching `,` to that text would
+    // comment the comma out and leave the proof parameter unseparated.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(\n\
+         \x20       in euint32 amount // note\n\
+         \x20   ) external {\n\
+         \x20       a = amount;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(\n\
+         \x20       externalEuint32 amount_input // note\n\
+         \x20       ,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) external {\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_multiline_trailing_comment_with_non_ascii_does_not_panic() {
+    // `line_indent` slices at `at`. Subtracting 1 from the offset after a
+    // trailing `€` lands inside that UTF-8 character and panics.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(\n\
+         \x20       in euint32 amount // note €\n\
+         \x20   ) external {\n\
+         \x20       a = amount;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   function setA(\n\
+         \x20       externalEuint32 amount_input // note €\n\
+         \x20       ,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) external {\n\
+         \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
+         \x20       a = amount;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_appends_proof_on_its_own_line_in_a_multiline_constructor() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   constructor(\n\
+         \x20       in euint32 seed\n\
+         \x20   ) {\n\
+         \x20       a = seed;\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   euint32 a;\n\
+         \x20   constructor(\n\
+         \x20       externalEuint32 seed_input,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) {\n\
+         \x20       euint32 seed = FHE.asEuint32(seed_input, inputProof);\n\
+         \x20       a = seed;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn sugar_appends_proof_on_its_own_line_in_a_multiline_bodiless_declaration() {
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface I {\n\
+         \x20   function deposit(\n\
+         \x20       in euint32 amount\n\
+         \x20   ) external;\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         interface I {\n\
+         \x20   function deposit(\n\
+         \x20       externalEuint32 amount,\n\
+         \x20       bytes memory inputProof\n\
+         \x20   ) external;\n\
+         }\n",
+    );
+}
+
+#[test]
 fn sugar_binder_uses_the_bound_proof_and_appends_nothing() {
     golden(
         "pragma solidity ^0.8.25;\n\
@@ -1159,17 +1356,7 @@ fn if_else_simple() {
          \x20           a = b;\n\
          \x20       }",
         "        {\n\
-         \x20           ebool __fhe_cond_0 = eb;\n\
-         \x20           euint32 __fhe_pre_1 = a;\n\
-         \x20           euint32 __fhe_then_2;\n\
-         \x20           {\n\
-         \x20               __fhe_then_2 = FHE.add(__fhe_pre_1, FHE.asEuint32(1));\n\
-         \x20           }\n\
-         \x20           euint32 __fhe_else_3;\n\
-         \x20           {\n\
-         \x20               __fhe_else_3 = b;\n\
-         \x20           }\n\
-         \x20           a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_else_3);\n\
+         \x20           a = FHE.select(eb, FHE.add(a, FHE.asEuint32(1)), b);\n\
          \x20           FHE.allowThis(a);\n\
          \x20           FHE.allowSender(a);\n\
          \x20       }",
@@ -1207,18 +1394,7 @@ fn if_else_without_an_incoming_value_omits_pre() {
          \x20       }\n\
          \x20       a = x;",
         "        euint32 x;\n\
-         \x20       {\n\
-         \x20           ebool __fhe_cond_0 = eb;\n\
-         \x20           euint32 __fhe_then_2;\n\
-         \x20           {\n\
-         \x20               __fhe_then_2 = a;\n\
-         \x20           }\n\
-         \x20           euint32 __fhe_else_3;\n\
-         \x20           {\n\
-         \x20               __fhe_else_3 = b;\n\
-         \x20           }\n\
-         \x20           x = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_else_3);\n\
-         \x20       }\n\
+         \x20       x = FHE.select(eb, a, b);\n\
          \x20       a = x;\n\
          \x20       FHE.allowThis(a);\n\
          \x20       FHE.allowSender(a);",
@@ -1285,6 +1461,68 @@ fn if_distinct_literal_keys_are_distinct_locations() {
          \x20           byId[2] = FHE.select(__fhe_cond_0, __fhe_pre_2, __fhe_else_4);\n\
          \x20           FHE.allowThis(byId[2]);\n\
          \x20           FHE.allowSender(byId[2]);\n\
+         \x20       }",
+    );
+}
+
+#[test]
+fn if_else_single_assign_matches_ternary() {
+    // Issue #73: the trySub shape (plaintext early return, then one
+    // assignment per arm of the same target) must lower like `?:`.
+    golden(
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   function trySub(euint64 a, euint64 b) internal returns (ebool success, euint64 res) {\n\
+         \x20       if (!FHE.isInitialized(b)) return (ebool(true), a);\n\
+         \x20       euint64 difference = a - b;\n\
+         \x20       success = difference <= a;\n\
+         \x20       if (success) {\n\
+         \x20           res = difference;\n\
+         \x20       } else {\n\
+         \x20           res = euint64(0);\n\
+         \x20       }\n\
+         \x20   }\n\
+         }\n",
+        "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         \n\
+         contract C {\n\
+         \x20   function trySub(euint64 a, euint64 b) internal returns (ebool success, euint64 res) {\n\
+         \x20       if (!FHE.isInitialized(b)) return (FHE.asEbool(true), a);\n\
+         \x20       euint64 difference = FHE.sub(a, b);\n\
+         \x20       success = FHE.lte(difference, a);\n\
+         \x20       res = FHE.select(success, difference, FHE.asEuint64(0));\n\
+         \x20   }\n\
+         }\n",
+    );
+}
+
+#[test]
+fn if_else_multi_write_keeps_temps() {
+    golden_body(
+        "        if (eb) {\n\
+         \x20           a = b;\n\
+         \x20           a = a + 1;\n\
+         \x20       } else {\n\
+         \x20           a = b;\n\
+         \x20       }",
+        "        {\n\
+         \x20           ebool __fhe_cond_0 = eb;\n\
+         \x20           euint32 __fhe_then_2;\n\
+         \x20           euint32 __fhe_then_3;\n\
+         \x20           {\n\
+         \x20               __fhe_then_2 = b;\n\
+         \x20               __fhe_then_3 = FHE.add(__fhe_then_2, FHE.asEuint32(1));\n\
+         \x20           }\n\
+         \x20           euint32 __fhe_else_4;\n\
+         \x20           {\n\
+         \x20               __fhe_else_4 = b;\n\
+         \x20           }\n\
+         \x20           a = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_else_4);\n\
+         \x20           FHE.allowThis(a);\n\
+         \x20           FHE.allowSender(a);\n\
          \x20       }",
     );
 }

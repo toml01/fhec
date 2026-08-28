@@ -323,17 +323,52 @@ fn expand_function_sugar(
         ));
     }
 
-    // 2. The implicit form appends one shared proof parameter before the
-    //    list's closing `)`. The explicit binder names a parameter the author
-    //    already declared, which keeps its position, name, and data location,
-    //    so nothing is appended and the ABI gains no extra proof.
+    // 2. The implicit form appends one shared proof parameter at the end of
+    //    the list. A single-line list keeps `, bytes memory inputProof`
+    //    immediately before `)`. A multiline list (any newline inside the
+    //    parens) attaches the comma to the last existing parameter and puts
+    //    the new one on its own line at that parameter's indentation, so `)`
+    //    stays on its original line. A trailing `//` comment on that
+    //    parameter would swallow the comma, so the insert moves past the
+    //    comment's newline in that case. The explicit binder names a
+    //    parameter the author already declared, which keeps its position,
+    //    name, and data location, so nothing is appended and the ABI gains
+    //    no extra proof.
     let file_text = ctx.text(first.file);
     if first.proof.is_none() {
         let params_range = ctx.range(first.params_span);
         debug_assert_eq!(&file_text[params_range.end - 1..params_range.end], ")");
+        let proof_param = ctx.profile.input_proof_param();
+        let list = &file_text[params_range.start..params_range.end];
+        let (at, inserted) = if list.contains('\n') {
+            let at = trailing_ws_start(file_text, params_range.start, params_range.end - 1);
+            // `at` is already a char boundary (ASCII whitespace walk). Do not
+            // subtract 1: that can land inside a trailing multi-byte UTF-8
+            // character (e.g. a `€` in a `//` comment) and panic in
+            // `line_indent`. The indent of the line that contains `at` is
+            // the last parameter's indent in both the ASCII and UTF-8 cases.
+            let indent = ctx.line_indent(first.file, at);
+            let nl = if list.contains("\r\n") { "\r\n" } else { "\n" };
+            if trailing_is_line_comment(file_text, at) {
+                // A `//` comment runs through the rest of the line, so a
+                // comma at `at` would be comment text. Put the comma and
+                // the proof parameter after the newline that ends it.
+                match file_text[at..params_range.end - 1].find('\n') {
+                    Some(i) => (
+                        at + i + 1,
+                        format!("{indent},{nl}{indent}{proof_param}{nl}"),
+                    ),
+                    None => (params_range.end - 1, format!(", {proof_param}")),
+                }
+            } else {
+                (at, format!(",{nl}{indent}{proof_param}"))
+            }
+        } else {
+            (params_range.end - 1, format!(", {proof_param}"))
+        };
         plan.push(Patch::insert(
-            params_range.end - 1,
-            format!(", {}", ctx.profile.input_proof_param()),
+            at,
+            inserted,
             Provenance::new("§2.3 in-sugar-proof-param", ctx.range(first.params_span)),
         ));
     }
@@ -597,6 +632,39 @@ fn expand_shared_returns(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan
         }
     }
     Ok(())
+}
+
+/// Byte offset of the first trailing ASCII whitespace before `close`, or
+/// `close` itself when the bytes immediately before it are not whitespace.
+///
+/// Used to attach a comma to the last existing parameter of a multiline
+/// list: the insert sits after that parameter (and after a trailing block
+/// comment) so the original newline and closing `)` stay put. A trailing
+/// `//` / `///` line comment is not safe to attach to — everything from
+/// `//` to end-of-line is comment text, so the comma would be swallowed.
+/// [`trailing_is_line_comment`] detects that shape and the insert moves
+/// past the comment's newline instead.
+fn trailing_ws_start(text: &str, open: usize, close: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut i = close;
+    while i > open {
+        match bytes[i - 1] {
+            b' ' | b'\t' | b'\n' | b'\r' => i -= 1,
+            _ => break,
+        }
+    }
+    i
+}
+
+/// Whether the last non-whitespace before `at` sits on a `//` / `///` line
+/// comment (`at` is a [`trailing_ws_start`] result).
+///
+/// A `//` anywhere on that line prefix is treated as a line comment.
+/// Over-approximation (`//` inside a block comment, or `http://` in one)
+/// still yields valid Solidity; under-approximation would not.
+fn trailing_is_line_comment(text: &str, at: usize) -> bool {
+    let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+    text[line_start..at].contains("//")
 }
 
 /// The indentation for a statement inserted at the start of a body block.

@@ -1,0 +1,22 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A parameter named `msg` shadows the Solidity builtin. The recipient
+// `msg.sender` must be refused here even though its *spelling* matches the
+// one recipient this MVP accepts: the identifier resolves to the shadowing
+// parameter, not to the builtin, so `msg.sender` in the generated Solidity
+// would read a caller-controlled struct field instead of the transaction
+// sender (issue #61).
+struct Msg {
+    address sender;
+}
+
+contract ShadowMsg {
+    euint32 a;
+
+    function f(Msg memory msg) external returns (shared(msg.sender) euint32) {
+        return a;
+    }
+}

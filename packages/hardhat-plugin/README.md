@@ -12,6 +12,14 @@ this package does not bootstrap mocks.
 
 ## Install
 
+These packages are not on the npm registry yet. Do not run
+`pnpm add -D @fhec/hardhat-plugin` from a project outside this monorepo —
+that command fails until the first publish (see
+[`RELEASING.md`](../../RELEASING.md)). Use [Local checkout](#local-checkout)
+until then.
+
+After publish:
+
 ```sh
 npm install --save-dev @fhec/hardhat-plugin
 # or
@@ -150,12 +158,22 @@ registered.
 
 These packages are not on the npm registry yet. `pnpm add -D
 @fhec/hardhat-plugin` therefore cannot work from a project outside this
-monorepo: the plugin depends on `fhec` via `workspace:^0.1.0`, and the
-`fhec` wrapper looks for `target/{release,debug}/fhec` relative to the
-cargo checkout.
+monorepo: the plugin depends on `fhec` via `workspace:^0.1.0` (pnpm rewrites
+that to `^0.1.0` only on publish), and a `file:` copy of the wrapper cannot
+see this checkout's `target/{release,debug}/fhec`.
 
 Until the first publish (see [`RELEASING.md`](../../RELEASING.md)), wire a
 Hardhat 2 project to this checkout as follows.
+
+In this checkout, build the plugin and a native binary first. `dist/` is
+gitignored, and a `file:` install only packs `files: ["dist"]`:
+
+```sh
+pnpm --filter @fhec/hardhat-plugin run build
+cargo build --release -p fhec-cli
+```
+
+Then apply **both** of these workarounds. Neither is enough on its own.
 
 1. Add the plugin as a `file:` dependency:
 
@@ -163,8 +181,9 @@ Hardhat 2 project to this checkout as follows.
    pnpm add -D file:/abs/path/to/fhec/packages/hardhat-plugin
    ```
 
-2. pnpm materialises that `file:` dependency in its store, so `fhec@workspace:`
-   is not visible. Override it to the wrapper package:
+2. pnpm materialises that `file:` dependency in its store, so
+   `fhec@workspace:^0.1.0` is not visible. Override it to the wrapper
+   package:
 
    ```json
    {
@@ -181,9 +200,16 @@ Hardhat 2 project to this checkout as follows.
    checkout after the store copy. Point it at a binary you built:
 
    ```sh
-   cargo build --release -p fhec-cli
    export FHEC_BINARY_PATH=/abs/path/to/fhec/target/release/fhec
    ```
 
-Both the override and `FHEC_BINARY_PATH` are required. Neither is enough
-on its own.
+The override and `FHEC_BINARY_PATH` are both required for a `file:` install.
+
+Alternatively, if this checkout already has `pnpm install` and a native
+binary, `link:` the plugin instead. `link:` keeps `resolve.js` in this
+checkout, so the cargo fallback (or a staged platform package) works and
+you do not need the override or `FHEC_BINARY_PATH`:
+
+```sh
+pnpm add -D link:/abs/path/to/fhec/packages/hardhat-plugin
+```

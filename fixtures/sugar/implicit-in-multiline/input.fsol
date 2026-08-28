@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract SugarImplicitInMultiline {
+    euint64 a;
+
+    function confidentialTransfer(
+        address to,
+        in euint64 amount
+    ) external {
+        a = amount;
+        to;
+    }
+}

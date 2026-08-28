@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+contract SugarImplicitInTrailingLineComment {
+    euint32 a;
+
+    function setAmount(
+        in euint32 amount // note
+    ) external {
+        a = amount;
+    }
+
+    function setOther(
+        in euint32 amount // note €
+    ) external {
+        a = amount;
+    }
+}
