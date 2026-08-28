@@ -522,13 +522,17 @@ fn rule_r3<'ast>(
     if !r.is_public_or_external {
         return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
-    if r.is_view {
+    if r.is_view_or_pure {
+        // Neither a `view` nor a `pure` function can make the external call
+        // `allowTransient` requires (spec §8.4) — inserting it would not
+        // compile, so both get the same warn-only treatment rather than a
+        // guessed grant.
         diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4002",
             severity: Severity::Warning,
             span: r.stmt_span,
-            message: "a `view` function cannot grant ACL access to its encrypted return value; \
-                      the caller must have been granted access elsewhere"
+            message: "a `view` or `pure` function cannot grant ACL access to its encrypted \
+                      return value; the caller must have been granted access elsewhere"
                 .to_string(),
             fixits: Vec::new(),
             rule: Some("§8.4"),
@@ -545,12 +549,12 @@ fn rule_r3<'ast>(
         // `shared(...)` return), so inserting a grant here would be
         // redundant — and would move the bytecode of an address-linked
         // library that may be pinned for reproducible deployment (spec
-        // §8.3). This does not apply to a `view` member (handled above):
-        // Solidity's library-call protection only reverts a direct `CALL`
-        // for a state-changing member, so a `view` library function is
-        // directly callable by an arbitrary external caller with the real
-        // transaction sender as `msg.sender`, the same as any other `view`
-        // function.
+        // §8.3). This does not apply to a `view`/`pure` member (handled
+        // above): Solidity's library-call protection only reverts a direct
+        // `CALL` for a state-changing member, so a `view`/`pure` library
+        // function is directly callable by an arbitrary external caller
+        // with the real transaction sender as `msg.sender`, the same as any
+        // other `view`/`pure` function.
         return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
 

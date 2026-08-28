@@ -41,7 +41,7 @@
       "end_line": 28,
       "end_col": 22
     },
-    "message": "a `view` function cannot grant ACL access to its encrypted return value; the caller must have been granted access elsewhere",
+    "message": "a `view` or `pure` function cannot grant ACL access to its encrypted return value; the caller must have been granted access elsewhere",
     "rule": "§8.4"
   },
   {

@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE4002",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 407,
+      "end_byte": 416,
+      "start_line": 11,
+      "start_col": 9,
+      "end_line": 11,
+      "end_col": 18
+    },
+    "message": "a `view` or `pure` function cannot grant ACL access to its encrypted return value; the caller must have been granted access elsewhere",
+    "rule": "§8.4"
+  }
+]
