@@ -125,7 +125,16 @@ test("translateFactoryOptionsArg does not treat a Signer as FactoryOptions", () 
 });
 
 function fakeEthers(recorder) {
+  function Contract() {}
+  Contract.from = () => "contract-from";
+  function Wallet() {}
+  Wallet.createRandom = () => "random-wallet";
+  function Interface() {}
+  Interface.from = () => "interface-from";
   return {
+    Contract,
+    Wallet,
+    Interface,
     getContractFactory: async (...args) => {
       recorder.push(["getContractFactory", args]);
       return { name: "factory" };
@@ -144,6 +153,59 @@ function fakeEthers(recorder) {
     },
   };
 }
+
+function requireHardhatEthersHelpers() {
+  const roots = [
+    path.resolve(__dirname, "../../difftest"),
+    path.resolve(__dirname, ".."),
+    path.resolve(__dirname, "../../.."),
+  ];
+  let lastErr;
+  for (const root of roots) {
+    try {
+      return require(
+        require.resolve("@nomicfoundation/hardhat-ethers/internal/helpers", { paths: [root] }),
+      );
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+function linkedUserArtifact() {
+  return {
+    contractName: "User",
+    sourceName: "generated/Path/User.sol",
+    abi: [],
+    bytecode: "0x00" + "00".repeat(20) + "ff",
+    deployedBytecode: "0x",
+    linkReferences: {
+      "generated/Path/Lib.sol": {
+        Lib: [{ start: 1, length: 20 }],
+      },
+    },
+    deployedLinkReferences: {},
+  };
+}
+
+function pathLibManifest() {
+  return {
+    tool: "fhec",
+    version: "0.0.0",
+    files: [
+      {
+        output: "Path/Lib.sol",
+        source: "Path/Lib.fsol",
+        no_op: false,
+        mappings: [],
+      },
+    ],
+  };
+}
+
+const PATH_FSOL_FQN = "contracts/Path/Lib.fsol:Lib";
+const PATH_GENERATED_FQN = "generated/Path/Lib.sol:Lib";
 
 function makeHre({ sourcesDir, enabled = true, ethers }) {
   return {
@@ -308,6 +370,189 @@ test("with no manifest present, libraries keys pass through unchanged", async ()
       "MyToken",
       { libraries: { [FSOL_FQN]: LIB_ADDRESS } },
     ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("FactoryOptions with signer and libraries together is rewritten", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, sampleManifest());
+    const recorder = [];
+    const hre = makeHre({ sourcesDir: dir, ethers: fakeEthers(recorder) });
+    installLibrariesTranslation(hre);
+    const signer = { provider: {}, getAddress: async () => LIB_ADDRESS };
+    await hre.ethers.getContractFactory("MyToken", {
+      signer,
+      libraries: { [FSOL_FQN]: LIB_ADDRESS },
+    });
+    assert.deepEqual(recorder[0][1], [
+      "MyToken",
+      { signer, libraries: { [GENERATED_FQN]: LIB_ADDRESS } },
+    ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("class constructors on hre.ethers are not bound", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    const original = fakeEthers([]);
+    const hre = makeHre({ sourcesDir: dir, ethers: original });
+    installLibrariesTranslation(hre);
+    assert.equal(hre.ethers.Contract, original.Contract);
+    assert.equal(hre.ethers.Wallet, original.Wallet);
+    assert.equal(hre.ethers.Interface, original.Interface);
+    assert.equal(hre.ethers.Contract, hre.ethers.Contract);
+    assert.equal(hre.ethers.Wallet.createRandom(), "random-wallet");
+    assert.equal(hre.ethers.Interface.from(), "interface-from");
+    assert.equal(hre.ethers.Contract.from(), "contract-from");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("wrapping ethers does not trip a lazyObject has/get trap", () => {
+  const { lazyObject } = require("hardhat/plugins");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    let constructed = 0;
+    const inner = fakeEthers([]);
+    const lazy = lazyObject(() => {
+      constructed += 1;
+      return inner;
+    });
+    const hre = makeHre({ sourcesDir: dir, ethers: lazy });
+    installLibrariesTranslation(hre);
+    assert.equal(constructed, 0);
+    assert.equal(hre.ethers.Wallet.createRandom(), "random-wallet");
+    assert.equal(constructed, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("getContractFactoryFromArtifact does not rewrite the artifact argument", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, sampleManifest());
+    const recorder = [];
+    const hre = makeHre({ sourcesDir: dir, ethers: fakeEthers(recorder) });
+    installLibrariesTranslation(hre);
+    const artifact = { contractName: "MyToken", libraries: { [FSOL_FQN]: LIB_ADDRESS } };
+    await hre.ethers.getContractFactoryFromArtifact(artifact, {
+      libraries: { [FSOL_FQN]: LIB_ADDRESS },
+    });
+    assert.equal(recorder[0][1][0], artifact);
+    assert.deepEqual(recorder[0][1][0].libraries, { [FSOL_FQN]: LIB_ADDRESS });
+    assert.deepEqual(recorder[0][1][1], { libraries: { [GENERATED_FQN]: LIB_ADDRESS } });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("deployContract does not rewrite constructor args that look like a libraries map", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, sampleManifest());
+    const recorder = [];
+    const hre = makeHre({ sourcesDir: dir, ethers: fakeEthers(recorder) });
+    installLibrariesTranslation(hre);
+    const ctorArg = { libraries: { [FSOL_FQN]: LIB_ADDRESS } };
+    await hre.ethers.deployContract("MyToken", [ctorArg]);
+    assert.equal(recorder[0][1][1][0], ctorArg);
+    assert.deepEqual(ctorArg, { libraries: { [FSOL_FQN]: LIB_ADDRESS } });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("getContractFactory ABI form does not rewrite a bytecode-slot object", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, sampleManifest());
+    const recorder = [];
+    const hre = makeHre({ sourcesDir: dir, ethers: fakeEthers(recorder) });
+    installLibrariesTranslation(hre);
+    const abi = [{ type: "constructor", inputs: [] }];
+    const bytecodeOrOptions = { libraries: { [FSOL_FQN]: LIB_ADDRESS } };
+    await hre.ethers.getContractFactory(abi, bytecodeOrOptions);
+    assert.equal(recorder[0][1][0], abi);
+    assert.equal(recorder[0][1][1], bytecodeOrOptions);
+    assert.deepEqual(bytecodeOrOptions, { libraries: { [FSOL_FQN]: LIB_ADDRESS } });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("deployContract options slot is rewritten when constructor args are present", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, sampleManifest());
+    const recorder = [];
+    const hre = makeHre({ sourcesDir: dir, ethers: fakeEthers(recorder) });
+    installLibrariesTranslation(hre);
+    await hre.ethers.deployContract("MyToken", ["arg0"], {
+      libraries: { [FSOL_FQN]: LIB_ADDRESS },
+    });
+    assert.deepEqual(recorder[0][1], [
+      "MyToken",
+      ["arg0"],
+      { libraries: { [GENERATED_FQN]: LIB_ADDRESS } },
+    ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("hardhat-ethers linking accepts a translated .fsol libraries key", async () => {
+  const helpers = requireHardhatEthersHelpers();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, pathLibManifest());
+    const artifact = linkedUserArtifact();
+    const signer = { provider: {} };
+    const innerHre = {
+      artifacts: { readArtifact: async () => artifact },
+      ethers: { getSigners: async () => [signer] },
+    };
+
+    await assert.rejects(
+      () =>
+        helpers.getContractFactoryFromArtifact(innerHre, artifact, {
+          libraries: { [PATH_FSOL_FQN]: LIB_ADDRESS },
+          signer,
+        }),
+      (err) => /which is not one of its libraries/.test(String(err && err.message)),
+    );
+
+    const ethersObj = {
+      getContractFactory: (name, opts) => helpers.getContractFactory(innerHre, name, opts),
+      getContractFactoryFromArtifact: (art, opts) =>
+        helpers.getContractFactoryFromArtifact(innerHre, art, opts),
+    };
+    const hre = makeHre({ sourcesDir: dir, ethers: ethersObj });
+    installLibrariesTranslation(hre);
+
+    const fromArtifact = await hre.ethers.getContractFactoryFromArtifact(artifact, {
+      libraries: { [PATH_FSOL_FQN]: LIB_ADDRESS },
+      signer,
+    });
+    assert.match(fromArtifact.bytecode, /11111111/);
+
+    const fromName = await hre.ethers.getContractFactory("User", {
+      libraries: { [PATH_FSOL_FQN]: LIB_ADDRESS },
+      signer,
+    });
+    assert.match(fromName.bytecode, /11111111/);
+
+    const fromGenerated = await hre.ethers.getContractFactory("User", {
+      libraries: { [PATH_GENERATED_FQN]: LIB_ADDRESS },
+      signer,
+    });
+    assert.match(fromGenerated.bytecode, /11111111/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

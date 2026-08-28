@@ -154,6 +154,15 @@ test("formatOverrideWarning names each rewritten key and the generated form", ()
   assert.match(text, /getContractFactory/);
 });
 
+function packageRoot(name, fromRoot) {
+  const resolved = require.resolve(name, { paths: [fromRoot] });
+  let dir = path.dirname(resolved);
+  while (!fs.existsSync(path.join(dir, "package.json")) && dir !== path.dirname(dir)) {
+    dir = path.dirname(dir);
+  }
+  return dir;
+}
+
 function linkLocalHardhat(dir) {
   const hardhatDir = path.dirname(
     require.resolve("hardhat/package.json", { paths: [pluginRoot] }),
@@ -161,6 +170,51 @@ function linkLocalHardhat(dir) {
   const nm = path.join(dir, "node_modules");
   fs.mkdirSync(nm, { recursive: true });
   fs.symlinkSync(hardhatDir, path.join(nm, "hardhat"));
+}
+
+function linkLocalHardhatEthers(dir) {
+  const searchRoots = [
+    path.resolve(pluginRoot, "../difftest"),
+    pluginRoot,
+    path.resolve(pluginRoot, "../.."),
+  ];
+  let lastErr;
+  for (const root of searchRoots) {
+    try {
+      const pkgDir = packageRoot("@nomicfoundation/hardhat-ethers", root);
+      const dest = path.join(dir, "node_modules", "@nomicfoundation", "hardhat-ethers");
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.symlinkSync(pkgDir, dest);
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+function writeMinimalConfig(dir, requires) {
+  fs.writeFileSync(
+    path.join(dir, "fhec.toml"),
+    `[project]\nsrc = "contracts"\nout = "generated"\n`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "hardhat.config.js"),
+    `'use strict';
+${requires}
+module.exports = {
+  solidity: { version: "0.8.28", settings: { evmVersion: "cancun" } },
+};
+`,
+  );
+}
+
+function spawnHreProbe(dir, script) {
+  return spawnSync(process.execPath, ["-e", script], {
+    cwd: dir,
+    encoding: "utf8",
+    env: { ...process.env, HARDHAT_DISABLE_TELEMETRY: "true" },
+  });
 }
 
 test("plugin load rewrites solidity.overrides and warns", () => {
@@ -230,6 +284,223 @@ module.exports = {
       /"contracts\/Pin\.sol" -> "generated\/Pin\.sol"/,
       `expected rewrite warning\n${result.stderr}`,
     );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("hre.ethers constructors stay unbound when hardhat-ethers loads after this plugin", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-eth-after-"));
+  try {
+    linkLocalHardhat(dir);
+    linkLocalHardhatEthers(dir);
+    writeMinimalConfig(
+      dir,
+      `require(${JSON.stringify(pluginEntry)});
+require("@nomicfoundation/hardhat-ethers");`,
+    );
+    const result = spawnHreProbe(
+      dir,
+      `const hre = require("hardhat");
+       const C1 = hre.ethers.Contract;
+       console.log("FHEC_ETHERS_WRAP:" + JSON.stringify({
+         present: "ethers" in hre,
+         same: C1 === hre.ethers.Contract,
+         hasFrom: typeof hre.ethers.Interface.from === "function",
+         hasCreateRandom: typeof hre.ethers.Wallet.createRandom === "function",
+       }));`,
+    );
+    assert.equal(
+      result.status,
+      0,
+      `hardhat load failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const jsonLine = result.stdout
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("FHEC_ETHERS_WRAP:"));
+    assert.ok(jsonLine, `missing FHEC_ETHERS_WRAP line\nstdout:\n${result.stdout}`);
+    const payload = JSON.parse(jsonLine.slice("FHEC_ETHERS_WRAP:".length));
+    assert.equal(payload.present, true);
+    assert.equal(payload.same, true);
+    assert.equal(payload.hasFrom, true);
+    assert.equal(payload.hasCreateRandom, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("hre.ethers constructors stay unbound when hardhat-ethers loads before this plugin", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-eth-before-"));
+  try {
+    linkLocalHardhat(dir);
+    linkLocalHardhatEthers(dir);
+    writeMinimalConfig(
+      dir,
+      `require("@nomicfoundation/hardhat-ethers");
+require(${JSON.stringify(pluginEntry)});`,
+    );
+    const result = spawnHreProbe(
+      dir,
+      `const hre = require("hardhat");
+       const C1 = hre.ethers.Contract;
+       console.log("FHEC_ETHERS_WRAP:" + JSON.stringify({
+         present: "ethers" in hre,
+         same: C1 === hre.ethers.Contract,
+         hasFrom: typeof hre.ethers.Interface.from === "function",
+         hasCreateRandom: typeof hre.ethers.Wallet.createRandom === "function",
+       }));`,
+    );
+    assert.equal(
+      result.status,
+      0,
+      `hardhat load failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const jsonLine = result.stdout
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("FHEC_ETHERS_WRAP:"));
+    assert.ok(jsonLine, `missing FHEC_ETHERS_WRAP line\nstdout:\n${result.stdout}`);
+    const payload = JSON.parse(jsonLine.slice("FHEC_ETHERS_WRAP:".length));
+    assert.equal(payload.present, true);
+    assert.equal(payload.same, true);
+    assert.equal(payload.hasFrom, true);
+    assert.equal(payload.hasCreateRandom, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("'ethers' in hre is false when hardhat-ethers is not installed", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-no-ethers-"));
+  try {
+    linkLocalHardhat(dir);
+    fs.writeFileSync(
+      path.join(dir, "fhec.toml"),
+      `[project]\nsrc = "contracts"\nout = "generated"\n`,
+    );
+    fs.writeFileSync(
+      path.join(dir, "hardhat.config.js"),
+      `'use strict';
+require(${JSON.stringify(pluginEntry)});
+module.exports = {
+  solidity: { version: "0.8.28", settings: { evmVersion: "cancun" } },
+};
+`,
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `const hre = require("hardhat");
+         console.log("FHEC_ETHERS_IN_HRE:" + JSON.stringify({
+           present: "ethers" in hre,
+           own: Object.prototype.hasOwnProperty.call(hre, "ethers"),
+         }));`,
+      ],
+      {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...process.env, HARDHAT_DISABLE_TELEMETRY: "true" },
+      },
+    );
+    assert.equal(
+      result.status,
+      0,
+      `hardhat load failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const jsonLine = result.stdout
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("FHEC_ETHERS_IN_HRE:"));
+    assert.ok(jsonLine, `missing FHEC_ETHERS_IN_HRE line\nstdout:\n${result.stdout}`);
+    const payload = JSON.parse(jsonLine.slice("FHEC_ETHERS_IN_HRE:".length));
+    assert.equal(payload.present, false);
+    assert.equal(payload.own, false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a .fsol solidity.overrides key on a clean tree is rewritten after the manifest appears", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-fsol-ov-"));
+  try {
+    linkLocalHardhat(dir);
+    fs.writeFileSync(
+      path.join(dir, "fhec.toml"),
+      `[project]\nsrc = "contracts"\nout = "generated"\n`,
+    );
+    fs.writeFileSync(
+      path.join(dir, "hardhat.config.js"),
+      `'use strict';
+require(${JSON.stringify(pluginEntry)});
+module.exports = {
+  solidity: {
+    compilers: [
+      { version: "0.8.28", settings: { evmVersion: "cancun" } },
+    ],
+    overrides: {
+      "contracts/Pin.fsol": {
+        version: "0.8.26",
+        settings: { optimizer: { enabled: true, runs: 1 }, evmVersion: "cancun" },
+      },
+    },
+  },
+};
+`,
+    );
+    const overridesJs = path.join(pluginRoot, "dist", "overrides.js");
+    const remapJs = path.join(pluginRoot, "dist", "remap.js");
+    const result = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `const fs = require("node:fs");
+         const path = require("node:path");
+         const hre = require("hardhat");
+         const { rewriteSolidityOverrides } = require(${JSON.stringify(overridesJs)});
+         const { loadManifest } = require(${JSON.stringify(remapJs)});
+         const atLoad = Object.keys(hre.config.solidity.overrides);
+         const sources = hre.config.paths.sources;
+         fs.mkdirSync(path.join(sources, ".fhec"), { recursive: true });
+         fs.writeFileSync(
+           path.join(sources, ".fhec", "manifest.json"),
+           JSON.stringify({
+             tool: "fhec",
+             version: "0.0.0",
+             files: [{ output: "Pin.sol", source: "Pin.fsol", no_op: false, mappings: [] }],
+           }),
+         );
+         rewriteSolidityOverrides(
+           hre.config.solidity.overrides,
+           hre.config.fhec.srcDir,
+           hre.config.fhec.outDir,
+           loadManifest(sources),
+         );
+         console.log("FHEC_OVERRIDES_JSON:" + JSON.stringify({
+           atLoad,
+           afterBuild: Object.keys(hre.config.solidity.overrides),
+           pinVersion: hre.config.solidity.overrides["generated/Pin.sol"]
+             ? hre.config.solidity.overrides["generated/Pin.sol"].version
+             : null,
+         }));`,
+      ],
+      {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...process.env, HARDHAT_DISABLE_TELEMETRY: "true" },
+      },
+    );
+    assert.equal(
+      result.status,
+      0,
+      `hardhat load failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const jsonLine = result.stdout
+      .split(/\r?\n/)
+      .find((line) => line.startsWith("FHEC_OVERRIDES_JSON:"));
+    assert.ok(jsonLine, `missing FHEC_OVERRIDES_JSON line\nstdout:\n${result.stdout}`);
+    const payload = JSON.parse(jsonLine.slice("FHEC_OVERRIDES_JSON:".length));
+    assert.deepEqual(payload.atLoad, ["contracts/Pin.fsol"]);
+    assert.deepEqual(payload.afterBuild, ["generated/Pin.sol"]);
+    assert.equal(payload.pinVersion, "0.8.26");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
