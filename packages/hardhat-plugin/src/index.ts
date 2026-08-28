@@ -22,6 +22,7 @@ import {
   PLUGIN_NAME,
   type FhecConfig,
 } from "./types";
+import { installVerifyOverride } from "./verify";
 
 import "./type-extensions";
 
@@ -37,6 +38,7 @@ export {
 export type { OverrideNotice } from "./overrides";
 export { translateFsolFqn } from "./fqn";
 export { wrapArtifacts } from "./artifacts";
+export { installVerifyOverride } from "./verify";
 
 extendConfig((config: HardhatConfig, userConfig: Readonly<HardhatUserConfig>) => {
   const user = userConfig.fhec ?? {};
@@ -93,6 +95,7 @@ extendEnvironment((hre) => {
     return;
   }
   (hre as { artifacts: typeof hre.artifacts }).artifacts = wrapArtifacts(hre);
+  installVerifyOverride(hre);
 });
 
 task(TASK_COMPILE, async (args, hre, runSuper) => {

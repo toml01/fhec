@@ -108,6 +108,17 @@ byte-identical into `out`) is not translated by this alias: it already
 keeps its own name, so name it with the `<out>/` prefix directly, as
 before.
 
+**`verify:verify` is covered too**, when
+[`@nomicfoundation/hardhat-verify`](https://www.npmjs.com/package/@nomicfoundation/hardhat-verify)
+is installed — both `npx hardhat verify --contract <fqn> ...` and a
+script's own `run("verify:verify", { contract: <fqn>, ... })`. A `.fsol`
+`--contract` argument is translated to the generated `.sol` path before
+Etherscan (or another explorer) sees it, since it must receive the source
+that produced the bytecode. This does not depend on whether
+`hardhat-verify` or `@fhec/hardhat-plugin` is `require`d first in your
+Hardhat config. If `hardhat-verify` is not installed, nothing is
+registered.
+
 ## Config keys
 
 | Key | Default | Meaning |
