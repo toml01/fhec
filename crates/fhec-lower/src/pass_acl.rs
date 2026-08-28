@@ -535,6 +535,24 @@ fn rule_r3<'ast>(
         });
         return refuse_pending_r1(ctx, r.stmt_span, outcome);
     }
+    if r.in_library {
+        // A library's `public`/`external` STATE-CHANGING members are
+        // delegatecall-linked: `msg.sender` and storage are the host's, so
+        // the real caller is whatever host code invoked this library
+        // function in the same transaction, not an independent external
+        // actor. R3 exists to grant *that* caller access; the host already
+        // decides what to share (via its own R3 grant, typically through a
+        // `shared(...)` return), so inserting a grant here would be
+        // redundant — and would move the bytecode of an address-linked
+        // library that may be pinned for reproducible deployment (spec
+        // §8.3). This does not apply to a `view` member (handled above):
+        // Solidity's library-call protection only reverts a direct `CALL`
+        // for a state-changing member, so a `view` library function is
+        // directly callable by an arbitrary external caller with the real
+        // transaction sender as `msg.sender`, the same as any other `view`
+        // function.
+        return refuse_pending_r1(ctx, r.stmt_span, outcome);
+    }
 
     let transient = ctx
         .profile
