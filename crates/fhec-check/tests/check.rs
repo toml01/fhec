@@ -449,6 +449,148 @@ fn tuple_assignment_definitely_initializes_named_components() {
     });
 }
 
+// ---- issue #82: unassigned encrypted named return at function exit -----
+
+#[test]
+fn named_return_never_assigned_is_flagged_at_function_exit() {
+    // The issue #82 repro: `success` is a named return that is never
+    // assigned on any path, yet the caller's tuple declaration treats it
+    // as initialized (§6 could not see this from the call site).
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function bad(euint64 a, euint64 b) internal returns (ebool success, euint64 res) {\n\
+             euint64 d = a - b;\n\
+             if (d <= a) { res = d; } else { res = euint64(0); }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "ebool success");
+    });
+}
+
+#[test]
+fn named_return_assigned_before_branching_stays_clean() {
+    // The issue's `good` control: assigning `success` before any branch
+    // makes it definitely assigned on every path.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function good(euint64 a, euint64 b) internal returns (ebool success, euint64 res) {\n\
+             success = a <= b;\n\
+             euint64 d = a - b;\n\
+             if (d <= a) { res = d; } else { res = euint64(0); }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn named_return_assigned_on_every_if_else_arm_stays_clean() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a, euint64 b) internal returns (euint64 res) {\n\
+             if (cond) { res = a; } else { res = b; }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn named_return_assigned_on_early_return_still_flags_the_fallthrough_path() {
+    // `success` is assigned on the branch that returns early, but the
+    // fallthrough path (cond == false) never assigns it: still a bug.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a, euint64 b) internal returns (ebool success, euint64 res) {\n\
+             if (cond) {\n\
+               success = a <= b;\n\
+               res = a;\n\
+               return;\n\
+             }\n\
+             res = b;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "ebool success");
+    });
+}
+
+#[test]
+fn only_the_unassigned_named_return_is_flagged_among_several() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(euint64 a, euint64 b) internal returns (euint64 res, ebool ok, euint64 extra) {\n\
+             res = a;\n\
+             extra = b;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "ebool ok");
+    });
+}
+
+#[test]
+fn named_return_unassigned_but_every_path_uses_explicit_return_expr_stays_clean() {
+    // Both arms return an explicit tuple; the named-return locals are never
+    // read by either arm and the closing brace is never reached.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a, euint64 b) internal returns (ebool success, euint64 res) {\n\
+             if (cond) {\n\
+               return (FHE.asEbool(true), a);\n\
+             } else {\n\
+               return (FHE.asEbool(false), b);\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn plain_named_return_left_unassigned_is_not_flagged() {
+    // A plain (non-encrypted) named return returning the zero value is
+    // ordinary, valid Solidity: this diagnostic is encrypted-type-specific.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(euint64 a) internal returns (uint256 count, euint64 res) {\n\
+             res = a;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
 #[test]
 fn encrypted_branch_write_needs_pre_value() {
     // The merge reads the pre-value, which is possibly uninitialized.

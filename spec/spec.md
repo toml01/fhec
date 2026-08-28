@@ -482,6 +482,8 @@ A conditional expression whose condition is `ebool` lowers to `FHE.select(cond, 
 
 For every encrypted local variable, the transpiler MUST perform definite-assignment analysis. Use of a possibly-uninitialized encrypted variable as an operand of any lowered FHE operation, as a `select` arm, as a merge pre-value, in an ACL insertion, or as a return value is an error FHE2007.
 
+The analysis MUST also run at every function exit point. An encrypted named return that is not definitely assigned on every path reaching a bare `return` or the function's closing brace is an error FHE2007, reported at the named return's declaration: the uninitialized handle would otherwise cross the call boundary undetected, since the caller's tuple declaration for the callee's return values is itself always definitely assigned (§6 has no way to see, from the call site, that the callee left a slot untouched). An explicit `return expr;` supplies the returned values directly and is unaffected: the check is on `expr`, per the existing rule above, not on the named-return locals.
+
 *Rationale (normative for severity):* CoFHE operations, including `FHE.select`, silently substitute default ciphertexts (`asEbool(false)`, `asEuintN(0)`) for uninitialized handles. An uninitialized-handle bug therefore produces a wrong ciphertext, not a revert. Because the failure is silent, this diagnostic is an ERROR, never a warning, and MUST NOT be downgradeable by configuration.
 
 A variable is *definitely assigned* at a use if every control-flow path from its declaration to the use assigns it. The analysis is the classical conservative one; when in doubt, reject (§1.3).

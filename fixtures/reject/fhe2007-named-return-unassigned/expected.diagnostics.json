@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2007",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 236,
+      "end_byte": 249,
+      "start_line": 8,
+      "start_col": 58,
+      "end_line": 8,
+      "end_col": 71
+    },
+    "message": "this encrypted named return is not assigned on every path reaching `return` or the end of the function; CoFHE silently substitutes a default ciphertext for uninitialized handles, and that handle crosses the call boundary to the caller",
+    "rule": "§6"
+  }
+]

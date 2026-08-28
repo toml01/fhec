@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+library L {
+    // `success` is a named return and is NEVER assigned.
+    function bad(euint64 a, euint64 b) internal returns (ebool success, euint64 res) {
+        euint64 d = a - b;
+        if (d <= a) { res = d; } else { res = euint64(0); }
+    }
+}
+
+contract C {
+    function useBad(euint64 a, euint64 b) external returns (euint64 out) {
+        (ebool ok, euint64 r) = L.bad(a, b);
+        if (ok) { out = r; } else { out = euint64(0); }
+    }
+}

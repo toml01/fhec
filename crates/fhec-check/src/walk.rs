@@ -93,6 +93,17 @@ pub(crate) struct FnChecker<'a, 'ast> {
     /// it is the one thing §2.7 lets the block write (see
     /// [`FnChecker::check_precondition_block`]).
     pub(crate) pre_span: Option<Span>,
+    /// Encrypted named-return slots for this function: (slot index,
+    /// declaration span). Populated once in [`FnChecker::run`]; consulted at
+    /// every function exit point (spec §6).
+    pub(crate) named_returns: Vec<(usize, Span)>,
+    /// Whether the straight-line path currently being walked has already
+    /// hit an unconditional terminator (`return`/`revert`): code walked
+    /// after this point is unreachable. Conservative: loops and `try` reset
+    /// it back to the pre-statement value rather than proving termination,
+    /// so it never claims a path terminates unless a `return`/`revert` sits
+    /// directly on it.
+    pub(crate) terminated: bool,
 }
 
 impl<'a, 'ast> FnChecker<'a, 'ast> {
@@ -138,6 +149,8 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             branch_unassigned_reads: Vec::new(),
             current_stmt_span: Span::DUMMY,
             pre_span: None,
+            named_returns: Vec::new(),
+            terminated: false,
         }
     }
 
@@ -157,11 +170,20 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             let v = self.unit.var(r);
             let ty = declared_ty(self.unit, self.trust, &v.decl.ty);
             if let Some(name) = v.name {
-                self.declare_slot(name.as_str().to_string(), ty.etype(), AState::Unassigned);
+                let etype = ty.etype();
+                let idx = self.declare_slot(name.as_str().to_string(), etype, AState::Unassigned);
+                if etype.is_some() {
+                    self.named_returns.push((idx, v.decl.span));
+                }
             }
         }
         let Some(body) = &f.ast.body else { return };
         self.walk_block(body);
+        // Implicit return at the closing brace: unreachable only if the
+        // body's last straight-line statement was itself a terminator.
+        if !self.terminated {
+            self.check_named_returns_unassigned();
+        }
     }
 
     // ---- slot machinery ------------------------------------------------
@@ -265,6 +287,34 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
         }
     }
 
+    /// Emits FHE2007 for every encrypted named return not definitely
+    /// assigned at the current point: a bare `return;` or the function's
+    /// implicit exit at the closing brace both hand the caller whatever is
+    /// currently in the named-return slots (spec §6). An explicit
+    /// `return expr;` supplies the returned values directly instead and is
+    /// checked at its own use site (see the `Return(Some(e))` handling),
+    /// so it does not call this.
+    pub(crate) fn check_named_returns_unassigned(&mut self) {
+        for &(slot, decl_span) in &self.named_returns {
+            if self.slots[slot].state != AState::Assigned
+                && !self.flagged.contains(&(slot, decl_span))
+            {
+                self.flagged.push((slot, decl_span));
+                self.out.diagnostics.push(
+                    Diagnostic::error(
+                        codes::POSSIBLY_UNINITIALIZED,
+                        decl_span,
+                        "this encrypted named return is not assigned on every path \
+                         reaching `return` or the end of the function; CoFHE silently \
+                         substitutes a default ciphertext for uninitialized handles, and \
+                         that handle crosses the call boundary to the caller",
+                    )
+                    .with_rule("§6"),
+                );
+            }
+        }
+    }
+
     pub(crate) fn error(&mut self, code: &'static str, span: Span, msg: impl Into<String>) {
         self.out
             .diagnostics
@@ -345,8 +395,14 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 let ty = self.type_expr(cond);
                 self.reject_encrypted_loop(&ty, cond.span);
                 let snap = self.snapshot();
+                let pre_terminated = self.terminated;
                 self.walk_stmt(body);
                 self.join_into(&snap);
+                // Whether the loop body always returns is undecidable here
+                // (it depends on the trip count); assume it does not, so
+                // code after the loop stays checked (§1.3: when in doubt,
+                // check rather than silently trust).
+                self.terminated = pre_terminated;
             }
             DoWhile(body, cond) => {
                 if self.in_branch() {
@@ -357,11 +413,14 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                          supported in v1 (hoist or flatten)",
                     );
                 }
+                let pre_terminated = self.terminated;
                 self.walk_stmt(body);
                 self.pending.clear();
                 self.current_stmt_span = s.span;
                 let ty = self.type_expr(cond);
                 self.reject_encrypted_loop(&ty, cond.span);
+                // Same rationale as `while` above.
+                self.terminated = pre_terminated;
             }
             For {
                 init,
@@ -391,8 +450,11 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     self.reject_encrypted_loop(&ty, next.span);
                 }
                 let snap = self.snapshot();
+                let pre_terminated = self.terminated;
                 self.walk_stmt(body);
                 self.join_into(&snap);
+                // Same rationale as `while` above.
+                self.terminated = pre_terminated;
                 self.scopes.pop();
             }
             Return(e) => {
@@ -422,7 +484,12 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                             self.out.acl.returns.push(fact);
                         }
                     }
+                } else if !self.in_branch() {
+                    // A bare `return;` hands the caller whatever is
+                    // currently in the named-return slots.
+                    self.check_named_returns_unassigned();
                 }
+                self.terminated = true;
             }
             Revert(_path, args) => {
                 if self.in_branch() {
@@ -437,6 +504,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 for a in args.exprs() {
                     self.type_expr(a);
                 }
+                self.terminated = true;
             }
             Emit(_path, args) => {
                 if self.in_branch() {
@@ -471,9 +539,11 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 }
                 self.type_expr(&*t.expr);
                 let snap = self.snapshot();
+                let pre_terminated = self.terminated;
                 let mut outs: Vec<Vec<AState>> = Vec::new();
                 for clause in t.clauses.iter() {
                     self.restore(&snap);
+                    self.terminated = pre_terminated;
                     self.scopes.push(FxHashMap::default());
                     for v in clause.args.vars.iter() {
                         self.decl_var(v, true);
@@ -482,8 +552,12 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     self.scopes.pop();
                     outs.push(self.snapshot());
                 }
-                // After a try: conservative join over every clause.
+                // After a try: conservative join over every clause. Whether
+                // every clause always returns is undecidable in general
+                // (it can depend on the call's runtime outcome), so assume
+                // it does not: same rationale as loops above.
                 self.restore(&snap);
+                self.terminated = pre_terminated;
                 for o in &outs {
                     self.join_into(o);
                 }
@@ -571,6 +645,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 self.out.if_sites.push(site);
 
                 let snap = self.snapshot();
+                let pre_terminated = self.terminated;
                 self.branch_depth += 1;
                 self.branch_writes.push(FxHashMap::default());
                 self.branch_unassigned_reads.push(FxHashMap::default());
@@ -641,6 +716,11 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                         }
                     }
                 }
+                // Both branches always execute in the lowered code (a
+                // `return`/`revert` directly inside either is illegal and
+                // separately rejected), so this construct never terminates
+                // the function on its own.
+                self.terminated = pre_terminated;
             }
             Ty::Encrypted(other) => {
                 let mut d = Diagnostic::error(
@@ -678,15 +758,24 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                     );
                 }
                 let snap = self.snapshot();
+                let pre_terminated = self.terminated;
                 self.walk_stmt(then);
                 let then_states = self.snapshot();
+                let then_terminated = self.terminated;
                 self.restore(&snap);
+                self.terminated = pre_terminated;
+                let mut else_terminated = false;
                 if let Some(els) = els {
                     self.walk_stmt(els);
+                    else_terminated = self.terminated;
                 }
                 let else_states = self.snapshot();
                 self.restore(&then_states);
                 self.join_into(&else_states);
+                // The merge point is reachable unless it was already
+                // unreachable coming in, or both branches terminate (a
+                // missing `else` counts as a branch that falls through).
+                self.terminated = pre_terminated || (then_terminated && else_terminated);
             }
         }
     }
