@@ -98,10 +98,16 @@ pub(crate) struct FnChecker<'a, 'ast> {
     /// every function exit point (spec §6).
     pub(crate) named_returns: Vec<(usize, Span)>,
     /// Whether the straight-line path currently being walked has already
-    /// hit an unconditional terminator (`return`/`revert`): code walked
-    /// after this point is unreachable. Conservative: loops and `try` reset
-    /// it back to the pre-statement value rather than proving termination,
-    /// so it never claims a path terminates unless a `return`/`revert` sits
+    /// diverted away — `return`/`revert`/a builtin halt end the function;
+    /// `break`/`continue` end the current loop iteration. Either way, code
+    /// walked after this point in the same block is unreachable. Loop
+    /// exits (`break`/`continue`) feed their state back into the enclosing
+    /// loop via [`loop_breaks`](Self::loop_breaks) /
+    /// [`loop_continues`](Self::loop_continues) instead of being lost, so
+    /// only `return`/`revert`/a halt ever escape a loop's own handling
+    /// still set. Conservative elsewhere: loops and `try` reset this back
+    /// to the pre-statement value rather than proving termination, so it
+    /// never claims a path terminates unless a `return`/`revert`/halt sits
     /// directly on it.
     pub(crate) terminated: bool,
     /// Stack of open loops; each frame holds the definite-assignment
@@ -109,6 +115,14 @@ pub(crate) struct FnChecker<'a, 'ast> {
     /// §6: a `break` exits the loop with whatever was assigned up to that
     /// point, not with the state at the end of the loop body).
     pub(crate) loop_breaks: Vec<Vec<Vec<AState>>>,
+    /// Stack of open loops; each frame holds the definite-assignment
+    /// snapshot captured at every `continue` reached inside that loop.
+    /// Unlike `break`, `continue` does not exit the loop — but the
+    /// condition (`while`/`for`) or the trailing condition (`do`/`while`)
+    /// is re-checked right after it and may end the loop there, so a
+    /// `continue` point is just as much a loop-exit candidate as a
+    /// `break` point or the body's own normal fallthrough (spec §6).
+    pub(crate) loop_continues: Vec<Vec<Vec<AState>>>,
 }
 
 impl<'a, 'ast> FnChecker<'a, 'ast> {
@@ -157,6 +171,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             named_returns: Vec::new(),
             terminated: false,
             loop_breaks: Vec::new(),
+            loop_continues: Vec::new(),
         }
     }
 
@@ -197,11 +212,13 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                         Diagnostic::error(
                             codes::POSSIBLY_UNINITIALIZED,
                             decl_span,
-                            "a modifier attached to this function may `return` before \
-                             its `_;` placeholder, skipping the function body on that \
-                             path; this encrypted named return would then cross the call \
-                             boundary unassigned, the same CoFHE default-ciphertext \
-                             hazard as an unassigned encrypted variable",
+                            "a modifier attached to this function may skip its `_;` \
+                             placeholder on some path — by returning before it, or by \
+                             falling off the end without ever reaching it — which skips \
+                             the function body on that path; this encrypted named \
+                             return would then cross the call boundary unassigned, the \
+                             same CoFHE default-ciphertext hazard as an unassigned \
+                             encrypted variable",
                         )
                         .with_rule("§6"),
                     );
@@ -217,24 +234,45 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
         }
     }
 
-    /// Whether any modifier invoked by this function may `return;` before
-    /// its `_;` placeholder runs, on some path (see [`modifier_may_skip_body`]).
-    /// An unresolved or overloaded modifier name is checked for every
-    /// candidate — existentially risky is enough to flag (spec §1.3: when in
-    /// doubt, reject).
+    /// Whether any modifier invoked by this function may skip its `_;`
+    /// placeholder on some path (see [`modifier_may_skip_body`]).
+    ///
+    /// Fails closed: a modifier name this analysis cannot resolve to a
+    /// walkable, in-unit modifier body — unresolved, a qualified/external
+    /// name, an overload candidate that turns out not to be a modifier, or
+    /// one with no body to walk — is treated as risky too, exactly like an
+    /// analyzed modifier that turns out to be risky. An existentially risky
+    /// (or unanalyzable) candidate is enough to flag (spec §1.3: when in
+    /// doubt, reject) — this is deliberately the same conservative
+    /// direction as every other "cannot prove it's safe" case in this
+    /// analysis, even though it means an external modifier (e.g. an
+    /// imported `nonReentrant`) makes this fire unconditionally.
     fn has_risky_modifier(&self) -> bool {
         let f = self.unit.function(self.fid);
         f.ast.header.modifiers.iter().any(|m| {
             let Some(seg) = m.name.segments().first() else {
-                return false;
+                // A malformed path has nothing to resolve either — fail
+                // closed rather than assume it's safe.
+                return true;
             };
             let Some(Resolution::Function(fids)) = self.unit.resolve_span(seg.span) else {
-                return false;
+                // Anything this binder resolution cannot hand back as an
+                // in-unit function/modifier candidate set — unresolved, a
+                // qualified/external name, a base contract outside the
+                // unit, or any other resolution kind — is not analyzable.
+                return true;
             };
             fids.iter().any(|&fid| {
                 let mf = self.unit.function(fid);
-                mf.ast.kind == ast::FunctionKind::Modifier
-                    && mf.ast.body.as_ref().is_some_and(modifier_may_skip_body)
+                // A resolved candidate that isn't a modifier at all, or has
+                // no body in this unit to walk (e.g. an abstract/virtual
+                // declaration without an implementation here), is equally
+                // unanalyzable — fail closed rather than trust it.
+                mf.ast.kind != ast::FunctionKind::Modifier
+                    || match &mf.ast.body {
+                        Some(body) => modifier_may_skip_body(body),
+                        None => true,
+                    }
             })
         })
     }
@@ -496,10 +534,17 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                         "`break`/`continue` cannot appear inside an encrypted branch: \
                          both branches always execute (restructure the loop body)",
                     );
+                } else {
+                    // Jumps back to the loop's own condition re-check,
+                    // which may end the loop right there: a `continue`
+                    // point is a loop-exit candidate too, just like a
+                    // `break` point (spec §6).
+                    let snap = self.snapshot();
+                    if let Some(top) = self.loop_continues.last_mut() {
+                        top.push(snap);
+                    }
                 }
-                // Jumps back to the loop's condition check: nothing after it
-                // in this block runs this iteration. It is not itself a
-                // loop-exit (see `Break`), so it contributes no candidate.
+                // Nothing after it in this block runs this iteration.
                 self.terminated = true;
             }
             Placeholder => {}
@@ -525,23 +570,28 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 let ty = self.type_expr(cond);
                 self.reject_encrypted_loop(&ty, cond.span);
                 // Zero-trip candidate: the condition can be false on entry,
-                // so the body (and any `break` inside it) may never run.
+                // so the body (and any `break`/`continue` inside it) may
+                // never run.
                 let snap = self.snapshot();
                 let pre_terminated = self.terminated;
                 self.loop_breaks.push(Vec::new());
+                self.loop_continues.push(Vec::new());
                 self.walk_stmt(body);
                 let body_terminated = self.terminated;
                 let body_states = self.snapshot();
                 let breaks = self.loop_breaks.pop().unwrap_or_default();
+                let continues = self.loop_continues.pop().unwrap_or_default();
                 let mut candidates: Vec<&[AState]> = vec![&snap];
                 // A body that always terminates (return/revert/break/
                 // continue on every path) never falls through to re-check
                 // the condition, so its end state does not reach after the
-                // loop; each `break` point is its own, separate candidate.
+                // loop; each `break`/`continue` point is its own, separate
+                // candidate (a `continue` re-checks the condition right
+                // there, which may end the loop with exactly that state).
                 if !body_terminated {
                     candidates.push(&body_states);
                 }
-                for b in &breaks {
+                for b in breaks.iter().chain(continues.iter()) {
                     candidates.push(b);
                 }
                 self.join_all(&candidates);
@@ -561,10 +611,12 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 }
                 let pre_terminated = self.terminated;
                 self.loop_breaks.push(Vec::new());
+                self.loop_continues.push(Vec::new());
                 self.walk_stmt(body);
                 let body_terminated = self.terminated;
                 let body_states = self.snapshot();
                 let breaks = self.loop_breaks.pop().unwrap_or_default();
+                let continues = self.loop_continues.pop().unwrap_or_default();
                 self.pending.clear();
                 self.current_stmt_span = s.span;
                 let ty = self.type_expr(cond);
@@ -573,17 +625,21 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 // Unlike `while`/`for`, a `do` body always runs at least
                 // once: there is no zero-trip candidate. The only ways out
                 // are falling through the body normally (if it doesn't
-                // always terminate first) and each `break` point.
+                // always terminate first), each `break` point, and each
+                // `continue` point (its re-check of `cond` may end the
+                // loop with exactly that state — a `continue` here is just
+                // as much an exit candidate as a `break`).
                 let mut candidates: Vec<&[AState]> = Vec::new();
                 if !body_terminated {
                     candidates.push(&body_states);
                 }
-                for b in &breaks {
+                for b in breaks.iter().chain(continues.iter()) {
                     candidates.push(b);
                 }
                 // If nothing reaches the loop's own exit (every avenue
-                // through the body terminates, and no `break` escaped it),
-                // the `do`/`while` itself always terminates the function.
+                // through the body terminates, with no `break`/`continue`
+                // escaping it), the `do`/`while` itself always terminates
+                // the function.
                 self.terminated = pre_terminated || candidates.is_empty();
                 self.join_all(&candidates);
             }
@@ -618,10 +674,18 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 let snap = self.snapshot();
                 let pre_terminated = self.terminated;
                 self.loop_breaks.push(Vec::new());
+                self.loop_continues.push(Vec::new());
                 self.walk_stmt(body);
                 let body_terminated = self.terminated;
                 // `next` runs after a body iteration that falls through to
-                // it; a `break`/`return`/`continue` inside the body skips it.
+                // it; a `break`/`return` inside the body skips it. A
+                // `continue` also runs `next` before `cond` is re-checked in
+                // real Solidity semantics — this typing (and its assignment
+                // effects) is not separately re-applied to each `continue`
+                // candidate captured below, only to the plain-fallthrough
+                // candidate: a narrow, safe-direction (over-strict, not a
+                // miss) precision gap, since a `continue` candidate can only
+                // end up *more* conservative than reality this way.
                 if !body_terminated {
                     if let Some(next) = next {
                         let ty = self.type_expr(next);
@@ -630,11 +694,12 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 }
                 let body_states = self.snapshot();
                 let breaks = self.loop_breaks.pop().unwrap_or_default();
+                let continues = self.loop_continues.pop().unwrap_or_default();
                 let mut candidates: Vec<&[AState]> = vec![&snap];
                 if !body_terminated {
                     candidates.push(&body_states);
                 }
-                for b in &breaks {
+                for b in breaks.iter().chain(continues.iter()) {
                     candidates.push(b);
                 }
                 self.join_all(&candidates);
@@ -1014,20 +1079,23 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
     }
 }
 
-/// Conservatively determines whether a modifier's body might reach a bare
-/// `return;` on some path before its `_;` placeholder runs. Such a path
-/// skips the guarded function's body entirely (issue #82's hazard class
-/// again: an encrypted named return the body would otherwise assign is left
-/// untouched, and crosses the call boundary unassigned).
+/// Conservatively determines whether a modifier's body might, on some path,
+/// either hit a bare `return;` before its `_;` placeholder runs, or simply
+/// fall off the end of the body without ever reaching the placeholder at
+/// all (Solidity treats that identically to an early `return`: the guarded
+/// function's body never runs, and the call returns default values). Either
+/// way, an encrypted named return the function body would otherwise assign
+/// is left untouched and crosses the call boundary unassigned (issue #82's
+/// hazard class again).
 ///
 /// This is a standalone, deliberately simple reachability scan — not the
 /// full [`AState`] definite-assignment machinery — since a modifier body
-/// only needs one bit of information: can a `return` happen before the
-/// placeholder is guaranteed to have run. Loops and `try` are treated
-/// pessimistically (a `return` anywhere inside is risky; the placeholder is
-/// never counted as *definite* from inside one, since they may run zero
-/// times or not reach every clause), which only ever widens what gets
-/// flagged, never narrows it (spec §1.3).
+/// only needs one bit of information per statement: does the placeholder
+/// definitely run on every path through it, and is there a `return` before
+/// it does. Loops and `try` are treated pessimistically (a `return` anywhere
+/// inside is risky; the placeholder is never counted as *definite* from
+/// inside one, since they may run zero times or not reach every clause),
+/// which only ever widens what gets flagged, never narrows it (spec §1.3).
 pub(crate) fn modifier_may_skip_body(block: &ast::Block<'_>) -> bool {
     /// Returns `(definitely_reaches_placeholder, may_return_before_it)` for
     /// one statement, given whether the placeholder is already guaranteed to
@@ -1076,5 +1144,10 @@ pub(crate) fn modifier_may_skip_body(block: &ast::Block<'_>) -> bool {
         (definite, risky)
     }
 
-    scan_block(block, false).1
+    // Risky if a `return` can happen before the placeholder is definite, OR
+    // if the placeholder is not *definitely* reached by the end of the
+    // block at all (falling off the end without ever running `_;` is the
+    // same hazard as an explicit early `return`).
+    let (definitely_reaches_placeholder, may_return_before_it) = scan_block(block, false);
+    may_return_before_it || !definitely_reaches_placeholder
 }

@@ -754,6 +754,168 @@ fn modifier_whose_placeholder_always_runs_first_stays_clean() {
     });
 }
 
+// ---- external-review round 3: continue as a loop-edge, modifier ---------
+// ---- fall-through, and fail-closed modifier resolution -------------------
+
+#[test]
+fn do_while_continue_before_assignment_still_flags_the_named_return() {
+    // The `continue` re-checks `while (false)` right there, ending the loop
+    // with `r` still unassigned; the statement after `continue` never runs.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(euint64 a) internal returns (euint64 r) {\n\
+             do { continue; r = a; } while (false);\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "euint64 r");
+    });
+}
+
+#[test]
+fn do_while_if_else_continue_in_one_arm_still_flags() {
+    // `then` continues without assigning `res`; `else` assigns it and falls
+    // through. The `continue` path is a separate loop-exit candidate from
+    // the fallthrough path, so the join must still see it as possibly
+    // unassigned even though the fallthrough arm alone looks clean.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a) internal returns (euint64 res) {\n\
+             do {\n\
+               if (cond) { continue; } else { res = a; }\n\
+             } while (false);\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn do_while_continue_that_also_assigns_stays_clean() {
+    // Positive control for the two tests above: every path — the one that
+    // assigns then `continue`s, and the fallthrough — assigns `res`.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a, euint64 b) internal returns (euint64 res) {\n\
+             do {\n\
+               if (cond) { res = a; continue; }\n\
+               res = b;\n\
+             } while (false);\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn while_continue_before_assignment_still_flags() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond) internal returns (euint64 res) {\n\
+             while (cond) { continue; }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn modifier_that_falls_off_the_end_without_the_placeholder_still_flags() {
+    // No explicit `return` anywhere — but when `ok` is false, the modifier
+    // simply falls off the end without ever running `_;`, which Solidity
+    // treats the same as an early return with default values.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           modifier gated(bool ok) {\n\
+             if (ok) { _; }\n\
+           }\n\
+           function f(bool ok, euint64 a) public gated(ok) returns (euint64 res) {\n\
+             res = a;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "euint64 res");
+    });
+}
+
+#[test]
+fn modifier_that_reaches_the_placeholder_on_every_arm_stays_clean() {
+    // Every arm of the `if`/`else` runs `_;`, so the function body always
+    // executes; no fall-off-the-end path exists.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           modifier gated(bool ok) {\n\
+             if (ok) { _; } else { _; }\n\
+           }\n\
+           function f(bool ok, euint64 a) public gated(ok) returns (euint64 res) {\n\
+             res = a;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn a_modifier_inherited_from_an_out_of_unit_base_fails_closed() {
+    // `Guarded` is outside the compilation unit (an unresolved import), so
+    // `guarded`'s resolution is not a walkable, in-unit `Resolution::
+    // Function` — this must fail closed (flag), not silently trust it, even
+    // though bind itself stays clean about the unresolved base (mirrors
+    // `unseen_base_call_stays_unknown_and_explains_why` below).
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {Guarded} from "@some/external/Guarded.sol";
+
+        contract C is Guarded {
+            function f(euint64 a) external guarded returns (euint64 res) {
+                res = a;
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+        assert_eq!(snip(fhe2007[0].span), "euint64 res");
+    });
+}
+
 #[test]
 fn encrypted_branch_write_needs_pre_value() {
     // The merge reads the pre-value, which is possibly uninitialized.
