@@ -180,7 +180,7 @@ pub struct InSugarSite {
     /// Span of the whole parameter declaration (starts at `in`).
     pub param_span: Span,
     /// Span of the function's full parameter list, parens included (the
-    /// shared `inputProof` parameter is appended before its closing `)`).
+    /// shared `inputProof` parameter is appended at the end of this list).
     pub params_span: Span,
     /// Span of the `in` keyword.
     pub in_span: Span,
