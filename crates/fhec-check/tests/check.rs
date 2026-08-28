@@ -3908,6 +3908,123 @@ fn fhe1022_bodiless_multi_in_declaration_is_not_scanned() {
     assert!(codes_for_source(src).is_empty());
 }
 
+/// Issue #84: a bodiless declaration's single `in` parameter also never
+/// lowers through the general (non-batch) conversion call — `pass_ops.rs`
+/// returns before writing one whenever `!has_body` — so a shadow of `FHE`
+/// itself (not just the batch-materializer names) must not refuse it
+/// either.
+#[test]
+fn fhe1022_bodiless_single_in_declaration_is_not_scanned() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        abstract contract Victim {
+            FakeLib FHE;
+            function f(in euint32 amount) external virtual;
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}
+
+/// Regression: the same shadow, but the declaration now has a body — the
+/// conversion prelude does write an `FHE.` call, so this must still refuse
+/// (no over-correction to the #60/#79 fix).
+#[test]
+fn fhe1022_with_body_single_in_declaration_shadow_is_refused() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        contract Victim {
+            FakeLib FHE;
+            function f(in euint32 amount) external {
+                amount;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Issue #84: a bodiless `in shared` declaration rewrites its signature
+/// only (`expand_shared_inputs` returns before writing the `FHE.` receive
+/// call whenever `!has_body`), so a shadow of `FHE` must not refuse it.
+#[test]
+fn fhe1022_bodiless_shared_input_declaration_is_not_scanned() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        abstract contract Victim {
+            FakeLib FHE;
+            function g(in shared euint32 amount) external virtual;
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}
+
+/// Regression: the same shadow, but with a body — `expand_shared_inputs`
+/// does write the `FHE.` receive call, so this must still refuse.
+#[test]
+fn fhe1022_with_body_shared_input_shadow_is_refused() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        contract Victim {
+            FakeLib FHE;
+            euint32 a;
+            function g(in shared euint32 amount) external {
+                a = amount;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
+/// Issue #84: a bodiless `returns (shared(msg.sender) eT)` declaration has
+/// no `return` statements to wrap (`return_exprs` is empty), so
+/// `expand_shared_returns` never writes a `share(...)` call for it — a
+/// shadow of `FHE` must not refuse it.
+#[test]
+fn fhe1022_bodiless_shared_return_declaration_is_not_scanned() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        abstract contract Victim {
+            FakeLib FHE;
+            function h() external virtual returns (shared(msg.sender) euint64);
+        }
+    "#;
+    assert!(codes_for_source(src).is_empty());
+}
+
+/// Regression: the same shadow, but with a body and a `return` — this must
+/// still refuse.
+#[test]
+fn fhe1022_with_body_shared_return_shadow_is_refused() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+        contract FakeLib {}
+        contract Victim {
+            FakeLib FHE;
+            euint64 b;
+            function h() external returns (shared(msg.sender) euint64) {
+                return b;
+            }
+        }
+    "#;
+    assert_eq!(codes_for_source(src), ["FHE1022"]);
+}
+
 /// Round-4 regression: an in-unit `import "./FHE.sol"` combined with an
 /// unrelated unseen/external base — issue #47's shape, and an ordinary,
 /// common pattern (e.g. a token contract that both vendors the profile

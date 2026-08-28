@@ -168,8 +168,23 @@ fn diagnostic_for(name: &str, res: &Resolution, span: Span) -> Diagnostic {
 
 /// Every function id that at least one collected site or ACL fact will need
 /// to write a generated `FHE.` call in. `precondition_sites` is the only
-/// site kind that never does (it only locates the materialization point for
-/// the others), so it is intentionally excluded.
+/// *whole* site kind that never does (it only locates the materialization
+/// point for the others), so it is intentionally excluded.
+///
+/// The three boundary-sugar kinds (`sugar_sites`, `shared_input_sites`,
+/// `shared_return_sites`) additionally rewrite a *bodiless* declaration's
+/// signature only — an interface method or abstract function with no body
+/// (spec §2.3 restriction 3, §2.8): `crates/fhec-lower/src/pass_ops.rs`
+/// returns before writing any generated call once `!has_body`
+/// (`expand_function_sugar`, `expand_shared_inputs`) or when
+/// `return_exprs` is empty (`expand_shared_returns`, which has no
+/// `has_body` field of its own — an empty `return_exprs` is how a bodiless
+/// `SharedReturnSite` is spelled). Counting those bodiless sites here would
+/// refuse FHE1022 on a shadow that can never actually retarget a generated
+/// call (#84). Every other site kind here is only ever collected while
+/// walking a function body (operators, ternaries, `if`, compound/incdec,
+/// cast sugar, ACL facts), so a bodiless declaration structurally cannot
+/// produce one and no filter is needed for them.
 fn functions_writing_fhe(out: &CheckedUnit) -> impl Iterator<Item = FunctionId> + '_ {
     out.operator_sites
         .iter()
@@ -179,9 +194,24 @@ fn functions_writing_fhe(out: &CheckedUnit) -> impl Iterator<Item = FunctionId> 
         .chain(out.compound_sites.iter().map(|s| s.function))
         .chain(out.incdec_sites.iter().map(|s| s.function))
         .chain(out.cast_sugar_sites.iter().map(|s| s.function))
-        .chain(out.sugar_sites.iter().map(|s| s.function))
-        .chain(out.shared_input_sites.iter().map(|s| s.function))
-        .chain(out.shared_return_sites.iter().map(|s| s.function))
+        .chain(
+            out.sugar_sites
+                .iter()
+                .filter(|s| s.has_body)
+                .map(|s| s.function),
+        )
+        .chain(
+            out.shared_input_sites
+                .iter()
+                .filter(|s| s.has_body)
+                .map(|s| s.function),
+        )
+        .chain(
+            out.shared_return_sites
+                .iter()
+                .filter(|s| !s.return_exprs.is_empty())
+                .map(|s| s.function),
+        )
         .chain(out.acl.storage_writes.iter().map(|s| s.function))
         .chain(out.acl.external_args.iter().map(|s| s.function))
         .chain(out.acl.returns.iter().map(|s| s.function))
