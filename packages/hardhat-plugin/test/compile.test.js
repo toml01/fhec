@@ -205,6 +205,56 @@ function runTask(dir, binary, taskName) {
   });
 }
 
+function writeOverrideCompileProject(dir) {
+  fs.mkdirSync(path.join(dir, "contracts"), { recursive: true });
+  linkLocalHardhat(dir);
+  fs.writeFileSync(
+    path.join(dir, "hardhat.config.js"),
+    `'use strict';
+const { task } = require("hardhat/config");
+require(${JSON.stringify(pluginEntry)});
+task("fhec-test-overrides-after-compile", async (args, hre) => {
+  const atLoad = Object.keys(hre.config.solidity.overrides);
+  await hre.run("compile");
+  console.log(
+    "FHEC_OVERRIDES_JSON:" +
+      JSON.stringify({
+        atLoad,
+        afterCompile: Object.keys(hre.config.solidity.overrides),
+        pinVersion: hre.config.solidity.overrides["generated/Pin.sol"]
+          ? hre.config.solidity.overrides["generated/Pin.sol"].version
+          : null,
+      }),
+  );
+});
+module.exports = {
+  solidity: {
+    compilers: [
+      { version: "0.8.28", settings: { evmVersion: "cancun" } },
+    ],
+    overrides: {
+      "contracts/Pin.fsol": {
+        version: "0.8.26",
+        settings: { optimizer: { enabled: true, runs: 1 }, evmVersion: "cancun" },
+      },
+    },
+  },
+};
+`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "fhec.toml"),
+    `[project]
+src = "contracts"
+out = "generated"
+`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "contracts", "Pin.fsol"),
+    "pragma solidity ^0.8.25; contract Pin { uint public x; }\n",
+  );
+}
+
 test(
   "hardhat compile transpiles a no-FHE .fsol and writes artifacts",
   { skip: skipReason, timeout: 180_000 },
@@ -283,6 +333,31 @@ test(
       const parsed = JSON.parse(match[1]);
       assert.equal(parsed.generatedKey, "generated/Path/Lib.sol:Lib");
       assert.equal(parsed.hit, true, `linkReferences files: ${JSON.stringify(parsed.linkReferenceFiles)}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "TASK_COMPILE rewrites a .fsol solidity.overrides key after fhec build",
+  { skip: skipReason, timeout: 180_000 },
+  () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-ov-compile-"));
+    try {
+      writeOverrideCompileProject(dir);
+      const result = runTask(dir, nativeBinary, "fhec-test-overrides-after-compile");
+      assert.equal(
+        result.status,
+        0,
+        `task failed\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+      const match = result.stdout.match(/FHEC_OVERRIDES_JSON:(.+)/);
+      assert.ok(match, `expected FHEC_OVERRIDES_JSON marker in stdout:\n${result.stdout}`);
+      const parsed = JSON.parse(match[1]);
+      assert.deepEqual(parsed.atLoad, ["contracts/Pin.fsol"]);
+      assert.deepEqual(parsed.afterCompile, ["generated/Pin.sol"]);
+      assert.equal(parsed.pinVersion, "0.8.26");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

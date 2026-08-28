@@ -419,6 +419,9 @@ module.exports = {
   }
 });
 
+// Calls rewriteSolidityOverrides directly after writing a fake manifest.
+// The TASK_COMPILE hook (index.ts) runs that same helper after fhec build;
+// compile.test.js covers that path when a native fhec binary is present.
 test("a .fsol solidity.overrides key on a clean tree is rewritten after the manifest appears", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-fsol-ov-"));
   try {

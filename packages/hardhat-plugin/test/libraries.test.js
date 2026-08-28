@@ -2,9 +2,13 @@
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+
+const pluginRoot = path.resolve(__dirname, "..");
+const pluginEntry = path.join(pluginRoot, "dist", "index.js");
 
 const {
   translateLibrariesMap,
@@ -507,6 +511,80 @@ test("deployContract options slot is rewritten when constructor args are present
   }
 });
 
+test("libraries translation is installed when this plugin's extender runs first in forEach", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, sampleManifest());
+    const recorder = [];
+    const hre = makeHre({ sourcesDir: dir });
+    delete hre.ethers;
+    const extenders = [];
+    hre._environmentExtenders = extenders;
+    extenders.push((env) => {
+      installLibrariesTranslation(env);
+    });
+    extenders.push((env) => {
+      env.ethers = fakeEthers(recorder);
+    });
+    extenders.forEach((extender) => extender(hre));
+    await hre.ethers.getContractFactory("MyToken", {
+      libraries: { [FSOL_FQN]: LIB_ADDRESS },
+    });
+    assert.deepEqual(recorder[0][1], [
+      "MyToken",
+      { libraries: { [GENERATED_FQN]: LIB_ADDRESS } },
+    ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("libraries translation is installed when this plugin's extender runs last in forEach", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    writeManifest(dir, sampleManifest());
+    const recorder = [];
+    const hre = makeHre({ sourcesDir: dir });
+    delete hre.ethers;
+    const extenders = [];
+    hre._environmentExtenders = extenders;
+    extenders.push((env) => {
+      env.ethers = fakeEthers(recorder);
+    });
+    extenders.push((env) => {
+      installLibrariesTranslation(env);
+    });
+    extenders.forEach((extender) => extender(hre));
+    await hre.ethers.getContractFactory("MyToken", {
+      libraries: { [FSOL_FQN]: LIB_ADDRESS },
+    });
+    assert.deepEqual(recorder[0][1], [
+      "MyToken",
+      { libraries: { [GENERATED_FQN]: LIB_ADDRESS } },
+    ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("wrapping remaining extenders does not define ethers when hardhat-ethers is absent", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
+  try {
+    const hre = makeHre({ sourcesDir: dir });
+    delete hre.ethers;
+    const extenders = [];
+    hre._environmentExtenders = extenders;
+    extenders.push((env) => {
+      installLibrariesTranslation(env);
+    });
+    extenders.forEach((extender) => extender(hre));
+    assert.equal("ethers" in hre, false);
+    assert.equal(Object.prototype.hasOwnProperty.call(hre, "ethers"), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("hardhat-ethers linking accepts a translated .fsol libraries key", async () => {
   const helpers = requireHardhatEthersHelpers();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-libs-"));
@@ -557,3 +635,161 @@ test("hardhat-ethers linking accepts a translated .fsol libraries key", async ()
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+function packageRoot(name, fromRoot) {
+  const resolved = require.resolve(name, { paths: [fromRoot] });
+  let dir = path.dirname(resolved);
+  while (!fs.existsSync(path.join(dir, "package.json")) && dir !== path.dirname(dir)) {
+    dir = path.dirname(dir);
+  }
+  return dir;
+}
+
+function linkLocalHardhat(dir) {
+  const hardhatDir = path.dirname(
+    require.resolve("hardhat/package.json", { paths: [pluginRoot] }),
+  );
+  const nm = path.join(dir, "node_modules");
+  fs.mkdirSync(nm, { recursive: true });
+  fs.symlinkSync(hardhatDir, path.join(nm, "hardhat"));
+}
+
+function linkLocalHardhatEthers(dir) {
+  const searchRoots = [
+    pluginRoot,
+    path.resolve(pluginRoot, "../difftest"),
+    path.resolve(pluginRoot, "../.."),
+  ];
+  let lastErr;
+  for (const root of searchRoots) {
+    try {
+      const pkgDir = packageRoot("@nomicfoundation/hardhat-ethers", root);
+      const dest = path.join(dir, "node_modules", "@nomicfoundation", "hardhat-ethers");
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.symlinkSync(pkgDir, dest);
+      return;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+function writeMinimalConfig(dir, requires) {
+  fs.writeFileSync(
+    path.join(dir, "fhec.toml"),
+    `[project]\nsrc = "contracts"\nout = "generated"\n`,
+  );
+  fs.writeFileSync(
+    path.join(dir, "hardhat.config.js"),
+    `'use strict';
+${requires}
+module.exports = {
+  solidity: { version: "0.8.28", settings: { evmVersion: "cancun" } },
+};
+`,
+  );
+}
+
+const LINK_ORDER_PROBE = `
+const fs = require("node:fs");
+const path = require("node:path");
+(async () => {
+  const hre = require("hardhat");
+  const sources = hre.config.paths.sources;
+  fs.mkdirSync(path.join(sources, ".fhec"), { recursive: true });
+  fs.writeFileSync(
+    path.join(sources, ".fhec", "manifest.json"),
+    JSON.stringify({
+      tool: "fhec",
+      version: "0.0.0",
+      files: [{ output: "Path/Lib.sol", source: "Path/Lib.fsol", no_op: false, mappings: [] }],
+    }),
+  );
+  const artifact = {
+    contractName: "User",
+    sourceName: "generated/Path/User.sol",
+    abi: [],
+    bytecode: "0x00" + "00".repeat(20) + "ff",
+    deployedBytecode: "0x",
+    linkReferences: {
+      "generated/Path/Lib.sol": {
+        Lib: [{ start: 1, length: 20 }],
+      },
+    },
+    deployedLinkReferences: {},
+  };
+  const libAddress = "0x" + "11".repeat(20);
+  const signer = { provider: {} };
+  const fsolKey = "contracts/Path/Lib.fsol:Lib";
+  const generatedKey = "generated/Path/Lib.sol:Lib";
+  const fromFsol = await hre.ethers.getContractFactoryFromArtifact(artifact, {
+    libraries: { [fsolKey]: libAddress },
+    signer,
+  });
+  const fromGenerated = await hre.ethers.getContractFactoryFromArtifact(artifact, {
+    libraries: { [generatedKey]: libAddress },
+    signer,
+  });
+  const C1 = hre.ethers.Contract;
+  console.log("FHEC_LINK_JSON:" + JSON.stringify({
+    fsolBytecode: fromFsol.bytecode,
+    generatedBytecode: fromGenerated.bytecode,
+    present: "ethers" in hre,
+    same: C1 === hre.ethers.Contract,
+    hasFrom: typeof hre.ethers.Interface.from === "function",
+  }));
+})().catch((err) => {
+  console.error(err && err.stack ? err.stack : err);
+  process.exit(1);
+});
+`;
+
+const REQUIRE_ORDERS = [
+  {
+    name: "this plugin then hardhat-ethers",
+    requires: `require(${JSON.stringify(pluginEntry)});
+require("@nomicfoundation/hardhat-ethers");`,
+  },
+  {
+    name: "hardhat-ethers then this plugin",
+    requires: `require("@nomicfoundation/hardhat-ethers");
+require(${JSON.stringify(pluginEntry)});`,
+  },
+];
+
+for (const order of REQUIRE_ORDERS) {
+  test(`hre.ethers translates a .fsol libraries key when ${order.name}`, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fhec-hh-link-order-"));
+    try {
+      linkLocalHardhat(dir);
+      linkLocalHardhatEthers(dir);
+      writeMinimalConfig(dir, order.requires);
+      const result = spawnSync(process.execPath, ["-e", LINK_ORDER_PROBE], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...process.env, HARDHAT_DISABLE_TELEMETRY: "true" },
+      });
+      assert.equal(
+        result.status,
+        0,
+        `hardhat load failed (${order.name})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+      const jsonLine = result.stdout
+        .split(/\r?\n/)
+        .find((line) => line.startsWith("FHEC_LINK_JSON:"));
+      assert.ok(
+        jsonLine,
+        `missing FHEC_LINK_JSON line (${order.name})\nstdout:\n${result.stdout}`,
+      );
+      const payload = JSON.parse(jsonLine.slice("FHEC_LINK_JSON:".length));
+      assert.equal(payload.present, true);
+      assert.equal(payload.same, true);
+      assert.equal(payload.hasFrom, true);
+      assert.match(payload.fsolBytecode, /11111111/);
+      assert.match(payload.generatedBytecode, /11111111/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}

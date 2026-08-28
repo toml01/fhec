@@ -119,6 +119,11 @@ not found" / "not one of its libraries" error, not a silent miss. A
 `.fsol` `solidity.overrides` key is rewritten on the first compile as well,
 once `fhec build` has written the manifest.
 
+`libraries` keys are translated whether
+[`@nomicfoundation/hardhat-ethers`](https://www.npmjs.com/package/@nomicfoundation/hardhat-ethers)
+or `@fhec/hardhat-plugin` is `require`d first in your Hardhat config. If
+`hardhat-ethers` is not installed, `hre.ethers` is not defined.
+
 A plain pass-through `.sol` file (one with no dialect features, copied
 byte-identical into `out`) is not translated by this alias: it already
 keeps its own name, so name it with the `<out>/` prefix directly, as

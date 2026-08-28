@@ -1,4 +1,4 @@
-import type { HardhatRuntimeEnvironment } from "hardhat/types";
+import type { EnvironmentExtender, HardhatRuntimeEnvironment } from "hardhat/types";
 
 import { translateFsolFqn } from "./fqn";
 import { loadManifest } from "./remap";
@@ -22,6 +22,13 @@ const LIBRARY_METHODS: ReadonlySet<string> = new Set([
  * trap forces construction.
  */
 const wrappedEthers = new WeakSet<object>();
+
+/**
+ * Environment extenders already replaced by
+ * {@link wrapRemainingEnvironmentExtenders}. The wrapper is stored too so a
+ * second install in the same process does not stack wrappers.
+ */
+const wrappedEnvironmentExtenders = new WeakSet<EnvironmentExtender>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -190,33 +197,69 @@ function installEthersAccessor(hre: HardhatRuntimeEnvironment, env: HreWithEther
   });
 }
 
+function isExtenderArray(value: unknown): value is EnvironmentExtender[] {
+  return Array.isArray(value);
+}
+
 /**
- * If hardhat-ethers has not assigned `hre.ethers` yet, push a follow-up
- * extender so we wrap that assignment after remaining plugins run — without
- * pre-defining `ethers` (which would make `'ethers' in hre` true).
- *
- * `extendEnvironment` throws when there is no Hardhat context (unit tests).
+ * The extender list the Environment constructor is iterating. Hardhat 2
+ * assigns the same array to `this._environmentExtenders` (a TypeScript
+ * `private` field, still present at runtime) and walks it with `forEach`.
  */
-function scheduleWrapAfterRemainingExtenders(hre: HardhatRuntimeEnvironment): boolean {
+function environmentExtendersOf(hre: HardhatRuntimeEnvironment): EnvironmentExtender[] | undefined {
+  const fromHre = (hre as { _environmentExtenders?: unknown })._environmentExtenders;
+  if (isExtenderArray(fromHre)) {
+    return fromHre;
+  }
   try {
-    // Same array the Environment constructor is iterating: a push during
-    // forEach runs after the remaining plugins, including hardhat-ethers.
-    const { extendEnvironment } = require("hardhat/config") as {
-      extendEnvironment: (extender: (later: HardhatRuntimeEnvironment) => void) => void;
+    const { HardhatContext } = require("hardhat/internal/context") as {
+      HardhatContext: {
+        getHardhatContext: () => { environmentExtenders: unknown };
+      };
     };
-    extendEnvironment((later) => {
-      if (later !== hre) {
-        return;
-      }
+    const fromCtx = HardhatContext.getHardhatContext().environmentExtenders;
+    if (isExtenderArray(fromCtx)) {
+      return fromCtx;
+    }
+  } catch {
+    // No Hardhat context (unit tests).
+  }
+  return undefined;
+}
+
+/**
+ * If hardhat-ethers has not assigned `hre.ethers` yet, wrap the remaining
+ * `environmentExtenders` in place so we install the accessor after a later
+ * plugin assigns it — without pre-defining `ethers` (which would make
+ * `'ethers' in hre` true).
+ *
+ * Hardhat 2 walks that array with `Array.prototype.forEach`, which does
+ * not visit elements pushed during the loop. Replacing later slots is
+ * visible to the in-flight `forEach`; pushing is not. There is no
+ * "run after every extender" hook.
+ */
+function wrapRemainingEnvironmentExtenders(hre: HardhatRuntimeEnvironment): boolean {
+  const extenders = environmentExtendersOf(hre);
+  if (extenders === undefined) {
+    return false;
+  }
+  for (let i = 0; i < extenders.length; i++) {
+    const original = extenders[i];
+    if (typeof original !== "function" || wrappedEnvironmentExtenders.has(original)) {
+      continue;
+    }
+    const wrapped: EnvironmentExtender = (later) => {
+      original(later);
       if (!Object.prototype.hasOwnProperty.call(later, "ethers")) {
         return;
       }
-      installEthersAccessor(hre, later as HreWithEthers);
-    });
-    return true;
-  } catch {
-    return false;
+      installEthersAccessor(later, later as HreWithEthers);
+    };
+    wrappedEnvironmentExtenders.add(original);
+    wrappedEnvironmentExtenders.add(wrapped);
+    extenders[i] = wrapped;
   }
+  return true;
 }
 
 /**
@@ -232,9 +275,9 @@ function scheduleWrapAfterRemainingExtenders(hre: HardhatRuntimeEnvironment): bo
  * `hardhat-ethers` assigns `hre.ethers = lazyObject(...)`. This intercepts
  * that assignment rather than a task, so require order does not matter:
  * if the lazy object is already present it is wrapped immediately; if a
- * later extender will assign it, a follow-up extender wraps that value.
- * If hardhat-ethers is not installed, `ethers` is never defined, so
- * `'ethers' in hre` stays false.
+ * later extender will assign it, that extender is wrapped in place so the
+ * assignment is intercepted after it runs. If hardhat-ethers is not
+ * installed, `ethers` is never defined, so `'ethers' in hre` stays false.
  */
 export function installLibrariesTranslation(hre: HardhatRuntimeEnvironment): void {
   if (!hre.config.fhec.enabled) {
@@ -247,11 +290,11 @@ export function installLibrariesTranslation(hre: HardhatRuntimeEnvironment): voi
     return;
   }
 
-  if (scheduleWrapAfterRemainingExtenders(hre)) {
+  if (wrapRemainingEnvironmentExtenders(hre)) {
     return;
   }
 
-  // No Hardhat context (unit tests): install the accessor so a later
+  // No extender list (unit tests): install the accessor so a later
   // `hre.ethers = …` assignment is still wrapped.
   installEthersAccessor(hre, env);
 }
