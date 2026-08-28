@@ -577,7 +577,6 @@ fn sugar_appends_proof_on_its_own_line_in_a_multiline_param_list() {
          \x20       euint64 amount = FHE.asEuint64(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20       to;\n\
          \x20   }\n\
          }\n",
@@ -613,7 +612,6 @@ fn sugar_appends_proof_after_the_last_param_of_a_multiline_list() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20       to;\n\
          \x20   }\n\
          }\n",
@@ -649,7 +647,6 @@ fn sugar_does_not_put_the_comma_inside_a_trailing_line_comment() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -684,7 +681,6 @@ fn sugar_multiline_trailing_comment_with_non_ascii_does_not_panic() {
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -716,7 +712,6 @@ fn sugar_appends_proof_on_its_own_line_in_a_multiline_constructor() {
          \x20       euint32 seed = FHE.asEuint32(seed_input, inputProof);\n\
          \x20       a = seed;\n\
          \x20       FHE.allowThis(a);\n\
-         \x20       FHE.allowSender(a);\n\
          \x20   }\n\
          }\n",
     );
@@ -1729,7 +1724,6 @@ fn if_else_multi_write_keeps_temps() {
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_else_4);\n\
          \x20           FHE.allowThis(a);\n\
-         \x20           FHE.allowSender(a);\n\
          \x20       }",
     );
 }

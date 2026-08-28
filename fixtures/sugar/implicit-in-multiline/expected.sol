@@ -14,7 +14,6 @@ contract SugarImplicitInMultiline {
         euint64 amount = FHE.asEuint64(amount_input, inputProof);
         a = amount;
         FHE.allowThis(a);
-        FHE.allowSender(a);
         to;
     }
 }

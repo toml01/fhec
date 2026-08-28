@@ -23,7 +23,6 @@ contract MultiWrite {
             }
             a = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_else_4);
             FHE.allowThis(a);
-            FHE.allowSender(a);
         }
     }
 }
