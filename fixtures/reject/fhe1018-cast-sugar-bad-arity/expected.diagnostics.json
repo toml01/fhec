@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE1018",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 246,
+      "end_byte": 259,
+      "start_line": 12,
+      "start_col": 18,
+      "end_line": 12,
+      "end_col": 31
+    },
+    "message": "explicit cast sugar (`eT(...)`) called with a number of arguments other than one",
+    "rule": "§2.9"
+  },
+  {
+    "code": "FHE1018",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 340,
+      "end_byte": 347,
+      "start_line": 17,
+      "start_col": 16,
+      "end_line": 17,
+      "end_col": 23
+    },
+    "message": "explicit cast sugar (`eT(...)`) called with a number of arguments other than one",
+    "rule": "§2.9"
+  }
+]

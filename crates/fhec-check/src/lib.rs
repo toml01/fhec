@@ -50,9 +50,10 @@ mod walk;
 
 pub use diag::{codes, Diagnostic, FixIt, Severity};
 pub use sites::{
-    AclFacts, CheckedUnit, CompoundAssignSite, EncryptedArgCall, EncryptedIfSite, EncryptedReturn,
-    EncryptedStorageWrite, InSugarSite, IncDecSite, OperandKind, OperandPlan, OperatorSite,
-    PreconditionSite, SharedInputSite, SharedReturnSite, SlotKind, TernarySite, TypeTable,
+    AclFacts, CastSugarSite, CheckedUnit, CompoundAssignSite, EncryptedArgCall, EncryptedIfSite,
+    EncryptedReturn, EncryptedStorageWrite, InSugarSite, IncDecSite, OperandKind, OperandPlan,
+    OperatorSite, PreconditionSite, SharedInputSite, SharedReturnSite, SlotKind, TernarySite,
+    TypeTable,
 };
 pub use ty::{PlainTy, Ty};
 

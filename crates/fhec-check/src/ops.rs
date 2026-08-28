@@ -1110,6 +1110,10 @@ impl<'ast> FnChecker<'_, 'ast> {
                         ) || matches!(
                             self.unit.resolve(*id),
                             Some(Resolution::Contract(_) | Resolution::TypeName(_))
+                        ) || matches!(
+                            self.unit.resolve(*id),
+                            Some(r @ (Resolution::External { .. } | Resolution::Unresolved(_)))
+                                if self.trust.encrypted_type(self.unit, id.as_str(), r).is_some()
                         )
                     }
                     Type(_) => true,
