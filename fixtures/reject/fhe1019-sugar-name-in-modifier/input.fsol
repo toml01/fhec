@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A modifier invocation belongs to the function header, where the parameter
+// is still `amount_input`. `amount` only exists from the materialization
+// point onwards, so the reference would not compile (spec §2.3).
+contract NameInModifier {
+    euint32 stored;
+
+    modifier guard(euint32 v) {
+        _;
+    }
+
+    function deposit(in euint32 amount) public guard(amount) {
+        stored = amount;
+    }
+}

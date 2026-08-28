@@ -82,6 +82,10 @@ pub(crate) struct FnChecker<'a, 'ast> {
     pub(crate) branch_depth: u32,
     /// Per open encrypted branch: encrypted slots written (first write span).
     pub(crate) branch_writes: Vec<FxHashMap<usize, Span>>,
+    /// Per open encrypted branch: encrypted slots read before definite
+    /// assignment (first read span). Such a read makes the branch merge need
+    /// the target's incoming value even if the branch later assigns it.
+    pub(crate) branch_unassigned_reads: Vec<FxHashMap<usize, Span>>,
     /// The span of the statement currently being walked (facts anchor on it).
     pub(crate) current_stmt_span: Span,
     /// The span of the `precondition` block currently being walked, if any.
@@ -131,6 +135,7 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             flagged: Vec::new(),
             branch_depth: 0,
             branch_writes: Vec::new(),
+            branch_unassigned_reads: Vec::new(),
             current_stmt_span: Span::DUMMY,
             pre_span: None,
         }
@@ -207,6 +212,11 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
             let slot = &self.slots[idx];
             if slot.encrypted.is_some() && slot.state != AState::Assigned {
                 self.pending.push((idx, span));
+                if self.branch_depth > 0 && slot.decl_depth < self.branch_depth {
+                    if let Some(log) = self.branch_unassigned_reads.last_mut() {
+                        log.entry(idx).or_insert(span);
+                    }
+                }
             }
         }
     }
@@ -563,24 +573,44 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 let snap = self.snapshot();
                 self.branch_depth += 1;
                 self.branch_writes.push(FxHashMap::default());
+                self.branch_unassigned_reads.push(FxHashMap::default());
 
                 self.walk_stmt(then);
                 let then_states = self.snapshot();
+                let then_writes = self.branch_writes.pop().unwrap_or_default();
+                let then_unassigned_reads = self.branch_unassigned_reads.pop().unwrap_or_default();
                 self.restore(&snap);
+                self.branch_writes.push(FxHashMap::default());
+                self.branch_unassigned_reads.push(FxHashMap::default());
                 if let Some(els) = els {
                     self.walk_stmt(els);
                 }
                 let else_states = self.snapshot();
+                let else_writes = self.branch_writes.pop().unwrap_or_default();
+                let else_unassigned_reads = self.branch_unassigned_reads.pop().unwrap_or_default();
 
-                let writes = self.branch_writes.pop().unwrap_or_default();
                 self.branch_depth -= 1;
 
-                // §5.2 step 4: every written pre-existing location is read as
-                // a pre-value; a possibly-uninitialized pre-value is FHE2007.
+                // A merge needs a pre-value unless both branch environments
+                // independently produce the location without first reading its
+                // unassigned incoming value. Keep one deterministic write
+                // span per slot for diagnostics and outer-branch propagation.
+                let mut writes = then_writes;
+                for (slot, span) in else_writes {
+                    writes.entry(slot).or_insert(span);
+                }
                 let mut writes: Vec<(usize, Span)> = writes.into_iter().collect();
                 writes.sort_by_key(|(_, sp)| (sp.lo(), sp.hi()));
                 for (slot, wspan) in &writes {
-                    if snap[*slot] != AState::Assigned && !self.flagged.contains(&(*slot, *wspan)) {
+                    let needs_pre = els.is_none()
+                        || then_states[*slot] != AState::Assigned
+                        || else_states[*slot] != AState::Assigned
+                        || then_unassigned_reads.contains_key(slot)
+                        || else_unassigned_reads.contains_key(slot);
+                    if snap[*slot] != AState::Assigned
+                        && needs_pre
+                        && !self.flagged.contains(&(*slot, *wspan))
+                    {
                         self.flagged.push((*slot, *wspan));
                         self.out.diagnostics.push(
                             Diagnostic::error(

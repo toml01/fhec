@@ -417,9 +417,54 @@ fn definite_assignment_matrix() {
 }
 
 #[test]
+fn tuple_assignment_definitely_initializes_named_components() {
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           function pair(euint64 a) internal returns (ebool, euint64) {\n\
+             return (FHE.asEbool(true), a);\n\
+           }\n\
+           function triple(euint64 a) internal returns (uint256, ebool, euint64) {\n\
+             return (0, FHE.asEbool(true), a);\n\
+           }\n\
+           function tuple_assign(euint64 a) external returns (euint64 r) {\n\
+             ebool ok;\n\
+             euint64 v;\n\
+             (ok, v) = pair(a);\n\
+             r = ok ? v : euint64(0);\n\
+           }\n\
+           function tuple_assign_with_hole(euint64 a) external returns (euint64 r) {\n\
+             ebool ok;\n\
+             euint64 v;\n\
+             (, ok, v) = triple(a);\n\
+             r = ok ? v : euint64(0);\n\
+           }\n\
+           function tuple_decl(euint64 a) external returns (euint64 r) {\n\
+             (ebool ok, euint64 v) = pair(a);\n\
+             r = ok ? v : euint64(0);\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
 fn encrypted_branch_write_needs_pre_value() {
     // The merge reads the pre-value, which is possibly uninitialized.
     assert_codes("euint32 x; if (eb) { x = a; }", &["FHE2007"]);
+    // Both branch environments produce x independently, so the merge needs
+    // no incoming value.
+    assert_codes(
+        "euint32 x; if (eb) { x = a; } else { x = b; } a = x + b;",
+        &[],
+    );
+    // A read before the assignment still needs the incoming value, even
+    // though the final state of each arm is assigned.
+    assert_codes(
+        "euint32 x; if (eb) { x = x; } else { x = b; }",
+        &["FHE2007"],
+    );
     // Pre-assigned: fine, and afterwards x is usable.
     assert_codes("euint32 x = b; if (eb) { x = a; } a = x + b;", &[]);
     // A local declared inside the branch needs no pre-value.
@@ -1865,3 +1910,62 @@ fn shared_stays_an_ordinary_identifier_in_the_checker_too() {
 // deliberately undeclared in the test contract: they resolve to Unknown
 // (MaybeExternal through the profile import), which is exactly the
 // degradation under test.
+
+/// Diagnostic codes for a whole source file, sorted.
+fn codes_for_source(src: &str) -> Vec<String> {
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let mut v: Vec<String> = c.diagnostics.iter().map(|d| d.code.to_string()).collect();
+        v.sort();
+        v
+    })
+}
+
+#[test]
+fn modifier_invocation_naming_an_in_parameter_rejects_with_fhe1019() {
+    // The modifier invocation is evaluated in the header, where the
+    // parameter is `amount_input`; `amount` only exists in the body.
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               contract C {\n\
+               \x20   euint32 stored;\n\
+               \x20   modifier guard(euint32 v) { _; }\n\
+               \x20   function f(in euint32 amount) public guard(amount) { stored = amount; }\n\
+               }\n";
+    let codes = codes_for_source(src);
+    assert!(
+        codes.iter().any(|c| c == "FHE1019"),
+        "expected FHE1019, got {codes:?}"
+    );
+}
+
+#[test]
+fn modifier_invocation_not_naming_the_parameter_is_accepted() {
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               contract C {\n\
+               \x20   euint32 stored;\n\
+               \x20   modifier guard(uint256 v) { _; }\n\
+               \x20   function f(in euint32 amount, uint256 cap) public guard(cap) { stored = amount; }\n\
+               }\n";
+    let codes = codes_for_source(src);
+    assert!(
+        !codes.iter().any(|c| c == "FHE1019"),
+        "expected no FHE1019, got {codes:?}"
+    );
+}
+
+#[test]
+fn modifier_invocation_naming_an_in_shared_parameter_rejects_with_fhe1019() {
+    let src = "pragma solidity ^0.8.25;\n\
+               import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+               contract C {\n\
+               \x20   euint32 stored;\n\
+               \x20   modifier guard(euint32 v) { _; }\n\
+               \x20   function f(in shared euint32 amount) external guard(amount) { stored = amount; }\n\
+               }\n";
+    let codes = codes_for_source(src);
+    assert!(
+        codes.iter().any(|c| c == "FHE1019"),
+        "expected FHE1019, got {codes:?}"
+    );
+}

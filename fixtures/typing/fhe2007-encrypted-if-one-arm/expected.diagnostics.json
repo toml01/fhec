@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE2007",
+    "severity": "error",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 250,
+      "end_byte": 253,
+      "start_line": 9,
+      "start_col": 13,
+      "end_line": 9,
+      "end_col": 16
+    },
+    "message": "this write inside an encrypted branch merges with the variable's previous value, which is possibly uninitialized; assign the variable before the `if`",
+    "rule": "§6"
+  }
+]

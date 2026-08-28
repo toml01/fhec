@@ -1154,6 +1154,35 @@ fn if_without_else_merges_with_pre() {
 }
 
 #[test]
+fn if_else_without_an_incoming_value_omits_pre() {
+    golden_body(
+        "        euint32 x;\n\
+         \x20       if (eb) {\n\
+         \x20           x = a;\n\
+         \x20       } else {\n\
+         \x20           x = b;\n\
+         \x20       }\n\
+         \x20       a = x;",
+        "        euint32 x;\n\
+         \x20       {\n\
+         \x20           ebool __fhe_cond_0 = eb;\n\
+         \x20           euint32 __fhe_then_2;\n\
+         \x20           {\n\
+         \x20               __fhe_then_2 = a;\n\
+         \x20           }\n\
+         \x20           euint32 __fhe_else_3;\n\
+         \x20           {\n\
+         \x20               __fhe_else_3 = b;\n\
+         \x20           }\n\
+         \x20           x = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_else_3);\n\
+         \x20       }\n\
+         \x20       a = x;\n\
+         \x20       FHE.allowThis(a);\n\
+         \x20       FHE.allowSender(a);",
+    );
+}
+
+#[test]
 fn if_mapping_write_hoists_key() {
     let out = transpile(&[(
         "t.fsol",
@@ -1324,7 +1353,6 @@ fn if_same_key_text_shares_one_temp() {
         "        {\n\
          \x20           ebool __fhe_cond_0 = eb;\n\
          \x20           address __fhe_key_1 = msg.sender;\n\
-         \x20           euint32 __fhe_pre_2 = balances[__fhe_key_1];\n\
          \x20           euint32 __fhe_then_3;\n\
          \x20           {\n\
          \x20               __fhe_then_3 = a;\n\
