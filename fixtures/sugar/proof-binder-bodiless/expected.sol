@@ -7,12 +7,12 @@ import "@fhenixprotocol/cofhe-contracts/FHE.sol";
 // The bound proof keeps its position, name, and data location, and nothing is
 // appended to the parameter list.
 interface ISugarProofBinderBodiless {
-    function deposit(externalEuint32 amount_input, bytes calldata inputProof) external;
+    function deposit(externalEuint32 amount, bytes calldata inputProof) external;
 }
 
 abstract contract SugarProofBinderBodiless {
     function withdraw(
-        externalEuint64 amount_input,
+        externalEuint64 amount,
         bytes memory sig,
         uint256 tag
     ) public virtual;

@@ -304,12 +304,21 @@ fn expand_function_sugar(
     }
     let proof = first.proof.as_deref().unwrap_or(INPUT_PROOF);
 
-    // 1. Each `in eT name` parameter becomes `externalET name_input`.
+    // 1. Each `in eT name` parameter becomes `externalET name_input`. A
+    //    bodiless declaration generates no local, so nothing needs the
+    //    author's name and the parameter keeps it: that name is ABI-visible
+    //    and, on a published interface, is what integrators and
+    //    named-argument call sites bind to (spec §2.3).
     for site in sites {
         let external_ty = ctx.profile.external_input_type(site.ty);
+        let wire_name = if first.has_body {
+            format!("{}_input", site.name)
+        } else {
+            site.name.clone()
+        };
         plan.push(Patch::replace(
             ctx.range(site.param_span),
-            format!("{external_ty} {}_input", site.name),
+            format!("{external_ty} {wire_name}"),
             Provenance::new("§2.3 in-sugar-param", ctx.range(site.param_span)),
         ));
     }
@@ -496,7 +505,15 @@ fn expand_shared_inputs(ctx: &Ctx<'_, '_>, file_idx: usize, plan: &mut FilePlan)
                 .profile
                 .shared_wire_type(site.ty)
                 .map_err(|e| internal(site.param_span, e))?;
-            let wire_name = format!("{}{WIRE_SUFFIX}", site.name);
+            // A bodiless declaration generates no local, so nothing needs
+            // the author's name and the parameter keeps it. That name is
+            // ABI-visible and, on a published interface, is what integrators
+            // and named-argument call sites bind to (spec §2.8).
+            let wire_name = if first.has_body {
+                format!("{}{WIRE_SUFFIX}", site.name)
+            } else {
+                site.name.clone()
+            };
             plan.push(Patch::replace(
                 ctx.range(site.param_span),
                 format!("{wire} {wire_name}"),

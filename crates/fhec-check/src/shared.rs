@@ -257,8 +257,10 @@ fn scan_params<'ast>(
             refused = true;
             continue;
         }
+        // A bodiless declaration generates no local and keeps the author's
+        // parameter name, so no name is introduced to collide.
         let generated = format!("{}{WIRE_SUFFIX}", name.as_str());
-        if ident_occurs(f.ast, &generated) {
+        if f.ast.body.is_some() && ident_occurs(f.ast, &generated) {
             refused = true;
             out.diagnostics.push(
                 Diagnostic::error(

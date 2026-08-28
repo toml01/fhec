@@ -92,8 +92,10 @@ pub(crate) fn scan<'ast>(
                 );
                 continue;
             };
+            // A bodiless declaration generates no local and keeps the
+            // author's parameter name, so no name is introduced to collide.
             let generated = format!("{}_input", name.as_str());
-            if ident_occurs(f.ast, &generated) {
+            if f.ast.body.is_some() && ident_occurs(f.ast, &generated) {
                 out.diagnostics.push(
                     Diagnostic::error(
                         codes::IN_SUGAR_NAME_COLLISION,
