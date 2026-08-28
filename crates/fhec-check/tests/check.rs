@@ -3067,6 +3067,65 @@ fn unseen_base_call_stays_unknown_and_explains_why() {
     });
 }
 
+/// Issue #92 review regression: an unseen/external base (`ReentrancyGuardTransient`,
+/// same stand-in `unseen_base_call_stays_unknown_and_explains_why` above uses)
+/// makes the enclosing contract's linearization incomplete, so every name
+/// resolved through its scope comes back wrapped in
+/// `Unresolved(IncompleteInheritance { fallback })` — including a struct
+/// declared in the very same file, used as a parameter type (`f`) or as
+/// another struct's field type (`g`'s `Wrap.inner`). `custom_ty` must unwrap
+/// that wrapper (the same way `Trust::encrypted_type` already does) rather
+/// than let the struct's type silently degrade to `Unknown`: an `Unknown`
+/// write target states no `EncryptedStorageWrite` fact at all, which is
+/// exactly the silent-no-grant hazard issue #92 was filed to close, just
+/// reached through incomplete inheritance instead of a library-nested
+/// struct declaration.
+#[test]
+fn a_struct_write_still_states_its_acl_fact_under_an_unseen_base() {
+    let src = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+        import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
+
+        struct D {
+            euint64 bal;
+        }
+
+        contract C is ReentrancyGuardTransient {
+            struct Wrap {
+                D inner;
+            }
+
+            mapping(uint256 => Wrap) w;
+
+            function f(D storage d, euint64 v) internal {
+                d.bal = v;
+            }
+
+            function g(uint256 k, euint64 v) internal {
+                w[k].inner.bal = v;
+            }
+        }
+    "#;
+    with_checked(&[("t.fsol", src)], |c, snip| {
+        assert_eq!(
+            c.acl.storage_writes.len(),
+            2,
+            "both writes must state an R1 fact, not silently nothing: {:?}",
+            c.diagnostics
+        );
+        let spans: Vec<String> = c
+            .acl
+            .storage_writes
+            .iter()
+            .map(|w| snip(w.lvalue_span))
+            .collect();
+        assert!(spans.contains(&"d.bal".to_string()), "{spans:?}");
+        assert!(spans.contains(&"w[k].inner.bal".to_string()), "{spans:?}");
+        assert!(!c.has_errors(), "{:?}", c.diagnostics);
+    });
+}
+
 /// Wraps contract members in a unit that also declares a vault interface, for
 /// the §8.2 R2 interaction below.
 fn vault_unit(members: &str) -> String {

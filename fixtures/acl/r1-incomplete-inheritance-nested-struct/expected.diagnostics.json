@@ -1,0 +1,32 @@
+[
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1133,
+      "end_byte": 1138,
+      "start_line": 30,
+      "start_col": 9,
+      "end_line": 30,
+      "end_col": 14
+    },
+    "message": "encrypted write to `d.bal` targets a struct field, which carries no owner key, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  },
+  {
+    "code": "FHE4001",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1207,
+      "end_byte": 1221,
+      "start_line": 34,
+      "start_col": 9,
+      "end_line": 34,
+      "end_col": 23
+    },
+    "message": "encrypted write to `w[k].inner.bal` targets a struct field, which carries no owner key, so its owner is not provably `msg.sender`; the sender grant is withheld here, so the transaction sender does not gain read access to a ciphertext that is not provably its own. Add an explicit grant if that is what you intend",
+    "rule": "§8.1"
+  }
+]
