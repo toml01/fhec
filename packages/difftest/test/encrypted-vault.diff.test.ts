@@ -64,13 +64,18 @@ describe('differential :: transpiled EncryptedVaultDialect vs hand-written refer
     expect(afterInsufficient.plaintexts.recipientBalance).to.equal(EXPECTED_FINAL_BALANCES.recipient);
 
     // R1 ACL semantics, pinned explicitly (see the scenario factory's note):
-    // after the transfer the recipient-keyed slot's fresh handle is granted to
-    // the contract and the TRANSFERER — not the recipient.
+    // `holderBalance` is keyed by `msg.sender` in every write that touches it
+    // (holder transfers their own balance), so it is provably owned by the
+    // transferer and both grants hold. `recipientBalance` is written by
+    // `transfer()` as `balances[to]` — keyed by the recipient, not
+    // `msg.sender` — so it is NOT provably owned by the transferer (issue
+    // #70): the fresh handle is granted to the contract only, and the
+    // transferer must not gain read access to the recipient's balance.
     expect(final.acl['holderBalance@self']).to.equal(true);
     expect(final.acl['holderBalance@signer0']).to.equal(true);
     expect(final.acl['holderBalance@signer2']).to.equal(false);
     expect(final.acl['recipientBalance@self']).to.equal(true);
-    expect(final.acl['recipientBalance@signer0']).to.equal(true);
+    expect(final.acl['recipientBalance@signer0']).to.equal(false, 'the transferer must not gain access to the recipient balance');
     expect(final.acl['recipientBalance@signer1']).to.equal(false);
 
     // ...but right after the recipient's own deposit (step 1 → snapshot 2)

@@ -47,7 +47,11 @@ describe('differential :: transpiled EncryptedCounterDialect vs hand-written ref
     const final = result.a.snapshots[result.a.snapshots.length - 1];
     expect(final.plaintexts.count).to.equal(EXPECTED_FINAL_COUNT);
     expect(final.acl['count@self']).to.equal(true, 'R1 allowThis must hold');
-    expect(final.acl['count@signer0']).to.equal(true, 'R1 allowSender must hold');
+    // `count` is a simple state variable (no key at all), so its owner is not
+    // provably `msg.sender` (issue #70): R1 withholds the sender grant rather
+    // than guess it, even though signer0 (the owner) is the one calling
+    // increment/incrementByOne.
+    expect(final.acl['count@signer0']).to.equal(false, 'R1 must withhold allowSender for an unkeyed slot');
     expect(final.acl['count@signer2']).to.equal(false, 'unrelated account must stay denied');
 
     // The encrypted-if boundary really was crossed in both directions: the

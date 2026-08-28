@@ -1496,6 +1496,155 @@ fn if_merge_to_simple_var_warns_and_withholds_the_sender_grant() {
 }
 
 #[test]
+fn if_merge_shadowed_msg_param_withholds_the_sender_grant() {
+    // Follow-up review finding: a parameter or local named `msg` shadows the
+    // `msg.sender` builtin. The merge path must prove ownership by name
+    // resolution (`fhec_check::is_msg_sender`), not by spelling, or it
+    // false-safe grants the caller access based on a shadowed `msg` (the
+    // same bug class as issue #61).
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   struct Msg {\n\
+        \x20       address sender;\n\
+        \x20   }\n\
+        \x20   mapping(address => euint32) balances;\n\
+        \x20   function f(Msg memory msg, ebool eb, euint32 v) public {\n\
+        \x20       if (eb) {\n\
+        \x20           balances[msg.sender] = v;\n\
+        \x20       }\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("FHE.allowThis(balances[__fhe_key_1]);"),
+        "output: {text}"
+    );
+    assert!(
+        !text.contains("FHE.allowSender"),
+        "a shadowed `msg` parameter must never prove sender ownership: {text}"
+    );
+}
+
+#[test]
+fn if_merge_parenthesized_msg_sender_still_receives_both_grants() {
+    // The inverse of the shadowing case: `(msg).sender` is still exactly
+    // `msg.sender` once parens are peeled, so it must still be provable —
+    // the merge path's proof must not regress to a stricter spelling check
+    // either.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   mapping(address => euint32) balances;\n\
+        \x20   function f(ebool eb, euint32 v) public {\n\
+        \x20       if (eb) {\n\
+        \x20           balances[(msg).sender] = v;\n\
+        \x20       }\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("FHE.allowThis(balances[__fhe_key_1]);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("FHE.allowSender(balances[__fhe_key_1]);"),
+        "output: {text}"
+    );
+}
+
+#[test]
+fn if_merge_nested_mapping_sender_key_at_top_level_receives_both_grants() {
+    // `m[other][msg.sender]`: the sender key is the write's own top-level
+    // key (spec §8.1), even though an outer key (`other`) is also present.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   mapping(address => mapping(address => euint32)) m;\n\
+        \x20   function f(address other, ebool eb, euint32 v) public {\n\
+        \x20       if (eb) {\n\
+        \x20           m[other][msg.sender] = v;\n\
+        \x20       }\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("FHE.allowThis(m[__fhe_key_1][__fhe_key_2]);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("FHE.allowSender(m[__fhe_key_1][__fhe_key_2]);"),
+        "output: {text}"
+    );
+}
+
+#[test]
+fn if_merge_struct_field_off_sender_keyed_mapping_withholds_the_sender_grant() {
+    // `m[msg.sender].field`: the write's own top level is the struct field,
+    // not the mapping index, so it carries no owner key of its own (spec
+    // §8.1) even though the mapping underneath is sender-keyed.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   struct Acct {\n\
+        \x20       euint32 balance;\n\
+        \x20   }\n\
+        \x20   mapping(address => Acct) accts;\n\
+        \x20   function f(ebool eb, euint32 v) public {\n\
+        \x20       if (eb) {\n\
+        \x20           accts[msg.sender].balance = v;\n\
+        \x20       }\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("FHE.allowThis(accts[__fhe_key_1].balance);"),
+        "output: {text}"
+    );
+    assert!(!text.contains("FHE.allowSender"), "output: {text}");
+}
+
+#[test]
 fn if_distinct_literal_keys_are_distinct_locations() {
     golden_body(
         "        if (eb) {\n\

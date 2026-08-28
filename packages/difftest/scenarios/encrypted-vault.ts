@@ -24,10 +24,12 @@ export interface VaultScenarioWiring {
  * transaction), R2 (transient grant to an external callee that actually uses
  * the handle), and plaintext revert parity for the self-transfer guard.
  *
- * A deliberate R1 semantic this pins down: after a transfer, the recipient's
- * slot holds a NEW handle whose grants are allowThis + allowSender(transferer)
- * — the recipient loses handle access until their next own interaction. Both
- * sides must agree on that; the test asserts it explicitly.
+ * A deliberate R1 semantic this pins down (issue #70): after a transfer, the
+ * recipient's slot holds a NEW handle whose only grant is allowThis — the
+ * recipient's slot is keyed by the recipient, not `msg.sender`, so its owner
+ * is not provably the transferer, and the transferer must NOT gain read
+ * access to it. The recipient also loses handle access until their next own
+ * interaction. Both sides must agree on that; the test asserts it explicitly.
  */
 export function makeEncryptedVaultScenario(wiring: VaultScenarioWiring): Scenario {
   /**
@@ -96,7 +98,8 @@ export function makeEncryptedVaultScenario(wiring: VaultScenarioWiring): Scenari
       // Unrelated account: must stay denied.
       { name: 'holderBalance', getter: 'balanceOf', args: [wiring.holder], account: 2 },
       // R1 on the recipient-keyed slot (the FHE4001 warning case): after a
-      // transfer the grants go to the contract and the *transferer*.
+      // transfer the only grant is to the contract — the transferer is not
+      // provably the recipient's owner, so the sender grant is withheld.
       { name: 'recipientBalance', getter: 'balanceOf', args: [wiring.recipient], account: 'self' },
       { name: 'recipientBalance', getter: 'balanceOf', args: [wiring.recipient], account: 0 },
       { name: 'recipientBalance', getter: 'balanceOf', args: [wiring.recipient], account: 1 },

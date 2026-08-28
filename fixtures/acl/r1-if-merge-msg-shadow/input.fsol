@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// The encrypted-if merge path must prove `msg.sender` ownership by name
+// resolution, not by spelling (issue #61's bug class, found again in #70's
+// follow-up review). A parameter named `msg` shadows the builtin, so
+// `msg.sender` inside `shadowed` is NOT the caller and must not earn the
+// sender grant; `(msg).sender` inside `parenthesized` IS still the builtin
+// once parens are peeled, and must still earn it.
+contract MsgShadow {
+    struct Msg {
+        address sender;
+    }
+
+    mapping(address => euint32) balances;
+
+    function shadowed(Msg memory msg, ebool eb, euint32 v) public {
+        if (eb) {
+            balances[msg.sender] = v;
+        }
+    }
+
+    function parenthesized(ebool eb, euint32 v) public {
+        if (eb) {
+            balances[(msg).sender] = v;
+        }
+    }
+}

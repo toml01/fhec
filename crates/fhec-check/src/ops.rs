@@ -1099,17 +1099,7 @@ impl<'ast> FnChecker<'_, 'ast> {
 
     /// Whether an expression is exactly `msg.sender`.
     fn is_msg_sender(&self, e: &'ast ast::Expr<'ast>) -> bool {
-        if let ast::ExprKind::Member(obj, name) = &e.peel_parens().kind {
-            if name.as_str() == "sender" {
-                if let ast::ExprKind::Ident(id) = &obj.peel_parens().kind {
-                    return matches!(
-                        self.unit.resolve(*id),
-                        Some(Resolution::Builtin(b)) if b.0 == "msg"
-                    );
-                }
-            }
-        }
-        false
+        is_msg_sender(self.unit, e)
     }
 
     // ---- side effects (spec §5.5) ------------------------------------------------
@@ -1198,6 +1188,28 @@ impl<'ast> FnChecker<'_, 'ast> {
 /// `declared_ty` without borrowing the checker twice.
 fn declared_ty_of<'ast>(chk: &FnChecker<'_, 'ast>, ty: &ast::Type<'ast>) -> Ty {
     crate::decl::declared_ty(chk.unit, chk.trust, ty)
+}
+
+/// Whether an expression is exactly `msg.sender`, proven by name resolution
+/// (`msg` must resolve to the [`Resolution::Builtin`]) rather than by
+/// spelling — a parameter or local named `msg` shadows the builtin and must
+/// not be mistaken for it (the same class of bug as issue #61). Public so
+/// every ownership-proof site (R1's direct write in `pass_acl::rule_r1` via
+/// [`crate::sites::SlotKind::Mapping::key_is_msg_sender`], and the
+/// encrypted-if merge path in `fhec_lower::pass_if`) proves ownership the
+/// same way instead of re-deriving it by text comparison.
+pub fn is_msg_sender<'ast>(unit: &fhec_bind::BoundUnit<'ast>, e: &'ast ast::Expr<'ast>) -> bool {
+    if let ast::ExprKind::Member(obj, name) = &e.peel_parens().kind {
+        if name.as_str() == "sender" {
+            if let ast::ExprKind::Ident(id) = &obj.peel_parens().kind {
+                return matches!(
+                    unit.resolve(*id),
+                    Some(Resolution::Builtin(b)) if b.0 == "msg"
+                );
+            }
+        }
+    }
+    false
 }
 
 /// Local alias avoiding a name clash in `side_effect_span`.

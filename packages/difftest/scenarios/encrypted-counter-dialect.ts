@@ -67,7 +67,9 @@ export const encryptedCounterDialectScenario: Scenario = {
   aclProbes: [
     // FHE.allowThis — inserted by rule R1 after the select merge.
     { name: 'count', getter: 'getCount', account: 'self' },
-    // FHE.allowSender — the R1 grant this harness exists to catch when dropped.
+    // `count` is a simple state variable (no key at all), so R1 must NOT
+    // guess FHE.allowSender for it (issue #70) — this probe exists to catch
+    // a regression where the sender grant gets wrongly inserted again.
     { name: 'count', getter: 'getCount', account: 0 },
     // Unrelated account: must stay denied throughout.
     { name: 'count', getter: 'getCount', account: 2 },

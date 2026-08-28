@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// The encrypted-if merge path's sender-ownership proof looks at the write's
+// own top-level key (spec §8.1), matching R1's direct-write proof.
+contract NestedKey {
+    struct Acct {
+        euint32 balance;
+    }
+
+    mapping(address => mapping(address => euint32)) m;
+    mapping(address => Acct) accts;
+
+    // The sender key is the write's own top-level key, even though an outer
+    // key (`other`) is also present: still provable.
+    function topLevelSenderKey(address other, ebool eb, euint32 v) public {
+        if (eb) {
+            m[other][msg.sender] = v;
+        }
+    }
+
+    // The write's own top level is the struct field, not the mapping index,
+    // so it carries no owner key of its own — not provable, even though the
+    // mapping underneath is sender-keyed.
+    function structFieldOffSenderKey(ebool eb, euint32 v) public {
+        if (eb) {
+            accts[msg.sender].balance = v;
+        }
+    }
+}

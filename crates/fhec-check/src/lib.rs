@@ -50,6 +50,7 @@ mod ty;
 mod walk;
 
 pub use diag::{codes, Diagnostic, FixIt, Severity};
+pub use ops::is_msg_sender;
 pub use sites::{
     AclFacts, CastSugarSite, CheckedUnit, CompoundAssignSite, EncryptedArgCall, EncryptedIfSite,
     EncryptedReturn, EncryptedStorageWrite, InSugarSite, IncDecSite, OperandKind, OperandPlan,

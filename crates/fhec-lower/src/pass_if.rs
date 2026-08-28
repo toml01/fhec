@@ -866,11 +866,18 @@ fn base_key_type<'ast>(ictx: &IfCtx<'_, '_, 'ast>, base: &'ast ast::Expr<'ast>) 
 /// it. This looks only at the top-level shape of `lhs`, independent of the
 /// `LocKey` path classification above, which exists for aliasing, not
 /// ownership.
+///
+/// The `msg.sender` proof itself goes through [`fhec_check::is_msg_sender`]
+/// (name resolution: `msg` must resolve to the builtin), not a text
+/// comparison — a parameter or local named `msg` shadows the builtin, and a
+/// spelling check would wrongly treat `msg.sender` under that shadow as
+/// proof of ownership. The same helper backs R1's direct-write proof
+/// (`SlotKind::Mapping::key_is_msg_sender` in `fhec-check`), so both paths
+/// agree on every input, including a parenthesized `(msg).sender`.
 fn sender_unproven_reason<'ast>(
     ictx: &IfCtx<'_, '_, 'ast>,
     lhs: &'ast ast::Expr<'ast>,
 ) -> Option<&'static str> {
-    let ctx = ictx.ctx;
     match &lhs.kind {
         ast::ExprKind::Tuple(items) if items.len() == 1 => match items[0].as_deref().unspan() {
             Some(inner) => sender_unproven_reason(ictx, inner),
@@ -878,7 +885,7 @@ fn sender_unproven_reason<'ast>(
         },
         ast::ExprKind::Index(base, ast::IndexKind::Index(Some(k))) => {
             let is_addr_key = base_key_type(ictx, base).as_deref() == Some("address");
-            let is_sender = strip_parens(&ctx.snippet(k.span)) == "msg.sender";
+            let is_sender = fhec_check::is_msg_sender(ictx.ctx.unit, k);
             match (is_addr_key, is_sender) {
                 (true, true) => None,
                 (true, false) => Some("is keyed by an address that is not `msg.sender`"),
