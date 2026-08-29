@@ -706,6 +706,156 @@ fn for_loop_zero_trip_does_not_count_the_increment_as_having_run() {
     });
 }
 
+// ---- issue #90 gap 2: `for`'s `next` on an all-`continue` body ------------
+
+#[test]
+fn for_next_is_typed_even_when_every_body_path_continues() {
+    // Every path through the body takes `continue`, so `body_terminated` is
+    // true and the plain-fallthrough branch that normally types `next`
+    // never runs. Before issue #90's fix, `next` was then never typed at
+    // all on this shape — not even for its own diagnostics — so `c`'s
+    // uninitialized read inside it went completely unchecked. `next`'s own
+    // ENCRYPTED_LOOP check (its assignment expression's type is the
+    // encrypted target's type) was equally skipped. Fixed: `next` is now
+    // typed once whenever this loop's `continue` list is non-empty, so both
+    // fire — `c`'s read (FHE2007) and `next`'s own ENCRYPTED_LOOP (FHE3021)
+    // — in addition to the pre-existing "named return `r` not assigned on
+    // every path" FHE2007 (still flagged either way, since a `for` loop's
+    // mandatory zero-trip candidate alone already forces that).
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(euint64 a) internal returns (euint64 r) {\n\
+             euint64 c;\n\
+             for (uint256 i = 0; i < 3; r = a + c) {\n\
+               continue;\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let mut codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        codes.sort();
+        assert_eq!(
+            codes,
+            vec!["FHE2007", "FHE2007", "FHE3021"],
+            "{:?}",
+            c.diagnostics
+        );
+    });
+}
+
+#[test]
+fn for_next_typing_does_not_double_fire_when_body_also_falls_through() {
+    // Positive/regression control for the fix above: when the body has BOTH
+    // a `continue` path and a genuine fallthrough path (an `if` with no
+    // `else`), `next` was already typed via the pre-existing
+    // `!body_terminated` branch — the new "any `continue` reaches `next`"
+    // condition is also true here, so this exercises the overlap. `next`'s
+    // own diagnostics (ENCRYPTED_LOOP here) must still fire exactly once,
+    // not twice, confirmed by exact diagnostic count.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a) internal returns (euint64 r) {\n\
+             for (uint256 i = 0; i < 3; r = a) {\n\
+               if (cond) { continue; }\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let mut codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+        codes.sort();
+        assert_eq!(codes, vec!["FHE2007", "FHE3021"], "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn for_loop_mixed_continue_and_fallthrough_assignment_stays_clean() {
+    // Positive control: `r` is assigned before the loop, the `continue`
+    // path never touches it (so it stays whatever it already was), and the
+    // fallthrough path re-assigns it from a definitely-assigned parameter.
+    // Every reachable exit — the mandatory zero-trip candidate, every
+    // `continue` candidate, and the fallthrough — sees `r` assigned, so
+    // typing `next` (a plain, non-encrypted counter increment here) on the
+    // overlap of both conditions must not introduce any new diagnostic.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool cond, euint64 a, euint64 b) internal returns (euint64 r) {\n\
+             r = b;\n\
+             for (uint256 i = 0; i < 3; i = i + 1) {\n\
+               if (cond) { continue; }\n\
+               r = a;\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn for_next_typed_against_continue_join_not_leftover_body_state_false_positive() {
+    // Round-2 review of issue #90: `next` is reachable only via the
+    // `continue` inside the `then` arm (the `else` arm always reverts), and
+    // that `continue` runs only after `c = a;` — so `c` IS definitely
+    // assigned on the one path that actually reaches `next`. Before this
+    // fix, `next` was typed against whatever `self.slots` held right after
+    // walking `body` — here, the leftover state from the LAST-walked arm
+    // (`else`, which never touched `c`) — producing a spurious FHE2007 on
+    // `c`'s read inside `next`.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool p, euint64 a) internal {\n\
+             euint64 c;\n\
+             euint64 d;\n\
+             for (uint256 i = 0; i < 3; d = a + c) {\n\
+               if (p) { c = a; continue; } else { revert(\"x\"); }\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert!(fhe2007.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn for_next_typed_against_continue_join_catches_the_mirror_miss() {
+    // Mirror of the false positive above, arms swapped: `next` is
+    // reachable only via the `continue` BEFORE `c = a;` ever runs, so `c`
+    // is NOT assigned on the one path that actually reaches `next` — even
+    // though the (irrelevant, always-reverting) fallthrough path assigns
+    // it. Before this fix, `next` was typed against the fallthrough's
+    // leftover state (`c` assigned), silently missing the read.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool p, euint64 a) internal {\n\
+             euint64 c;\n\
+             euint64 d;\n\
+             for (uint256 i = 0; i < 3; d = a + c) {\n\
+               if (p) { continue; }\n\
+               c = a;\n\
+               revert(\"x\");\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
 #[test]
 fn modifier_with_early_return_before_placeholder_still_flags_the_guarded_function() {
     // The function body itself assigns `res` on every path, but the
@@ -1044,6 +1194,71 @@ fn tuple_copy_from_a_call_rhs_is_unaffected_by_propagation() {
     with_checked(&[("t.fsol", src)], |c, _| {
         assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
     });
+}
+
+// ---- issue #90 gap 1: an unassigned copy into a slot-less target ----------
+
+#[test]
+fn copy_of_an_unassigned_local_into_storage_is_flagged() {
+    // `x` may be unassigned when copied into the state variable `a`. A
+    // storage write has no tracked slot (`lv.slot` is `None`), so there is
+    // nothing local to propagate the unassigned marker into — before issue
+    // #90's fix this silently dropped the marker instead of flagging it.
+    assert_codes("euint32 x; if (p > 0) { x = a; } a = x;", &["FHE2007"]);
+}
+
+#[test]
+fn copy_of_an_unassigned_local_into_a_struct_field_is_flagged() {
+    // Issue #90's exact repro: a struct-field write is equally slot-less.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           struct S { euint64 v; }\n\
+           S s;\n\
+           function f(bool cond, euint64 a) external {\n\
+             euint64 x;\n\
+             if (cond) { x = a; }\n\
+             s.v = x;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn copy_of_an_unassigned_local_into_an_array_index_is_flagged() {
+    // A mapping/array-index write is also slot-less.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         contract C {\n\
+           mapping(uint256 => euint64) arr;\n\
+           function f(bool cond, euint64 a, uint256 i) external {\n\
+             euint64 x;\n\
+             if (cond) { x = a; }\n\
+             arr[i] = x;\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn copy_of_a_definitely_assigned_local_into_storage_stays_clean() {
+    // Positive control: `x` is definitely assigned before the copy, so the
+    // storage write is unaffected by the slot-less-target fix.
+    assert_codes("euint32 x = a; a = x;", &[]);
 }
 
 #[test]

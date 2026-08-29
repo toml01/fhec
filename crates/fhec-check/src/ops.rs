@@ -810,11 +810,13 @@ impl<'ast> FnChecker<'_, 'ast> {
                 // the target, rather than unconditionally becoming
                 // Assigned — otherwise the copy silently launders an
                 // uninitialized handle (spec §6; issue #82's hazard class,
-                // one function-local hop earlier).
+                // one function-local hop earlier). When the target has no
+                // tracked slot at all (storage, a struct field, or an
+                // array/mapping index — `lv.slot` is `None`), there is
+                // nothing to propagate INTO, so flag the copy directly
+                // instead of silently dropping it (issue #90, gap 1).
                 if rhs_unassigned {
-                    if let Some(idx) = lv.slot {
-                        self.slots[idx].state = AState::Unassigned;
-                    }
+                    self.propagate_or_flag_unassigned_copy(&lv, rhs.span);
                 }
             }
             Some(binop) => match &lty {
@@ -880,10 +882,22 @@ impl<'ast> FnChecker<'_, 'ast> {
                 // such marker at all (its own exit-point check is where
                 // that hazard is caught), so this is a strict superset of
                 // the previous behavior for that case, not a regression.
-                let taint = rhs.is_some_and(|r| self.rhs_is_unassigned(r));
+                //
+                // The span carried alongside the taint is the whole RHS
+                // (there is no more precise per-component span available
+                // here) — it is only ever consulted when a component has no
+                // tracked slot to propagate into (issue #90, gap 1), in
+                // which case it anchors the direct flag and `flag_uninit_in`
+                // dedups against `self.flagged`, so flagging it once per
+                // component that shares the same underlying pending marker
+                // still only reports that marker once.
+                let taint_span = match rhs {
+                    Some(r) if self.rhs_is_unassigned(r) => Some(r.span),
+                    _ => None,
+                };
                 for lel in lels.iter() {
                     if let Some(lel) = lel.as_ref().unspan() {
-                        self.write_tuple_component(lel, taint);
+                        self.write_tuple_component(lel, taint_span);
                     }
                 }
             }
@@ -893,21 +907,26 @@ impl<'ast> FnChecker<'_, 'ast> {
         // Captured BEFORE the write below, same reasoning as the simple
         // (non-tuple) assignment case: a self-copy component (`(r, x) =
         // (r, y);`) would otherwise see its own fresh write.
-        let rhs_unassigned = rhs.is_some_and(|r| self.rhs_is_unassigned(r));
-        self.write_tuple_component(lhs, rhs_unassigned);
+        let unassigned_span = match rhs {
+            Some(r) if self.rhs_is_unassigned(r) => Some(r.span),
+            _ => None,
+        };
+        self.write_tuple_component(lhs, unassigned_span);
     }
 
     /// Shared per-tuple-component write: records the definite-assignment
-    /// write, then applies `unassigned` (already decided by the caller —
-    /// either a precise per-component peek, or the union-taint fallback)
-    /// instead of the unconditional Assigned that `record_simple_write`
-    /// alone would leave. Recurses through a nested tuple lvalue so the
-    /// fallback path in `assign_tuple_lvalues` also reaches every leaf.
-    fn write_tuple_component(&mut self, lhs: &'ast ast::Expr<'ast>, unassigned: bool) {
+    /// write, then applies `unassigned_span` (already decided by the caller
+    /// — either a precise per-component peek, or the union-taint fallback;
+    /// `Some(span)` means the paired RHS was found unassigned, and `span` is
+    /// where that was detected) instead of the unconditional Assigned that
+    /// `record_simple_write` alone would leave. Recurses through a nested
+    /// tuple lvalue so the fallback path in `assign_tuple_lvalues` also
+    /// reaches every leaf.
+    fn write_tuple_component(&mut self, lhs: &'ast ast::Expr<'ast>, unassigned_span: Option<Span>) {
         if let ast::ExprKind::Tuple(lels) = &lhs.peel_parens().kind {
             for lel in lels.iter() {
                 if let Some(lel) = lel.as_ref().unspan() {
-                    self.write_tuple_component(lel, unassigned);
+                    self.write_tuple_component(lel, unassigned_span);
                 }
             }
             return;
@@ -917,10 +936,32 @@ impl<'ast> FnChecker<'_, 'ast> {
         // types. Solidity checks component compatibility; the checker only
         // needs the target type here to record the definite assignment.
         self.record_simple_write(lhs, &lty, &lv);
-        if matches!(lty, Ty::Encrypted(_)) && unassigned {
-            if let Some(idx) = lv.slot {
-                self.slots[idx].state = AState::Unassigned;
+        if matches!(lty, Ty::Encrypted(_)) {
+            if let Some(span) = unassigned_span {
+                self.propagate_or_flag_unassigned_copy(&lv, span);
             }
+        }
+    }
+
+    /// Propagates an unassigned-copy marker (already detected by the caller
+    /// via [`Self::rhs_is_unassigned`]) into the write target's tracked
+    /// slot, when it has one. A storage variable, a struct field, or an
+    /// array/mapping index has no tracked slot (`lv.slot` is `None`):
+    /// there is nothing local to mark, so the write's own unassigned-ness
+    /// would otherwise silently vanish instead of surfacing anywhere. Flag
+    /// it directly at `span` instead, using the same FHE2007 mechanism
+    /// (`flag_uninit_in`) every other "possibly uninitialized encrypted
+    /// value used here" site already uses, rather than inventing a new
+    /// diagnostic (issue #90, gap 1).
+    fn propagate_or_flag_unassigned_copy(&mut self, lv: &LvalueInfo, span: Span) {
+        if let Some(idx) = lv.slot {
+            self.slots[idx].state = AState::Unassigned;
+        } else {
+            self.flag_uninit_in(
+                span,
+                "as part of the value copied into storage, a struct field, or an \
+                 array/mapping index",
+            );
         }
     }
 
