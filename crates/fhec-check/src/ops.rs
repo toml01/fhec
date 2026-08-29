@@ -959,7 +959,8 @@ impl<'ast> FnChecker<'_, 'ast> {
         } else {
             self.flag_uninit_in(
                 span,
-                "as the value copied into storage, a struct field, or an array/mapping index",
+                "as part of the value copied into storage, a struct field, or an \
+                 array/mapping index",
             );
         }
     }

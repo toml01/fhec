@@ -784,10 +784,15 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                 // real Solidity semantics — this typing (and its assignment
                 // effects) is not separately re-applied to each individual
                 // `continue` candidate captured below, only ever computed
-                // once, here: a narrow, safe-direction (over-strict, not a
-                // miss) precision gap for THOSE candidates' own values,
-                // since a `continue` candidate can only end up *more*
-                // conservative than reality this way (spec §1.3).
+                // once, here: a narrow, safe-direction precision gap for
+                // THOSE candidates' own values (spec §1.3). This is over-
+                // strict, not a miss, ONLY when `!body_terminated` (the
+                // plain-fallthrough state typed below already includes
+                // whatever `next` assigns, and every `continue` candidate
+                // stays a subset of that): once `body_terminated` forces the
+                // join-of-continues fallback below, the direction is no
+                // longer guaranteed one-sided — see that fallback's own
+                // comment for the case it exists to fix.
                 //
                 // But `next` must still be visited at least once whenever a
                 // `continue` can reach it — i.e. whenever this loop's
@@ -810,8 +815,41 @@ impl<'a, 'ast> FnChecker<'a, 'ast> {
                         .is_some_and(|frame| !frame.is_empty());
                 if next_reachable {
                     if let Some(next) = next {
+                        // When `body_terminated`, `self.slots` right now
+                        // holds whatever the LAST body path walked left
+                        // behind (e.g. one arm of an `if`/`else` where every
+                        // arm terminates) — not a state any path that
+                        // actually reaches `next` produces. The only paths
+                        // that reach `next` here are the `continue` points
+                        // captured while walking `body` above (a plain
+                        // fallthrough is impossible when `body_terminated`,
+                        // and `break` never runs `next`), so restore to
+                        // their join before typing `next`, then restore
+                        // back so `body_states`/`breaks`/`continues` below
+                        // are unaffected. Round-2 review of issue #90: typing
+                        // `next` against the wrong leftover state produced
+                        // both a false positive (a slot the reached-via-
+                        // `continue` path actually assigned, but the
+                        // untaken arm left unassigned) and a mirror miss
+                        // (the reverse — assigned in the untaken arm,
+                        // unassigned on the actual `continue` path).
+                        let restore_after = if body_terminated {
+                            let pre_next = self.snapshot();
+                            // Cloned (not borrowed) so `join_all`'s `&mut
+                            // self` below doesn't conflict with a borrow of
+                            // `self.loop_continues`.
+                            let frame = self.loop_continues.last().cloned().unwrap_or_default();
+                            let refs: Vec<&[AState]> = frame.iter().map(Vec::as_slice).collect();
+                            self.join_all(&refs);
+                            Some(pre_next)
+                        } else {
+                            None
+                        };
                         let ty = self.type_expr(next);
                         self.reject_encrypted_loop(&ty, next.span);
+                        if let Some(pre_next) = restore_after {
+                            self.restore(&pre_next);
+                        }
                     }
                 }
                 // `body_states` is snapshotted AFTER the `next_reachable`

@@ -795,6 +795,68 @@ fn for_loop_mixed_continue_and_fallthrough_assignment_stays_clean() {
 }
 
 #[test]
+fn for_next_typed_against_continue_join_not_leftover_body_state_false_positive() {
+    // Round-2 review of issue #90: `next` is reachable only via the
+    // `continue` inside the `then` arm (the `else` arm always reverts), and
+    // that `continue` runs only after `c = a;` — so `c` IS definitely
+    // assigned on the one path that actually reaches `next`. Before this
+    // fix, `next` was typed against whatever `self.slots` held right after
+    // walking `body` — here, the leftover state from the LAST-walked arm
+    // (`else`, which never touched `c`) — producing a spurious FHE2007 on
+    // `c`'s read inside `next`.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool p, euint64 a) internal {\n\
+             euint64 c;\n\
+             euint64 d;\n\
+             for (uint256 i = 0; i < 3; d = a + c) {\n\
+               if (p) { c = a; continue; } else { revert(\"x\"); }\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert!(fhe2007.is_empty(), "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
+fn for_next_typed_against_continue_join_catches_the_mirror_miss() {
+    // Mirror of the false positive above, arms swapped: `next` is
+    // reachable only via the `continue` BEFORE `c = a;` ever runs, so `c`
+    // is NOT assigned on the one path that actually reaches `next` — even
+    // though the (irrelevant, always-reverting) fallthrough path assigns
+    // it. Before this fix, `next` was typed against the fallthrough's
+    // leftover state (`c` assigned), silently missing the read.
+    let src = "pragma solidity ^0.8.25;\n\
+         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+         library L {\n\
+           function f(bool p, euint64 a) internal {\n\
+             euint64 c;\n\
+             euint64 d;\n\
+             for (uint256 i = 0; i < 3; d = a + c) {\n\
+               if (p) { continue; }\n\
+               c = a;\n\
+               revert(\"x\");\n\
+             }\n\
+           }\n\
+         }";
+    with_checked(&[("t.fsol", src)], |c, _| {
+        let fhe2007: Vec<_> = c
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "FHE2007")
+            .collect();
+        assert_eq!(fhe2007.len(), 1, "{:?}", c.diagnostics);
+    });
+}
+
+#[test]
 fn modifier_with_early_return_before_placeholder_still_flags_the_guarded_function() {
     // The function body itself assigns `res` on every path, but the
     // modifier can `return;` before `_;` runs, skipping the body entirely
