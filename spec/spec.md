@@ -613,10 +613,10 @@ Encrypted values that never reach storage and never cross a call boundary (local
 
 Rules R1–R3 grant only where the transpiler can *prove* ownership: the contract itself, a mapping slot keyed by exactly `msg.sender`, a callee it is passing a handle to, a caller it is returning one to. Every other reader is a claim the transpiler cannot check, and §8.5 refuses to guess it. A **reader policy** is the author's statement of that claim, written once at the declaration and checked at every site that acts on it.
 
-A policy is a NatSpec `@custom:fhe-owner` item. It adds no grammar, no parser production, and no ABI change; solc ignores it. In this it follows §2.9 rather than §2.3, §2.7, or §2.8.
+A policy is a NatSpec `@custom:fhe-allow` item. It adds no grammar, no parser production, and no ABI change; solc ignores it. In this it follows §2.9 rather than §2.3, §2.7, or §2.8.
 
 ```
-policy    := '@custom:fhe-owner' target ':' readers
+policy    := '@custom:fhe-allow' target ':' readers
 target    := identifier
 readers   := reader (',' reader)*
 reader    := 'this' | 'public' [ 'if' condition ] | path
@@ -652,7 +652,7 @@ Nothing else resolves. A local, a function parameter of an unrelated function, a
 
 **Restrictions.** Every violation is FHE4005 unless noted.
 
-1. A policy written in an ordinary comment is discarded by the parser before the transpiler sees it (only doc comments survive trivia collection). The transpiler MUST scan the raw text of every `.fsol` unit for the literal `@custom:fhe-owner` inside a non-doc comment and refuse, rather than let a policy silently do nothing.
+1. A policy written in an ordinary comment is discarded by the parser before the transpiler sees it (only doc comments survive trivia collection). The transpiler MUST scan the raw text of every `.fsol` unit for the literal `@custom:fhe-allow` inside a non-doc comment and refuse, rather than let a policy silently do nothing.
 2. A policy in a `.sol` file is refused. §1.4 forbids rewriting a `.sol` file, so the policy could never take effect, and silence there would be indistinguishable from a policy that grants nothing.
 3. Any `@custom:fhe-` NatSpec key the transpiler does not recognize is refused. A misspelled policy MUST NOT degrade to "no policy".
 4. `target` MUST resolve to a declaration of the stated kind, and two policies in one declaration MUST NOT name the same target.
@@ -667,15 +667,15 @@ Nothing else resolves. A local, a function parameter of an unrelated function, a
 
 ```solidity
 /// @custom:storage-location erc7201:token.storage.Confidential
-/// @custom:fhe-owner _balances: account
-/// @custom:fhe-owner _totalSupply: this
+/// @custom:fhe-allow _balances: account
+/// @custom:fhe-allow _totalSupply: this
 struct ConfidentialStorage {
     mapping(address account => euint64) _balances;
     euint64 _totalSupply;
     address _observer;
 }
 
-/// @custom:fhe-owner amount: from, to
+/// @custom:fhe-allow amount: from, to
 event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);
 ```
 
@@ -763,7 +763,7 @@ at every R4/R5 site of that target, and — by the re-application rule above —
 
 ### §8.12 Policy checks
 
-**Cross-owner copy — FHE4008, warning.** The profile files permissions against the ciphertext handle, not the storage location (§8.6). A handle stored into two slots therefore carries the union of both slots' readers. The transpiler MUST warn when a storage write's right-hand value is a handle read from another slot, with no intervening profile operation, and the two slots' policies name different readers, neither list being `this` alone.
+**Cross-reader copy — FHE4008, warning.** The profile files permissions against the ciphertext handle, not the storage location (§8.6). A handle stored into two slots therefore carries the union of both slots' readers. The transpiler MUST warn when a storage write's right-hand value is a handle read from another slot, with no intervening profile operation, and the two slots' policies name different readers, neither list being `this` alone.
 
 A handle produced by a profile operation — including the `FHE.select` of a §5.2 merge — is fresh and states no fact. Widening from a slot whose policy is `this` is not a finding: adding the first named reader to a contract-only handle is the ordinary way to hand a computed value to its recipient.
 
@@ -862,7 +862,7 @@ Assigned in this version:
 | FHE4005 | error | acl-policy-invalid (§8.8) |
 | FHE4006 | error | acl-policy-target-unbindable (§8.9) |
 | FHE4007 | error / warning | acl-policy-not-reapplicable (§8.11) — warning for a forward-only mapping/array policy; error only for `public if` on one |
-| FHE4008 | warning | acl-cross-owner-copy (§8.12) |
+| FHE4008 | warning | acl-cross-reader-copy (§8.12) |
 | FHE4009 | warning | acl-empty-reader-set (§8.12) |
 | FHE4010 | note | suggest-allow-after-write (`--acl=suggest`) |
 | FHE4011 | note | suggest-transient-for-argument (`--acl=suggest`) |
@@ -951,4 +951,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.6.5 (2026-08-28)** — §1.3's emit-time trust rule is corrected and widened. Corrected: an unseen base or an unconfirmed plain import (`Unresolved(IncompleteInheritance)`/`Unresolved(MaybeExternal)`) now refuses with FHE1022 like any other shadow, unless positively trusted through the explicit-profile-import exception; only a provable total absence of any binding (`Unresolved(NotFound)`) is exempt, since that fails loudly at solc instead of silently. Widened: the same check now also covers `Impl`, `Utils`, and `UnsignedEncryptedInput`, the identifiers the batched `in`-sugar materializer (§2.3) writes when a function has more than one `in` parameter.
 - **0.6.6 (2026-08-28)** — §1.3's emit-time trust rule is corrected again on three points found in review. (1) The `Impl`/`Utils`/`UnsignedEncryptedInput` check now also trusts a `Contract`/`TypeName` resolution declared in-unit in the same file as the recognized profile `library FHE` (the conformance-corpus case), not only the generic exposure paths — an in-unit-vendored profile file no longer produces a spurious refusal on ordinary multi-parameter `in` sugar. (2) A known (in-unit) ancestor's own declaration now always beats the incomplete-inheritance fallback's benefit of the doubt, even when a *trailing* opaque base in the same `is` list would otherwise keep the binder from certifying it as the provably-first member. (3) The check now also covers the batch materializer's `externalT.unwrap(...)`/`eT.wrap(...)` type names, not only its three fixed identifiers.
 - **0.6.7 (2026-08-28)** — §1.3's emit-time trust rule fix from 0.6.6 was applied inconsistently: `is_fhe_library`'s rule 4 and the `encrypted_type`/`external_input_type` UDVT bypass still pattern-matched only the *direct* `Contract`/`TypeName` resolution, so an in-unit `import "./FHE.sol"` combined with an unrelated unseen base — an ordinary shape, not an edge case — still produced a spurious FHE1022 on plain `FHE.add(...)` calls and on wrap/unwrap type checks, because that combination wraps the resolution in `Unresolved(IncompleteInheritance)` before it ever reaches those variants. All three trust checks now unwrap that fallback first, matching what the 0.6.6 fix already did for the batch-materializer names.
-- **0.7.0 (2026-08-30)** — §8.8–§8.13 add **reader policies**: a `@custom:fhe-owner <target>: <readers>` NatSpec item on a state variable, a `struct`, or an `event` states who may read the ciphertexts that declaration holds. Like §2.9 this adds no parser grammar; unlike §2.9 it is consumed from doc comments rather than name resolution. Two new insertion rules act on a policy: R4 (§8.9) emits `allowThis` plus one grant per reader after a storage write, binding the policy through direct indexes and through the single-assignment ERC-7201 storage-pointer shape; R5 (§8.10) emits the same sequence before an `emit`, which is the only boundary at which an EOA receives a handle it must read after the transaction ends — the profile's `allowTransient` and `share` both clear at end of transaction and cannot serve one. §8.11 re-applies a policy when a variable the policy names is written, which is what makes a late reader and a `public if <condition>` gated disclosure expressible, and states plainly where it cannot reach: a mapping or array target whose readers name mutable state is *forward-only*, because the keys of a mapping cannot be enumerated at a write to the policy variable, and carries a FHE4007 warning naming the reader that will not be re-applied; the one refused combination is `public if` on such a target (FHE4007 as an error), which would publish nothing at all. §8.12 adds two checks: a handle copied between slots with different readers (FHE4008, warning — permissions are filed against the handle, so both readers gain access), and an encrypted value reaching an `emit` or `return` with a *known*-empty reader set (FHE4009, warning; an unknown set states no fact). §8.13 records that the profile has no revoke: grants accumulate, re-application only adds, and replacing a reader requires re-minting the handle, which the transpiler MUST NOT do on its own. §8.1's ownership decision and FHE4001 are superseded for a slot that carries a policy; §8.5 is widened to admit policies and reworded to state that R4/R5 transcribe an author's claim rather than infer one. R4 applies to a §5.2 merge write, where reader paths bind to the merge's hoisted key temps rather than the author's key expressions, so §4.4 single evaluation holds. An event policy is read from the declaration the `emit` resolves to and never propagates between redeclarations of one signature. New codes FHE4005 (policy invalid, including a policy in an ordinary comment, in a `.sol` file, or naming `msg.sender`), FHE4006 (target unbindable at the write site), FHE4007, FHE4008, FHE4009, FHE4013 (suggest-mode note).
+- **0.7.0 (2026-08-30)** — §8.8–§8.13 add **reader policies**: a `@custom:fhe-allow <target>: <readers>` NatSpec item — the key takes the profile's own verb, and keeps the `fhe-` prefix so that §8.8 restriction 3 can refuse any unrecognized `@custom:fhe-` key and a misspelling never degrades to "no policy" — on a state variable, a `struct`, or an `event` states who may read the ciphertexts that declaration holds. Like §2.9 this adds no parser grammar; unlike §2.9 it is consumed from doc comments rather than name resolution. Two new insertion rules act on a policy: R4 (§8.9) emits `allowThis` plus one grant per reader after a storage write, binding the policy through direct indexes and through the single-assignment ERC-7201 storage-pointer shape; R5 (§8.10) emits the same sequence before an `emit`, which is the only boundary at which an EOA receives a handle it must read after the transaction ends — the profile's `allowTransient` and `share` both clear at end of transaction and cannot serve one. §8.11 re-applies a policy when a variable the policy names is written, which is what makes a late reader and a `public if <condition>` gated disclosure expressible, and states plainly where it cannot reach: a mapping or array target whose readers name mutable state is *forward-only*, because the keys of a mapping cannot be enumerated at a write to the policy variable, and carries a FHE4007 warning naming the reader that will not be re-applied; the one refused combination is `public if` on such a target (FHE4007 as an error), which would publish nothing at all. §8.12 adds two checks: a handle copied between slots with different readers (FHE4008 `acl-cross-reader-copy`, warning — permissions are filed against the handle, so both readers gain access), and an encrypted value reaching an `emit` or `return` with a *known*-empty reader set (FHE4009, warning; an unknown set states no fact). §8.13 records that the profile has no revoke: grants accumulate, re-application only adds, and replacing a reader requires re-minting the handle, which the transpiler MUST NOT do on its own. §8.1's ownership decision and FHE4001 are superseded for a slot that carries a policy; §8.5 is widened to admit policies and reworded to state that R4/R5 transcribe an author's claim rather than infer one. R4 applies to a §5.2 merge write, where reader paths bind to the merge's hoisted key temps rather than the author's key expressions, so §4.4 single evaluation holds. An event policy is read from the declaration the `emit` resolves to and never propagates between redeclarations of one signature. New codes FHE4005 (policy invalid, including a policy in an ordinary comment, in a `.sol` file, or naming `msg.sender`), FHE4006 (target unbindable at the write site), FHE4007, FHE4008, FHE4009, FHE4013 (suggest-mode note).
