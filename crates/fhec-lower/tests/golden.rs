@@ -2930,3 +2930,68 @@ fn r4_merge_write_binds_readers_to_the_hoisted_key_not_the_source_expression() {
         "must not re-evaluate the source key expression: {text}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// R5 — policy grants at event arguments (spec §8.10)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn r5_event_policy_grants_both_named_readers_before_the_emit() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow amount: from, to\n\
+        \x20   event ConfidentialTransfer(address indexed from, address indexed to, euint32 indexed amount);\n\
+        \x20   function transfer(address from, address to, euint32 amount) public {\n\
+        \x20       emit ConfidentialTransfer(from, to, amount);\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow amount: from, to\n\
+        \x20   event ConfidentialTransfer(address indexed from, address indexed to, euint32 indexed amount);\n\
+        \x20   function transfer(address from, address to, euint32 amount) public {\n\
+        \x20       FHE.allowThis(amount);\n\
+        \x20       if (from != address(0)) FHE.allow(amount, from);\n\
+        \x20       if (to != address(0)) FHE.allow(amount, to);\n\
+        \x20       emit ConfidentialTransfer(from, to, amount);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r5_hoists_a_non_identifier_governed_argument() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow amount: to\n\
+        \x20   event Paid(address indexed to, euint32 indexed amount);\n\
+        \x20   function pay(address to, euint32 a, euint32 b) public {\n\
+        \x20       emit Paid(to, FHE.add(a, b));\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("euint32 __fhe_val_0 = FHE.add(a, b);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("FHE.allowThis(__fhe_val_0);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("if (to != address(0)) FHE.allow(__fhe_val_0, to);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("emit Paid(to, __fhe_val_0);"),
+        "output: {text}"
+    );
+}

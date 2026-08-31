@@ -23,7 +23,8 @@ use std::cell::RefCell;
 
 use fhec_bind::{FunctionId, MethodResolution};
 use fhec_check::{
-    EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, PlainTy, Severity, SlotKind, Ty,
+    EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, PlainTy, PolicyReader, PolicyReaders,
+    ReaderRoot, Severity, SlotKind, Ty,
 };
 use fhec_emit::{TempHint, TempNamer};
 use fhec_ir::{EType, FheOp, FilePlan, Patch, Provenance};
@@ -99,7 +100,58 @@ pub(crate) fn run_function<'ast>(
     while let Some(&(span, _, _, _)) = outcome.pending_r1.first() {
         refuse_pending_r1(ctx, span, &mut outcome)?;
     }
+
+    // R5 — policy grants at event arguments (spec §8.10). `emit` can never
+    // appear inside an encrypted branch (checker-rejected), so every emit
+    // statement of this function is in scope; patch byte position, not push
+    // order, decides the final splice order, so running this after W/C/R is
+    // safe.
+    for stmt in collect_emit_stmts(ctx, function) {
+        if !inside_if(stmt.span) {
+            rule_r5(
+                ctx,
+                function,
+                stmt,
+                namer,
+                acl_insert,
+                diags,
+                plan,
+                &mut outcome,
+            )?;
+        }
+    }
     Ok(outcome)
+}
+
+/// Every `emit` statement in a function's body, in source order.
+fn collect_emit_stmts<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+) -> Vec<&'ast ast::Stmt<'ast>> {
+    use solar_ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Finder<'ast> {
+        out: Vec<&'ast ast::Stmt<'ast>>,
+    }
+    impl<'ast> Visit<'ast> for Finder<'ast> {
+        type BreakValue = ();
+        fn visit_stmt(&mut self, s: &'ast ast::Stmt<'ast>) -> ControlFlow<()> {
+            if matches!(s.kind, ast::StmtKind::Emit(..)) {
+                self.out.push(s);
+            }
+            self.walk_stmt(s)
+        }
+    }
+
+    let Some(body) = ctx.unit.function(function).ast.body.as_ref() else {
+        return Vec::new();
+    };
+    let mut f = Finder { out: Vec::new() };
+    for s in body.iter() {
+        let _ = f.visit_stmt(s);
+    }
+    f.out
 }
 
 // ---------------------------------------------------------------------------
@@ -741,6 +793,275 @@ fn rule_r3<'ast>(
     ));
     outcome.owned_stmts.push(r.stmt_span);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// R5 — policy grants at event arguments (spec §8.10)
+// ---------------------------------------------------------------------------
+
+/// One `emit` argument, resolved against the event's declared parameters.
+struct EmitArg<'ast, 'p> {
+    node: &'ast ast::Expr<'ast>,
+    /// The declared parameter name, when named.
+    param_name: Option<String>,
+    /// The policy governing this position, when its parameter carries one.
+    policy: Option<&'p fhec_check::Policy>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rule_r5<'a, 'ast>(
+    ctx: &Ctx<'a, 'ast>,
+    function: fhec_bind::FunctionId,
+    stmt: &'ast ast::Stmt<'ast>,
+    namer: &RefCell<TempNamer>,
+    acl_insert: bool,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+    plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
+) -> Result<()> {
+    let ast::StmtKind::Emit(path, call_args) = &stmt.kind else {
+        return Ok(());
+    };
+    let first = path.segments()[0];
+    let Some(fhec_bind::Resolution::Event(eid)) = ctx.unit.resolve_span(first.span) else {
+        return Ok(());
+    };
+    let eid = *eid;
+    let event = ctx.unit.event(eid);
+    let params = &event.ast.parameters.vars;
+    let arg_nodes = crate::expr::call_arg_exprs(call_args);
+    if arg_nodes.len() != params.len() {
+        // Named-argument emit-call syntax, or an arity this dialect does not
+        // otherwise reach: not a shape this revision binds (documented scope
+        // decision) — leave untouched rather than guess.
+        return Ok(());
+    }
+
+    let args: Vec<EmitArg<'ast, 'a>> = arg_nodes
+        .iter()
+        .zip(params.iter())
+        .map(|(&node, p)| {
+            let param_name = p.name.map(|n| n.as_str().to_string());
+            let policy = param_name
+                .as_ref()
+                .and_then(|n| ctx.checked.policies.by_event_param.get(&(eid, n.clone())));
+            EmitArg {
+                node,
+                param_name,
+                policy,
+            }
+        })
+        .collect();
+    if !args.iter().any(|a| a.policy.is_some()) {
+        return Ok(());
+    }
+
+    // Every position a governed argument's readers might reference by name
+    // (including itself) must be safe to evaluate twice: a plain identifier
+    // is; anything else is hoisted to `__fhe_evt_n` (spec §8.10 draft
+    // decision) and used everywhere it is referenced.
+    let mut needs_hoist = vec![false; args.len()];
+    for (i, a) in args.iter().enumerate() {
+        if a.policy.is_none() {
+            continue;
+        }
+        let snippet = ctx.snippet(a.node.span);
+        let text = strip_parens(&snippet);
+        if !is_ident_text(text) {
+            needs_hoist[i] = true;
+        }
+        if let PolicyReaders::List(list) = &a.policy.unwrap().readers {
+            for reader in list {
+                if let PolicyReader::Path(p) = reader {
+                    if let ReaderRoot::EventParam(name) = &p.root {
+                        if let Some(j) = args
+                            .iter()
+                            .position(|x| x.param_name.as_deref() == Some(name.as_str()))
+                        {
+                            let jsnippet = ctx.snippet(args[j].node.span);
+                            let jtext = strip_parens(&jsnippet);
+                            if !is_ident_text(jtext) {
+                                needs_hoist[j] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ty_of = |e: &'ast ast::Expr<'ast>| -> Option<EType> {
+        match ctx.checked.types.get(e.span) {
+            Some(Ty::Encrypted(t)) => Some(*t),
+            _ => None,
+        }
+    };
+
+    let indent = ctx.line_indent(ctx.unit.function(function).file, ctx.range(stmt.span).start);
+    let mut prelude: Vec<String> = Vec::new();
+    let mut arg_text: Vec<String> = Vec::with_capacity(args.len());
+    for (i, a) in args.iter().enumerate() {
+        let rendered = Renderer::new(ctx).render_expr(a.node)?;
+        if needs_hoist[i] {
+            let Some(ty) = ty_of(a.node) else {
+                return fail_coded(
+                    a.node.span,
+                    "cannot hoist this event argument for single evaluation: its encrypted \
+                     type could not be determined (spec §8.10)"
+                        .to_string(),
+                    "FHE4004",
+                    Some("§8.10"),
+                );
+            };
+            let temp = namer.borrow_mut().fresh(TempHint::Val);
+            prelude.push(format!("{} {} = {};", ty.solidity_name(), temp, rendered));
+            arg_text.push(temp);
+        } else {
+            arg_text.push(rendered);
+        }
+    }
+
+    // Build the grant lines for every governed position, using the (now
+    // hoist-stable) argument text as both `self` and every named reference.
+    let window = backward_window(ctx, function, stmt.span);
+    let mut grant_lines: Vec<String> = Vec::new();
+    for (i, a) in args.iter().enumerate() {
+        let Some(policy) = a.policy else { continue };
+        let Some(ty) = ty_of(a.node) else { continue };
+        let target_text = &arg_text[i];
+        let rendering = render_event_policy(policy, &args, &arg_text)?;
+        let calls =
+            crate::policy_bind::render_call_lines(ctx, a.node.span, ty, target_text, &rendering)?;
+        for call in calls {
+            if !window.iter().any(|s| {
+                policy_call_matches(
+                    ctx,
+                    function,
+                    s,
+                    &call.fn_name,
+                    &call.arg0,
+                    call.arg1.as_deref(),
+                )
+            }) {
+                grant_lines.push(call.text);
+            }
+        }
+    }
+    if grant_lines.is_empty() && prelude.is_empty() {
+        return Ok(());
+    }
+
+    if !acl_insert {
+        let joined: String = grant_lines.iter().map(|c| format!("{c} ")).collect();
+        if !joined.is_empty() {
+            diags.borrow_mut().push(fhec_check::Diagnostic {
+                code: "FHE4013",
+                severity: Severity::Note,
+                span: stmt.span,
+                message: format!(
+                    "ACL suggestion: before this emit, add `{}`",
+                    joined.trim_end()
+                ),
+                fixits: Vec::new(),
+                rule: Some("§8.10"),
+            });
+        }
+        return Ok(());
+    }
+
+    brace_lone_stmt(ctx, function, stmt.span, plan, outcome)?;
+
+    let mut lines = prelude;
+    lines.extend(grant_lines);
+    let insertion: String = lines.iter().map(|l| format!("{l}\n{indent}")).collect();
+    plan.push(Patch::insert(
+        ctx.range(stmt.span).start,
+        insertion,
+        Provenance::new("§8.10 R5", ctx.range(stmt.span)).with_code("FHE4013"),
+    ));
+
+    if needs_hoist.iter().any(|&h| h) {
+        // A hoisted argument's slot in the emit call must read the temp, not
+        // its original (now-duplicated) expression.
+        let replaced: Vec<(Span, String, &str)> = args
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| needs_hoist[*i])
+            .map(|(i, a)| (a.node.span, arg_text[i].clone(), "§8.10 R5 arg-hoist"))
+            .collect();
+        for (span, text, rule) in &replaced {
+            plan.push(Patch::replace(
+                ctx.range(*span),
+                text.clone(),
+                Provenance::new(*rule, ctx.range(*span)),
+            ));
+        }
+        outcome.owned_stmts.push(stmt.span);
+    }
+    Ok(())
+}
+
+/// Renders one event-attached policy's readers at its emit site: a bound
+/// key/`self` never arises for an event target (event params have no
+/// mapping/array nesting to key into), and an `EventParam` root renders the
+/// corresponding argument's (possibly hoisted) text.
+fn render_event_policy<'ast, 'p>(
+    policy: &fhec_check::Policy,
+    args: &[EmitArg<'ast, 'p>],
+    arg_text: &[String],
+) -> Result<crate::policy_bind::PolicyRendering> {
+    use crate::policy_bind::{PolicyRendering, RenderedReader};
+    match &policy.readers {
+        PolicyReaders::Public { condition } => {
+            if condition.is_some() {
+                return fail_coded(
+                    policy.span,
+                    "a gated `public if` policy on an event parameter has no re-application \
+                     site to gate (spec §8.10, §8.11): only a plain `public` reader is \
+                     supported on an event target"
+                        .to_string(),
+                    "FHE4005",
+                    Some("§8.10"),
+                );
+            }
+            Ok(PolicyRendering::Public { condition: None })
+        }
+        PolicyReaders::List(list) => {
+            let mut out = Vec::new();
+            for reader in list {
+                match reader {
+                    PolicyReader::This => {}
+                    PolicyReader::Path(p) => {
+                        let ReaderRoot::EventParam(name) = &p.root else {
+                            return fail_coded(
+                                p.span,
+                                "an event-attached policy's readers may only name `this` or \
+                                 another parameter of the same event (spec §8.8 resolution \
+                                 rule 4)"
+                                    .to_string(),
+                                "FHE9001",
+                                None,
+                            );
+                        };
+                        let j = args
+                            .iter()
+                            .position(|a| a.param_name.as_deref() == Some(name.as_str()))
+                            .expect("resolved at check time");
+                        let mut text = arg_text[j].clone();
+                        for seg in &p.tail {
+                            text.push('.');
+                            text.push_str(seg);
+                        }
+                        out.push(RenderedReader::Named {
+                            text,
+                            is_const_nonzero: false,
+                        });
+                    }
+                }
+            }
+            Ok(PolicyRendering::List(out))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
