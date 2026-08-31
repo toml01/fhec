@@ -4686,3 +4686,138 @@ mod policy_tests {
         });
     }
 }
+
+// ---------------------------------------------------------------------------
+// FHE4009 — known-empty reader set (spec §8.12)
+// ---------------------------------------------------------------------------
+
+mod empty_reader_tests {
+    use super::*;
+
+    const PREAMBLE: &str = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+    "#;
+
+    #[test]
+    fn fires_on_a_return_built_purely_from_literals() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                function f() public returns (euint32) {{
+                    return FHE.add(FHE.asEuint32(2), FHE.asEuint32(3));
+                }}
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4009"], "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn fires_on_an_emit_argument_built_purely_from_literals() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                event E(euint32 v);
+                function f() public {{
+                    emit E(FHE.asEuint32(5));
+                }}
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4009"], "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn never_fires_on_a_bare_parameter() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                function echo(euint32 x) public returns (euint32) {{
+                    return x;
+                }}
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn never_fires_when_a_parameter_reaches_the_operation() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                function f(euint32 x) public returns (euint32) {{
+                    return FHE.add(x, FHE.asEuint32(1));
+                }}
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn never_fires_on_a_state_variable_read() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                euint32 total;
+                function f() public returns (euint32) {{
+                    return total;
+                }}
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn never_fires_through_a_local_variable() {
+        // Deliberately narrow scope: no data-flow tracing through locals.
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                function f() public returns (euint32) {{
+                    euint32 x = FHE.asEuint32(5);
+                    return x;
+                }}
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn never_fires_on_an_internal_function_return() {
+        // spec §8.3's own R3 boundary: an `internal` return never leaves
+        // the contract at this site, so its reader set is not settled yet
+        // (the caller may still store it with a real grant, as real CoFHE
+        // code does — this exact shape hit fixtures/imports/rewrite).
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                function one() internal returns (euint32) {{
+                    return FHE.asEuint32(1);
+                }}
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+        });
+    }
+}
