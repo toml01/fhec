@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A struct-attached reader policy (spec §8.8 placement row 2), bound at the
+// write site through the ERC-7201 accessor shape (spec §8.9 "Binding at the
+// write site"): a storage pointer local assigned exactly once from a call to
+// a parameterless function.
+contract PolicyOnStruct {
+    /// @custom:fhe-allow _balances: account
+    /// @custom:fhe-allow _totalSupply: this
+    struct Storage {
+        mapping(address account => euint32) _balances;
+        euint32 _totalSupply;
+    }
+
+    Storage _storage;
+
+    function _getStorage() internal view returns (Storage storage $) {
+        $ = _storage;
+    }
+
+    function mint(address to, euint32 amount) public {
+        Storage storage $ = _getStorage();
+        $._balances[to] = amount;
+        FHE.allowThis($._balances[to]);
+        if (to != address(0)) FHE.allow($._balances[to], to);
+        $._totalSupply = FHE.add($._totalSupply, amount);
+        FHE.allowThis($._totalSupply);
+    }
+}

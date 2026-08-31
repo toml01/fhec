@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE4007",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 442,
+      "end_byte": 458,
+      "start_line": 13,
+      "start_col": 10,
+      "end_line": 13,
+      "end_col": 26
+    },
+    "message": "reader `_observer` names mutable state, but this policy's target is a mapping/array: the transpiler cannot enumerate its keys, so a write to `_observer` cannot re-apply the grant to handles already written. The policy is forward-only — it grants on handles written from now on; backfilling past handles is only possible off-chain (spec §8.11)",
+    "rule": "§8.11"
+  }
+]

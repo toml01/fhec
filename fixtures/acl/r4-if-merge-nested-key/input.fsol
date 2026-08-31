@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// R4 at an encrypted-branch merge (spec §8.9 "Encrypted-branch merges"): the
+// reader path must bind to the merge's hoisted key temp, never to the
+// author's key expression — this is the path where issue #81 found a live
+// disclosure.
+contract PolicyOnMerge {
+    /// @custom:fhe-allow balances: account
+    mapping(address account => euint32) balances;
+
+    function maybeCredit(address other, ebool eb, euint32 v) public {
+        if (eb) {
+            balances[other] = v;
+        }
+    }
+}
