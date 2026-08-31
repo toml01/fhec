@@ -90,57 +90,66 @@ fn bind_decomposed<'p, 'ast>(
     site_span: Span,
     decomposed: &Decomposed,
 ) -> Result<Option<BoundWrite<'p>>> {
-    if !decomposed.is_pointer {
-        let Some(policy) = checked_policies.by_state_var.get(&decomposed.root_var) else {
-            return Ok(None);
-        };
-        let (self_text, key_texts) =
-            render_self_and_keys(&decomposed.root_text, &decomposed.steps, policy)?;
-        return Ok(Some(BoundWrite {
-            policy,
-            self_text,
-            key_texts,
-        }));
+    // Struct-field policies: reachable whenever the root's own declared
+    // type is a struct and the first step is a field access into it — a
+    // plain state variable of struct type is always safely nameable by its
+    // own name; a storage-pointer local additionally needs the
+    // single-assignment proof, since it is an *alias* the pointer must be
+    // proven to resolve consistently (spec §8.9 "Binding at the write
+    // site"). The ERC-7201 accessor shape is the `is_pointer` case; a
+    // struct-typed state variable reached directly (no accessor at all) is
+    // exactly as common and must bind the same way.
+    if let Some(Step::Field(field)) = decomposed.steps.first() {
+        if let Some(struct_ty) = declared_struct(ctx, ctx.unit.var(decomposed.root_var)) {
+            if let Some(policy) = checked_policies
+                .by_struct_field
+                .get(&(struct_ty, field.clone()))
+            {
+                if decomposed.is_pointer
+                    && !is_bindable_storage_pointer(ctx, function, decomposed.root_var)
+                {
+                    return fail_coded(
+                        site_span,
+                        format!(
+                            "`{}` carries a reader policy on field `{field}`, but the storage \
+                             pointer `{}` cannot be proven to resolve to it: it must be \
+                             assigned exactly once, from a call to a parameterless function or \
+                             from a state variable, and never reassigned or conditionally \
+                             bound (spec §8.9)",
+                            ctx.unit.type_decl(struct_ty).name,
+                            decomposed.root_text
+                        ),
+                        crate::codes::ACL_POLICY_TARGET_UNBINDABLE,
+                        Some("§8.9"),
+                    );
+                }
+                let self_root = format!("{}.{field}", decomposed.root_text);
+                let (self_text, key_texts) =
+                    render_self_and_keys(&self_root, &decomposed.steps[1..], policy)?;
+                return Ok(Some(BoundWrite {
+                    policy,
+                    self_text,
+                    key_texts,
+                }));
+            }
+        }
     }
 
-    // A storage-pointer root: policies attach to *fields* of the struct it
-    // points to, so the first step must be exactly `Field(name)`.
-    let Some(struct_ty) = declared_struct(ctx, ctx.unit.var(decomposed.root_var)) else {
-        return Ok(None);
-    };
-    let Some(Step::Field(field)) = decomposed.steps.first() else {
-        return Ok(None);
-    };
-    let Some(policy) = checked_policies
-        .by_struct_field
-        .get(&(struct_ty, field.clone()))
-    else {
-        return Ok(None);
-    };
-    // A policy targets this struct's field: the pointer MUST be provably
-    // bindable, or a fault this write reaches is silently left unreadable.
-    if !is_bindable_storage_pointer(ctx, function, decomposed.root_var) {
-        return fail_coded(
-            site_span,
-            format!(
-                "`{}` carries a reader policy on field `{field}`, but the storage pointer \
-                 `{}` cannot be proven to resolve to it: it must be assigned exactly once, \
-                 from a call to a parameterless function or from a state variable, and never \
-                 reassigned or conditionally bound (spec §8.9)",
-                ctx.unit.type_decl(struct_ty).name,
-                decomposed.root_text
-            ),
-            crate::codes::ACL_POLICY_TARGET_UNBINDABLE,
-            Some("§8.9"),
-        );
+    // State-variable-attached policies: the whole root variable is itself
+    // the target (never through a pointer alias — a pointer's own declared
+    // type is handled as a struct-field policy above).
+    if !decomposed.is_pointer {
+        if let Some(policy) = checked_policies.by_state_var.get(&decomposed.root_var) {
+            let (self_text, key_texts) =
+                render_self_and_keys(&decomposed.root_text, &decomposed.steps, policy)?;
+            return Ok(Some(BoundWrite {
+                policy,
+                self_text,
+                key_texts,
+            }));
+        }
     }
-    let self_root = format!("{}.{field}", decomposed.root_text);
-    let (self_text, key_texts) = render_self_and_keys(&self_root, &decomposed.steps[1..], policy)?;
-    Ok(Some(BoundWrite {
-        policy,
-        self_text,
-        key_texts,
-    }))
+    Ok(None)
 }
 
 /// Splits `steps` into the policy's own leading key binders (rendered onto
@@ -317,16 +326,23 @@ pub(crate) fn find_read_policy<'p, 'ast>(
     e: &'ast ast::Expr<'ast>,
 ) -> Option<&'p Policy> {
     let decomposed = decompose(ctx, e, &|k| strip_parens(&ctx.snippet(k.span)).to_string())?;
+    // Struct-field policies bind whether the struct is reached directly
+    // (a plain state variable) or through a pointer local — same as
+    // `bind_decomposed`; this is a read, so no bindability proof is needed.
+    if let Some(Step::Field(field)) = decomposed.steps.first() {
+        if let Some(struct_ty) = declared_struct(ctx, ctx.unit.var(decomposed.root_var)) {
+            if let Some(policy) = checked_policies
+                .by_struct_field
+                .get(&(struct_ty, field.clone()))
+            {
+                return Some(policy);
+            }
+        }
+    }
     if !decomposed.is_pointer {
         return checked_policies.by_state_var.get(&decomposed.root_var);
     }
-    let struct_ty = declared_struct(ctx, ctx.unit.var(decomposed.root_var))?;
-    let Step::Field(field) = decomposed.steps.first()? else {
-        return None;
-    };
-    checked_policies
-        .by_struct_field
-        .get(&(struct_ty, field.clone()))
+    None
 }
 
 enum ReaderSetId {

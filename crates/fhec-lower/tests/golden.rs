@@ -3140,3 +3140,40 @@ fn fhe4008_is_not_a_finding_for_a_fresh_profile_operation_result() {
         out.lower_diag_codes
     );
 }
+
+#[test]
+fn r4_struct_field_reached_directly_through_a_state_variable() {
+    // Not every struct-typed state variable uses the ERC-7201 pointer
+    // idiom — a plain `Config config;` reached directly must also bind.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   struct Config {\n\
+        \x20       euint32 secret;\n\
+        \x20   }\n\
+        \x20   address observer;\n\
+        \x20   Config config;\n\
+        \x20   function setSecret(euint32 v) public {\n\
+        \x20       config.secret = v;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   struct Config {\n\
+        \x20       euint32 secret;\n\
+        \x20   }\n\
+        \x20   address observer;\n\
+        \x20   Config config;\n\
+        \x20   function setSecret(euint32 v) public {\n\
+        \x20       config.secret = v;\n\
+        \x20       FHE.allowThis(config.secret);\n\
+        \x20       if (observer != address(0)) FHE.allow(config.secret, observer);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
