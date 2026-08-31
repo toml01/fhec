@@ -442,6 +442,8 @@ pub struct CheckedUnit {
     pub cast_sugar_sites: Vec<CastSugarSite>,
     /// ACL facts (spec §8).
     pub acl: AclFacts,
+    /// Resolved reader policies (spec §8.8), keyed for R4/R5 lookup.
+    pub policies: crate::policy::PolicyTable,
     /// Diagnostics (spec §9). Any `Severity::Error` entry MUST abort
     /// lowering for the affected contract (spec §1.3).
     pub diagnostics: Vec<Diagnostic>,

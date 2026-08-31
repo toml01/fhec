@@ -151,13 +151,11 @@ impl<'ast> Binder<'ast> {
                 self.insert_file_export(file, s.name, Resolution::TypeName(id));
             }
             ast::ItemKind::Enum(e) => {
-                let id =
-                    self.push_type_decl(file, None, TypeDeclKind::Enum(e), e.name, Vec::new());
+                let id = self.push_type_decl(file, None, TypeDeclKind::Enum(e), e.name, Vec::new());
                 self.insert_file_export(file, e.name, Resolution::TypeName(id));
             }
             ast::ItemKind::Udvt(u) => {
-                let id =
-                    self.push_type_decl(file, None, TypeDeclKind::Udvt(u), u.name, Vec::new());
+                let id = self.push_type_decl(file, None, TypeDeclKind::Udvt(u), u.name, Vec::new());
                 self.insert_file_export(file, u.name, Resolution::TypeName(id));
             }
             ast::ItemKind::Error(e) => {

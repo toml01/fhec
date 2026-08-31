@@ -174,4 +174,16 @@ pub mod codes {
     pub const EBOOL_AS_BOOL: &str = "FHE3022";
     /// op-not-in-profile-version (§1.5).
     pub const OP_NOT_IN_PROFILE: &str = "FHE5001";
+    /// acl-policy-invalid (§8.8).
+    pub const ACL_POLICY_INVALID: &str = "FHE4005";
+    /// acl-policy-target-unbindable (§8.9).
+    pub const ACL_POLICY_TARGET_UNBINDABLE: &str = "FHE4006";
+    /// acl-policy-not-reapplicable (§8.11) — error/warning, see call sites.
+    pub const ACL_POLICY_NOT_REAPPLICABLE: &str = "FHE4007";
+    /// acl-cross-reader-copy (§8.12).
+    pub const ACL_CROSS_READER_COPY: &str = "FHE4008";
+    /// acl-empty-reader-set (§8.12).
+    pub const ACL_EMPTY_READER_SET: &str = "FHE4009";
+    /// suggest-policy-grant (§8.9, §8.10, `--acl=suggest`).
+    pub const SUGGEST_POLICY_GRANT: &str = "FHE4013";
 }

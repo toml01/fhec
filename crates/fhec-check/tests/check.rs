@@ -4367,3 +4367,264 @@ fn fhe1022_in_unit_import_with_an_unseen_base_stays_trusted() {
         assert!(v.is_empty(), "{v:?}");
     });
 }
+
+// ---------------------------------------------------------------------------
+// Reader policies (spec §8.8)
+// ---------------------------------------------------------------------------
+
+mod policy_tests {
+    use super::*;
+    use fhec_check::{PolicyOwner, PolicyReader, PolicyReaders, ReaderRoot};
+
+    const PREAMBLE: &str = r#"
+        pragma solidity ^0.8.25;
+        import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+    "#;
+
+    #[test]
+    fn struct_and_event_policies_from_the_spec_example() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                /// @custom:fhe-allow _balances: account
+                /// @custom:fhe-allow _totalSupply: this
+                struct ConfidentialStorage {{
+                    mapping(address account => euint32) _balances;
+                    euint32 _totalSupply;
+                    address _observer;
+                }}
+                ConfidentialStorage s;
+
+                /// @custom:fhe-allow amount: from, to
+                event ConfidentialTransfer(address indexed from, address indexed to, euint32 indexed amount);
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+            assert_eq!(
+                c.policies.by_struct_field.len(),
+                2,
+                "{:?}",
+                c.policies.by_struct_field.keys().collect::<Vec<_>>()
+            );
+            let balances = c
+                .policies
+                .by_struct_field
+                .values()
+                .find(|p| p.target == "_balances")
+                .expect("_balances policy");
+            assert!(matches!(balances.owner, PolicyOwner::Struct(_)));
+            assert_eq!(balances.keys.len(), 1);
+            assert_eq!(balances.keys[0].alias.as_deref(), Some("account"));
+            match &balances.readers {
+                PolicyReaders::List(list) => {
+                    assert_eq!(list.len(), 1);
+                    match &list[0] {
+                        PolicyReader::Path(p) => assert_eq!(p.root, ReaderRoot::Key(0)),
+                        other => panic!("expected a path reader, got {other:?}"),
+                    }
+                }
+                other => panic!("expected a reader list, got {other:?}"),
+            }
+            let supply = c
+                .policies
+                .by_struct_field
+                .values()
+                .find(|p| p.target == "_totalSupply")
+                .expect("_totalSupply policy");
+            match &supply.readers {
+                PolicyReaders::List(list) => {
+                    assert_eq!(list.len(), 1);
+                    assert!(matches!(list[0], PolicyReader::This));
+                }
+                other => panic!("expected a reader list, got {other:?}"),
+            }
+
+            assert_eq!(c.policies.by_event_param.len(), 1);
+            let amount = c
+                .policies
+                .by_event_param
+                .values()
+                .next()
+                .expect("amount policy");
+            assert!(matches!(amount.owner, PolicyOwner::Event(_)));
+            match &amount.readers {
+                PolicyReaders::List(list) => {
+                    assert_eq!(list.len(), 2);
+                    for reader in list {
+                        match reader {
+                            PolicyReader::Path(p) => {
+                                assert!(
+                                    matches!(&p.root, ReaderRoot::EventParam(n) if n == "from" || n == "to")
+                                );
+                            }
+                            other => panic!("expected a path reader, got {other:?}"),
+                        }
+                    }
+                }
+                other => panic!("expected a reader list, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn state_var_policy_with_nested_struct_uses_self() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                struct Bid {{
+                    euint32 amount;
+                    address bidder;
+                }}
+                /// @custom:fhe-allow _bids: self.bidder
+                mapping(uint256 => Bid) _bids;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+            assert_eq!(c.policies.by_state_var.len(), 1);
+            let p = c.policies.by_state_var.values().next().unwrap();
+            assert_eq!(p.keys.len(), 1);
+            assert!(p.keys[0].alias.is_none());
+            match &p.readers {
+                PolicyReaders::List(list) => {
+                    assert_eq!(list.len(), 1);
+                    match &list[0] {
+                        PolicyReader::Path(path) => {
+                            assert_eq!(path.root, ReaderRoot::SelfRef);
+                            assert_eq!(path.tail, vec!["bidder".to_string()]);
+                        }
+                        other => panic!("expected a path reader, got {other:?}"),
+                    }
+                }
+                other => panic!("expected a reader list, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn public_and_gated_public_policies() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                bool revealed;
+                /// @custom:fhe-allow _open: public
+                euint32 _open;
+                /// @custom:fhe-allow _gated: public if revealed
+                euint32 _gated;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+            let open = c
+                .policies
+                .by_state_var
+                .values()
+                .find(|p| p.target == "_open")
+                .unwrap();
+            assert!(matches!(
+                open.readers,
+                PolicyReaders::Public { condition: None }
+            ));
+            let gated = c
+                .policies
+                .by_state_var
+                .values()
+                .find(|p| p.target == "_gated")
+                .unwrap();
+            match &gated.readers {
+                PolicyReaders::Public {
+                    condition: Some(cond),
+                } => {
+                    assert!(matches!(&cond.root, ReaderRoot::StateVar(_)));
+                }
+                other => panic!("expected a gated public policy, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn restriction_3_rejects_unrecognized_fhe_key() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                /// @custom:fhe-typo _x: this
+                euint32 _x;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4005"], "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn restriction_6_rejects_msg_sender() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                /// @custom:fhe-allow _x: msg
+                euint32 _x;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4005"], "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn restriction_7_rejects_public_combined_with_other_readers() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                /// @custom:fhe-allow _x: this, public
+                euint32 _x;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4005"], "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn restriction_8_rejects_target_naming_itself() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                euint32 other;
+                /// @custom:fhe-allow _x: _x
+                euint32 _x;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4005"], "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn orphaned_tag_in_a_plain_comment_is_rejected() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                // @custom:fhe-allow _x: this
+                euint32 _x;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4005"], "{:?}", c.diagnostics);
+            assert!(c.policies.by_state_var.is_empty());
+        });
+    }
+}

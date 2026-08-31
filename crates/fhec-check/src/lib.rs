@@ -42,6 +42,7 @@ mod emit_trust;
 mod exprs;
 mod imports;
 mod ops;
+mod policy;
 mod precondition;
 mod shared;
 mod sites;
@@ -52,6 +53,10 @@ mod walk;
 
 pub use diag::{codes, Diagnostic, FixIt, Severity};
 pub use ops::is_msg_sender;
+pub use policy::{
+    KeyBinder, Policy, PolicyOwner, PolicyReader, PolicyReaders, PolicyTable, ReaderPath,
+    ReaderRoot,
+};
 pub use sites::{
     AclFacts, CastSugarSite, CheckedUnit, CompoundAssignSite, EncryptedArgCall, EncryptedIfSite,
     EncryptedReturn, EncryptedStorageWrite, InSugarSite, IncDecSite, OperandKind, OperandPlan,
@@ -82,6 +87,7 @@ pub fn check<'ast>(
 
     sugar::scan(files, unit, &trust, profile, &mut out);
     precondition::scan(unit, &mut out);
+    policy::collect(unit, &trust, sm, &mut out);
 
     let mut safe_cache: FxHashMap<fhec_bind::FunctionId, bool> = FxHashMap::default();
     let fids: Vec<fhec_bind::FunctionId> = unit.functions().map(|(id, _)| id).collect();
