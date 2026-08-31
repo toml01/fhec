@@ -26,9 +26,9 @@ contract EncryptedCounterDialect {
     constructor(uint32 initialValue, uint32 capValue) {
         owner = msg.sender;
         count = FHE.asEuint32(initialValue);
-        FHE.allowThis(count);
+        if (FHE.isInitialized(count)) { FHE.allowThis(count); }
         cap = FHE.asEuint32(capValue);
-        FHE.allowThis(cap);
+        if (FHE.isInitialized(cap)) { FHE.allowThis(cap); }
     }
 
     function getCount() external view returns (euint32) {
@@ -48,13 +48,13 @@ contract EncryptedCounterDialect {
                 __fhe_then_2 = next;
             }
             count = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);
-            FHE.allowThis(count);
+            if (FHE.isInitialized(count)) { FHE.allowThis(count); }
         }
     }
 
     /// Literal operand: `1` must be range-checked and trivially encrypted.
     function incrementByOne() external onlyOwner {
         count = FHE.add(count, FHE.asEuint32(1));
-        FHE.allowThis(count);
+        if (FHE.isInitialized(count)) { FHE.allowThis(count); }
     }
 }

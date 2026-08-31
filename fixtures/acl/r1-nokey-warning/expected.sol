@@ -16,11 +16,11 @@ contract NoKeyWrites {
 
     function setIndex(uint256 i, euint32 v) public {
         amounts[i] = v;
-        FHE.allowThis(amounts[i]);
+        if (FHE.isInitialized(amounts[i])) { FHE.allowThis(amounts[i]); }
     }
 
     function setField(euint32 v) public {
         acct.balance = v;
-        FHE.allowThis(acct.balance);
+        if (FHE.isInitialized(acct.balance)) { FHE.allowThis(acct.balance); }
     }
 }

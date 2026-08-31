@@ -28,11 +28,11 @@ abstract contract C is Ownable {
 
     function f(D storage d, euint64 v) internal {
         d.bal = v;
-        FHE.allowThis(d.bal);
+        if (FHE.isInitialized(d.bal)) { FHE.allowThis(d.bal); }
     }
 
     function g(uint256 k, euint64 v) internal {
         w[k].inner.bal = v;
-        FHE.allowThis(w[k].inner.bal);
+        if (FHE.isInitialized(w[k].inner.bal)) { FHE.allowThis(w[k].inner.bal); }
     }
 }

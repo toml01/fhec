@@ -10,12 +10,12 @@ contract Comparison {
 
     function f() public {
         eb = FHE.lt(a, b);
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
         eb = FHE.gte(a, b);
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
         eb = FHE.eq(a, b);
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
         eb = FHE.ne(a, b);
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
     }
 }

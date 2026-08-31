@@ -33,7 +33,7 @@ contract UnnamedReturnWidening {
 
     function ret() public returns (euint32) {
         euint32 __fhe_ret_0 = val();
-        FHE.allowTransient(__fhe_ret_0, msg.sender);
+        if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }
         return __fhe_ret_0;
     }
 }

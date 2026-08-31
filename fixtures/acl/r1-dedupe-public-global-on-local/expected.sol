@@ -27,7 +27,7 @@ contract BroadGrantOnLocal {
     function control(uint64 v) external {
         euint64 s = FHE.asEuint64(v);
         plain = s;
-        FHE.allowThis(plain);
+        if (FHE.isInitialized(plain)) { FHE.allowThis(plain); }
     }
 
     // A broad grant suppresses only allowThis, not the separate sender grant.
@@ -35,7 +35,7 @@ contract BroadGrantOnLocal {
         euint64 s = FHE.asEuint64(v);
         FHE.allowPublic(s);
         owned[msg.sender] = s;
-        FHE.allowSender(owned[msg.sender]);
+        if (FHE.isInitialized(owned[msg.sender])) { FHE.allowSender(owned[msg.sender]); }
     }
 
     // A broad grant before a conditional write applies only to the old handle.
@@ -46,7 +46,7 @@ contract BroadGrantOnLocal {
             s = FHE.asEuint64(replacement);
         }
         pub = s;
-        FHE.allowThis(pub);
+        if (FHE.isInitialized(pub)) { FHE.allowThis(pub); }
     }
 
     // Tuple components are writes for the local-grant window too.
@@ -56,7 +56,7 @@ contract BroadGrantOnLocal {
         FHE.allowGlobal(s);
         (s, other) = (other, s);
         global = s;
-        FHE.allowThis(global);
+        if (FHE.isInitialized(global)) { FHE.allowThis(global); }
     }
 
     // A same-named call through an unrelated library is not an FHE grant.
@@ -64,7 +64,7 @@ contract BroadGrantOnLocal {
         euint64 s = FHE.asEuint64(v);
         FakeAcl.allowPublic(s);
         plain = s;
-        FHE.allowThis(plain);
+        if (FHE.isInitialized(plain)) { FHE.allowThis(plain); }
     }
 
     // CoFHE's encrypted-receiver bindings are genuine broad grants.

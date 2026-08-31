@@ -804,7 +804,8 @@ impl<'ast> FnChecker<'_, 'ast> {
                 // target and the RHS are the SAME slot, so checking after
                 // the write would just see the write's own fresh state.
                 let rhs_unassigned = matches!(lty, Ty::Encrypted(_)) && self.rhs_is_unassigned(rhs);
-                self.simple_assign(lhs, rhs.span, &rty, &lty, &lv);
+                let value_wrapped = self.is_wrap_call(rhs);
+                self.simple_assign(lhs, rhs.span, &rty, &lty, &lv, value_wrapped);
                 // A copy from an encrypted expression that is itself not
                 // definitely assigned propagates that unassigned status to
                 // the target, rather than unconditionally becoming
@@ -935,7 +936,7 @@ impl<'ast> FnChecker<'_, 'ast> {
         // The checker intentionally does not model individual tuple-result
         // types. Solidity checks component compatibility; the checker only
         // needs the target type here to record the definite assignment.
-        self.record_simple_write(lhs, &lty, &lv);
+        self.record_simple_write(lhs, &lty, &lv, false);
         if matches!(lty, Ty::Encrypted(_)) {
             if let Some(span) = unassigned_span {
                 self.propagate_or_flag_unassigned_copy(&lv, span);
@@ -973,6 +974,7 @@ impl<'ast> FnChecker<'_, 'ast> {
         rty: &Ty,
         lty: &Ty,
         lv: &LvalueInfo,
+        value_wrapped: bool,
     ) {
         if *lty == Ty::Plain(PlainTy::Bool) && *rty == Ty::Encrypted(EType::Ebool) {
             self.error(
@@ -982,13 +984,20 @@ impl<'ast> FnChecker<'_, 'ast> {
                  is an explicit asynchronous operation",
             );
         }
-        self.record_simple_write(lhs, lty, lv);
+        self.record_simple_write(lhs, lty, lv, value_wrapped);
     }
 
     /// Records the mutation represented by one simple-assignment target.
-    fn record_simple_write(&mut self, lhs: &'ast ast::Expr<'ast>, lty: &Ty, lv: &LvalueInfo) {
+    /// `value_wrapped` — see [`FnChecker::finish_encrypted_write`].
+    fn record_simple_write(
+        &mut self,
+        lhs: &'ast ast::Expr<'ast>,
+        lty: &Ty,
+        lv: &LvalueInfo,
+        value_wrapped: bool,
+    ) {
         match lty {
-            Ty::Encrypted(t) => self.finish_encrypted_write(lv, lhs.span, *t),
+            Ty::Encrypted(t) => self.finish_encrypted_write(lv, lhs.span, *t, value_wrapped),
             _ => self.plain_write(lv, lhs.span, lty),
         }
     }
@@ -1067,7 +1076,7 @@ impl<'ast> FnChecker<'_, 'ast> {
             file: self.file,
         };
         self.out.compound_sites.push(site);
-        self.finish_encrypted_write(lv, lhs.span, t);
+        self.finish_encrypted_write(lv, lhs.span, t, false);
         Ty::Encrypted(t)
     }
 
@@ -1084,7 +1093,18 @@ impl<'ast> FnChecker<'_, 'ast> {
 
     /// Bookkeeping shared by every encrypted write: definite assignment,
     /// branch-merge logging, and the R1 storage-write fact (spec §8.1).
-    pub(crate) fn finish_encrypted_write(&mut self, lv: &LvalueInfo, span: Span, t: EType) {
+    /// `value_wrapped` is `true` only when the caller has established the
+    /// write's RHS is exactly a `eT.wrap(x)` UDVT cast with no intervening
+    /// profile operation (spec §8.1 FHE4014) — always `false` for a
+    /// compound-assignment or inc/dec write, which always compute through a
+    /// real operator and can never take this shape.
+    pub(crate) fn finish_encrypted_write(
+        &mut self,
+        lv: &LvalueInfo,
+        span: Span,
+        t: EType,
+        value_wrapped: bool,
+    ) {
         if let Some(name) = &lv.root_name {
             let name = name.clone();
             self.note_assign(&name, span);
@@ -1096,6 +1116,7 @@ impl<'ast> FnChecker<'_, 'ast> {
                 slot: lv.slot_kind.clone(),
                 value_ty: t,
                 in_view_or_pure: self.is_view_or_pure,
+                value_wrapped,
                 function: self.fid,
                 file: self.file,
             };
@@ -1104,6 +1125,28 @@ impl<'ast> FnChecker<'_, 'ast> {
         // Encrypted writes to storage inside a branch belong to the
         // enclosing if-site's merge lowering; locals are logged by
         // note_assign above. Nothing else to do here.
+    }
+
+    /// Whether `e`, peeled, is exactly a `eT.wrap(x)` UDVT cast (spec §8.1
+    /// FHE4014) — a Solidity user-defined-value-type cast resolved entirely
+    /// at compile time, never a call into CoFHE, so it registers no
+    /// permission for anyone on its result regardless of `x`. Only the
+    /// *top-level* shape matters here: a value produced by a real profile
+    /// operation is exempt even when one of *its* operands was itself
+    /// `.wrap`-derived, since the operation registers the result's own
+    /// permission independently (spec §8.1).
+    pub(crate) fn is_wrap_call(&self, e: &'ast ast::Expr<'ast>) -> bool {
+        let ast::ExprKind::Call(callee, _) = &e.peel_parens().kind else {
+            return false;
+        };
+        let ast::ExprKind::Member(obj, name) = &callee.peel_parens().kind else {
+            return false;
+        };
+        name.as_str() == "wrap"
+            && matches!(
+                self.out.types.get(obj.span),
+                Some(Ty::Plain(PlainTy::EncTypeRef(_)))
+            )
     }
 
     /// Bookkeeping for a plaintext (or unprovable) write: §7.1 FHE3006.

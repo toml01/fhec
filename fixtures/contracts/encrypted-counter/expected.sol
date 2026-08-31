@@ -31,7 +31,7 @@ contract EncryptedCounter {
     function setCount(externalEuint32 next_input, bytes memory inputProof) external onlyOwner {
         euint32 next = FHE.asEuint32(next_input, inputProof);
         count = next;
-        FHE.allowThis(count);
+        if (FHE.isInitialized(count)) { FHE.allowThis(count); }
     }
 
     function incrementBy(externalEuint32 amount_input, bytes memory inputProof) external onlyOwner {
@@ -47,12 +47,12 @@ contract EncryptedCounter {
             next = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);
         }
         count = next;
-        FHE.allowThis(count);
+        if (FHE.isInitialized(count)) { FHE.allowThis(count); }
     }
 
     function take() external onlyOwner returns (euint32) {
         euint32 __fhe_ret_0 = count;
-        FHE.allowTransient(__fhe_ret_0, msg.sender);
+        if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }
         return __fhe_ret_0;
     }
 }

@@ -12,7 +12,7 @@ contract SharedInputBasic {
     function deposit(sharedEuint32 amount_shared, uint256 tag) external {
         euint32 amount = FHE.receiveEuint32Param(amount_shared);
         a = amount;
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         tag;
     }
 }

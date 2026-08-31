@@ -11,7 +11,7 @@ contract IfElse {
     function f() public {
         {
             a = FHE.select(eb, b, FHE.add(a, b));
-            FHE.allowThis(a);
+            if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         }
     }
 }

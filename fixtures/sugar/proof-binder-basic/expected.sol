@@ -16,7 +16,7 @@ contract SugarProofBinderBasic {
     ) public {
         euint32 amount = FHE.asEuint32(amount_input, inputProof);
         a = amount;
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         to;
         data;
     }

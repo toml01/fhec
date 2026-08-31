@@ -144,6 +144,18 @@ const COFHE_0_2_OPS: &[OpEntry] = &[
         Applicability::AnyEncrypted,
         ResultKind::Void,
     ),
+    entry(
+        FheOp::Allow,
+        "allow",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
+    entry(
+        FheOp::AllowPublic,
+        "allowPublic",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
 ];
 
 /// The CoFHE target profile.
@@ -214,7 +226,7 @@ impl CofheProfile {
     fn encrypted_operand_count(op: FheOp) -> usize {
         match op {
             FheOp::TrivialEncrypt { .. } | FheOp::FromExternal { .. } => 0,
-            FheOp::AllowTransient => 1,
+            FheOp::AllowTransient | FheOp::Allow => 1,
             _ => op.arity(),
         }
     }
@@ -343,6 +355,12 @@ impl TargetProfile for CofheProfile {
             return None;
         }
         self.lookup(op).map(|e| e.name.to_string())
+    }
+
+    fn is_initialized_fn(&self) -> String {
+        // FHE.sol (every 0.2.x release): `isInitialized(T v) internal pure`,
+        // `eT.unwrap(v) != 0`.
+        format!("{}.isInitialized", self.lib)
     }
 
     fn external_input_type(&self, ty: EType) -> String {

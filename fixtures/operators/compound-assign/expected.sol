@@ -9,8 +9,8 @@ contract CompoundAssign {
 
     function f() public {
         a = FHE.add(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.mul(a, FHE.asEuint32(2));
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
     }
 }

@@ -9,11 +9,11 @@ contract CastBasic {
 
     function setFlag() public {
         flag = FHE.asEbool(true);
-        FHE.allowThis(flag);
+        if (FHE.isInitialized(flag)) { FHE.allowThis(flag); }
     }
 
     function setAmount() public {
         amount = FHE.asEuint32(5);
-        FHE.allowThis(amount);
+        if (FHE.isInitialized(amount)) { FHE.allowThis(amount); }
     }
 }

@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// A forward-only policy (spec §8.11): a compliance observer named alongside
+// a mapping-keyed reader is legal, but the transpiler cannot enumerate the
+// mapping's keys to re-apply the observer grant to handles already written —
+// FHE4007 warning, not a refusal.
+contract ForwardOnlyObserver {
+    address _observer;
+
+    /// @custom:fhe-allow _balances: account, _observer
+    mapping(address account => euint32) _balances;
+
+    function credit(address to, euint32 v) public {
+        _balances[to] = v;
+        if (FHE.isInitialized(_balances[to])) {
+            FHE.allowThis(_balances[to]);
+            if (to != address(0)) FHE.allow(_balances[to], to);
+            if (_observer != address(0)) FHE.allow(_balances[to], _observer);
+        }
+    }
+}

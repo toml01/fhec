@@ -19,6 +19,6 @@ contract PreconditionBasic {
         }
         euint32 amount = FHE.asEuint32(amount_input, inputProof);
         balance = amount;
-        FHE.allowThis(balance);
+        if (FHE.isInitialized(balance)) { FHE.allowThis(balance); }
     }
 }

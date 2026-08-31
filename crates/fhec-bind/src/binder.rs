@@ -129,22 +129,33 @@ impl<'ast> Binder<'ast> {
                 }
             }
             ast::ItemKind::Variable(var) => {
-                let id = self.push_var(file, VarOwner::FileConst(file), var);
+                let id = self.push_var(
+                    file,
+                    VarOwner::FileConst(file),
+                    var,
+                    extract_policy_docs(&item.docs),
+                );
                 if let Some(name) = var.name {
                     self.insert_file_export(file, name, Resolution::FileConst(id));
                 }
             }
             ast::ItemKind::Struct(s) => {
-                let id = self.push_type_decl(file, None, TypeDeclKind::Struct(s), s.name);
+                let id = self.push_type_decl(
+                    file,
+                    None,
+                    TypeDeclKind::Struct(s),
+                    s.name,
+                    extract_policy_docs(&item.docs),
+                );
                 self.collect_struct_fields(file, id, s);
                 self.insert_file_export(file, s.name, Resolution::TypeName(id));
             }
             ast::ItemKind::Enum(e) => {
-                let id = self.push_type_decl(file, None, TypeDeclKind::Enum(e), e.name);
+                let id = self.push_type_decl(file, None, TypeDeclKind::Enum(e), e.name, Vec::new());
                 self.insert_file_export(file, e.name, Resolution::TypeName(id));
             }
             ast::ItemKind::Udvt(u) => {
-                let id = self.push_type_decl(file, None, TypeDeclKind::Udvt(u), u.name);
+                let id = self.push_type_decl(file, None, TypeDeclKind::Udvt(u), u.name, Vec::new());
                 self.insert_file_export(file, u.name, Resolution::TypeName(id));
             }
             ast::ItemKind::Error(e) => {
@@ -162,6 +173,7 @@ impl<'ast> Binder<'ast> {
                     ast: e,
                     file,
                     contract: None,
+                    policy_docs: extract_policy_docs(&item.docs),
                 });
                 self.insert_file_export(file, e.name, Resolution::Event(id));
             }
@@ -225,23 +237,46 @@ impl<'ast> Binder<'ast> {
                     }
                 }
                 ast::ItemKind::Variable(var) => {
-                    let vid = self.push_var(file, VarOwner::State(id), var);
+                    let vid = self.push_var(
+                        file,
+                        VarOwner::State(id),
+                        var,
+                        extract_policy_docs(&item.docs),
+                    );
                     self.unit.contracts[id.index()].state_vars.push(vid);
                     if let Some(name) = var.name {
                         self.insert_member(id, name, Resolution::StateVar(vid));
                     }
                 }
                 ast::ItemKind::Struct(s) => {
-                    let tid = self.push_type_decl(file, Some(id), TypeDeclKind::Struct(s), s.name);
+                    let tid = self.push_type_decl(
+                        file,
+                        Some(id),
+                        TypeDeclKind::Struct(s),
+                        s.name,
+                        extract_policy_docs(&item.docs),
+                    );
                     self.collect_struct_fields(file, tid, s);
                     self.insert_member(id, s.name, Resolution::TypeName(tid));
                 }
                 ast::ItemKind::Enum(e) => {
-                    let tid = self.push_type_decl(file, Some(id), TypeDeclKind::Enum(e), e.name);
+                    let tid = self.push_type_decl(
+                        file,
+                        Some(id),
+                        TypeDeclKind::Enum(e),
+                        e.name,
+                        Vec::new(),
+                    );
                     self.insert_member(id, e.name, Resolution::TypeName(tid));
                 }
                 ast::ItemKind::Udvt(u) => {
-                    let tid = self.push_type_decl(file, Some(id), TypeDeclKind::Udvt(u), u.name);
+                    let tid = self.push_type_decl(
+                        file,
+                        Some(id),
+                        TypeDeclKind::Udvt(u),
+                        u.name,
+                        Vec::new(),
+                    );
                     self.insert_member(id, u.name, Resolution::TypeName(tid));
                 }
                 ast::ItemKind::Error(e) => {
@@ -259,6 +294,7 @@ impl<'ast> Binder<'ast> {
                         ast: e,
                         file,
                         contract: Some(id),
+                        policy_docs: extract_policy_docs(&item.docs),
                     });
                     self.insert_member(id, e.name, Resolution::Event(eid));
                 }
@@ -293,13 +329,13 @@ impl<'ast> Binder<'ast> {
             .parameters
             .vars
             .iter()
-            .map(|v| self.push_var(file, VarOwner::Param(id), v))
+            .map(|v| self.push_var(file, VarOwner::Param(id), v, Vec::new()))
             .collect();
         let returns: Vec<VarId> = func
             .header
             .returns()
             .iter()
-            .map(|v| self.push_var(file, VarOwner::Return(id), v))
+            .map(|v| self.push_var(file, VarOwner::Return(id), v, Vec::new()))
             .collect();
         let info = &mut self.unit.functions[id.index()];
         info.params = params;
@@ -314,7 +350,7 @@ impl<'ast> Binder<'ast> {
         s: &'ast ast::ItemStruct<'ast>,
     ) {
         for field in s.fields.iter() {
-            self.push_var(file, VarOwner::StructField(id), field);
+            self.push_var(file, VarOwner::StructField(id), field, Vec::new());
         }
     }
 
@@ -323,6 +359,7 @@ impl<'ast> Binder<'ast> {
         file: FileId,
         owner: VarOwner,
         var: &'ast ast::VariableDefinition<'ast>,
+        policy_docs: Vec<PolicyDoc>,
     ) -> VarId {
         let id = VarId::new(self.unit.vars.len());
         self.unit.vars.push(VarInfo {
@@ -330,6 +367,7 @@ impl<'ast> Binder<'ast> {
             name: var.name,
             file,
             owner,
+            policy_docs,
         });
         id
     }
@@ -340,6 +378,7 @@ impl<'ast> Binder<'ast> {
         contract: Option<ContractId>,
         kind: TypeDeclKind<'ast>,
         name: Ident,
+        policy_docs: Vec<PolicyDoc>,
     ) -> TypeDeclId {
         let id = TypeDeclId::new(self.unit.type_decls.len());
         self.unit.type_decls.push(TypeDeclInfo {
@@ -347,6 +386,7 @@ impl<'ast> Binder<'ast> {
             file,
             contract,
             name,
+            policy_docs,
         });
         id
     }
@@ -927,7 +967,7 @@ impl<'a, 'ast> Walker<'a, 'ast> {
             .expect("locals can only be declared inside a function body");
         let vid = self
             .binder
-            .push_var(self.file, VarOwner::Local(function), var);
+            .push_var(self.file, VarOwner::Local(function), var, Vec::new());
         if let Some(name) = var.name {
             self.declare(name, Resolution::Local(vid));
         }

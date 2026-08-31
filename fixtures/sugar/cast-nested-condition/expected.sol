@@ -9,6 +9,6 @@ contract CastNestedCondition {
 
     function pick() public {
         total = FHE.select(cond, FHE.asEuint32(1), FHE.asEuint32(2));
-        FHE.allowThis(total);
+        if (FHE.isInitialized(total)) { FHE.allowThis(total); }
     }
 }

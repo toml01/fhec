@@ -337,6 +337,11 @@ pub struct EncryptedStorageWrite {
     pub value_ty: EType,
     /// Whether the enclosing function is `view`/`pure`.
     pub in_view_or_pure: bool,
+    /// Whether the written value's RHS is exactly a `eT.wrap(x)` UDVT cast
+    /// (spec §8.1 FHE4014): such a handle has no permission registered for
+    /// anyone, including this contract, so inserting `allowThis` on it
+    /// would revert rather than grant.
+    pub value_wrapped: bool,
     /// The enclosing function.
     pub function: FunctionId,
     /// The file containing the write.
@@ -442,6 +447,8 @@ pub struct CheckedUnit {
     pub cast_sugar_sites: Vec<CastSugarSite>,
     /// ACL facts (spec §8).
     pub acl: AclFacts,
+    /// Resolved reader policies (spec §8.8), keyed for R4/R5 lookup.
+    pub policies: crate::policy::PolicyTable,
     /// Diagnostics (spec §9). Any `Severity::Error` entry MUST abort
     /// lowering for the affected contract (spec §1.3).
     pub diagnostics: Vec<Diagnostic>,

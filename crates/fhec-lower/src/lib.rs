@@ -44,6 +44,16 @@ pub(crate) mod codes {
     /// An ACL grant would have to be written where no statement may go
     /// (spec §8).
     pub(crate) const ACL_POSITION_ILLEGAL: &str = "FHE4004";
+    /// `--acl=suggest`: a policy-governed R4/R5 grant would land here (spec
+    /// §8.9, §8.10, §8.11).
+    pub(crate) const SUGGEST_POLICY_GRANT: &str = "FHE4013";
+    /// A reader policy's target cannot be bound at this write site (spec
+    /// §8.9).
+    pub(crate) const ACL_POLICY_TARGET_UNBINDABLE: &str = "FHE4006";
+    /// A `.wrap`-derived write or emit argument: every grant an R1/R4/R5
+    /// site would insert is withheld because it would revert rather than
+    /// grant (spec §8.1).
+    pub(crate) const ACL_GRANT_ON_UNPERMISSIONED_HANDLE: &str = "FHE4014";
 }
 
 mod ctx;
@@ -53,6 +63,7 @@ mod imports;
 mod pass_acl;
 mod pass_if;
 mod pass_ops;
+mod policy_bind;
 
 use ctx::Ctx;
 
@@ -164,6 +175,7 @@ pub fn lower<'ast>(
                     let ictx = pass_if::IfCtx {
                         ctx: &ctx,
                         namer: &namer,
+                        function,
                         if_span: site.span,
                         acl_insert,
                         diags: &diags,

@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// R5 — a policy on an event parameter (spec §8.10): an event is the only
+// boundary at which an EOA receives a handle it must read later, so only a
+// persistent grant can serve that reader.
+contract PolicyOnEvent {
+    /// @custom:fhe-allow amount: from, to
+    event ConfidentialTransfer(address indexed from, address indexed to, euint32 indexed amount);
+
+    function transfer(address from, address to, euint32 amount) public {
+        if (FHE.isInitialized(amount)) {
+            FHE.allowThis(amount);
+            if (from != address(0)) FHE.allow(amount, from);
+            if (to != address(0)) FHE.allow(amount, to);
+        }
+        emit ConfidentialTransfer(from, to, amount);
+    }
+}

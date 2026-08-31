@@ -16,7 +16,7 @@ contract BracelessBranchBody {
 
     // R2 — the guarded call must stay guarded.
     function r2(bool notPaused, euint32 a) public {
-        if (notPaused) { FHE.allowTransient(a, address(vault));
+        if (notPaused) { if (FHE.isInitialized(a)) { FHE.allowTransient(a, address(vault)); }
         vault.push(a);
         }
     }
@@ -24,45 +24,55 @@ contract BracelessBranchBody {
     // R1 — both grants must stay inside the branch.
     function r1(bool ok, euint32 amt) public {
         if (ok) { _bal[msg.sender] = amt;
-        FHE.allowThis(_bal[msg.sender]);
-        FHE.allowSender(_bal[msg.sender]);
+        if (FHE.isInitialized(_bal[msg.sender])) {
+            FHE.allowThis(_bal[msg.sender]);
+            FHE.allowSender(_bal[msg.sender]);
+        }
         }
     }
 
     // R1 in an `else`, and in a loop body.
     function r1Else(bool ok, euint32 amt) public {
         if (ok) { _bal[msg.sender] = amt;
-        FHE.allowThis(_bal[msg.sender]);
-        FHE.allowSender(_bal[msg.sender]);
+        if (FHE.isInitialized(_bal[msg.sender])) {
+            FHE.allowThis(_bal[msg.sender]);
+            FHE.allowSender(_bal[msg.sender]);
+        }
         }
         else { _bal[msg.sender] = amt;
-        FHE.allowThis(_bal[msg.sender]);
-        FHE.allowSender(_bal[msg.sender]);
+        if (FHE.isInitialized(_bal[msg.sender])) {
+            FHE.allowThis(_bal[msg.sender]);
+            FHE.allowSender(_bal[msg.sender]);
+        }
         }
     }
 
     function r1Loop(euint32 amt) public {
         for (uint256 i = 0; i < 2; i++) { _bal[msg.sender] = amt;
-        FHE.allowThis(_bal[msg.sender]);
-        FHE.allowSender(_bal[msg.sender]);
+        if (FHE.isInitialized(_bal[msg.sender])) {
+            FHE.allowThis(_bal[msg.sender]);
+            FHE.allowSender(_bal[msg.sender]);
+        }
         }
     }
 
     function r1While(bool ok, euint32 amt) public {
         while (ok) { _bal[msg.sender] = amt;
-        FHE.allowThis(_bal[msg.sender]);
-        FHE.allowSender(_bal[msg.sender]);
+        if (FHE.isInitialized(_bal[msg.sender])) {
+            FHE.allowThis(_bal[msg.sender]);
+            FHE.allowSender(_bal[msg.sender]);
+        }
         }
     }
 
     // R3 — the hoisted return declaration needs the block too.
     function r3(bool ok) public returns (euint32) {
         if (ok) { euint32 __fhe_ret_0 = _bal[msg.sender];
-        FHE.allowTransient(__fhe_ret_0, msg.sender);
+        if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }
         return __fhe_ret_0;
         }
         euint32 __fhe_ret_1 = _bal[msg.sender];
-        FHE.allowTransient(__fhe_ret_1, msg.sender);
+        if (FHE.isInitialized(__fhe_ret_1)) { FHE.allowTransient(__fhe_ret_1, msg.sender); }
         return __fhe_ret_1;
     }
 

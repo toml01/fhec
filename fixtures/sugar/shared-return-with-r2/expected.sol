@@ -19,7 +19,7 @@ contract SharedReturnWithR2 {
     IVault vault;
 
     function drain() public returns (sharedEuint64) {
-        FHE.allowTransient(balance, address(vault));
+        if (FHE.isInitialized(balance)) { FHE.allowTransient(balance, address(vault)); }
         try vault.pull(balance) returns (euint64 pulled) {
             return FHE.shareEuint64(pulled, msg.sender);
         } catch {

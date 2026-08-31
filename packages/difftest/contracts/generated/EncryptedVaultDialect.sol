@@ -19,8 +19,10 @@ contract EncryptedVaultDialect {
     function deposit(externalEuint64 amount_input, bytes memory inputProof) external {
         euint64 amount = FHE.asEuint64(amount_input, inputProof);
         balances[msg.sender] = FHE.add(balances[msg.sender], amount);
-        FHE.allowThis(balances[msg.sender]);
-        FHE.allowSender(balances[msg.sender]);
+        if (FHE.isInitialized(balances[msg.sender])) {
+            FHE.allowThis(balances[msg.sender]);
+            FHE.allowSender(balances[msg.sender]);
+        }
     }
 
     /// Transfer under an encrypted sufficiency check. Each mapping slot must
@@ -47,8 +49,10 @@ contract EncryptedVaultDialect {
                 __fhe_then_3 = FHE.sub(fromBalance, amount);
             }
             balances[__fhe_key_1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_2);
-            FHE.allowThis(balances[__fhe_key_1]);
-            FHE.allowSender(balances[__fhe_key_1]);
+            if (FHE.isInitialized(balances[__fhe_key_1])) {
+                FHE.allowThis(balances[__fhe_key_1]);
+                FHE.allowSender(balances[__fhe_key_1]);
+            }
         }
         {
             ebool __fhe_cond_4 = ok;
@@ -59,14 +63,14 @@ contract EncryptedVaultDialect {
                 __fhe_then_7 = FHE.add(toBalance, amount);
             }
             balances[__fhe_key_5] = FHE.select(__fhe_cond_4, __fhe_then_7, __fhe_pre_6);
-            FHE.allowThis(balances[__fhe_key_5]);
+            if (FHE.isInitialized(balances[__fhe_key_5])) { FHE.allowThis(balances[__fhe_key_5]); }
         }
     }
 
     /// Rule R3: non-view encrypted return needs a transient grant to the caller.
     function getBalance() external returns (euint64) {
         euint64 __fhe_ret_0 = balances[msg.sender];
-        FHE.allowTransient(__fhe_ret_0, msg.sender);
+        if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }
         return __fhe_ret_0;
     }
 
@@ -75,7 +79,7 @@ contract EncryptedVaultDialect {
     function reportBalance(address auditor) external {
         IAuditorSink __fhe_callee_0 = IAuditorSink(auditor);
         euint64 __fhe_val_1 = balances[msg.sender];
-        FHE.allowTransient(__fhe_val_1, address(__fhe_callee_0));
+        if (FHE.isInitialized(__fhe_val_1)) { FHE.allowTransient(__fhe_val_1, address(__fhe_callee_0)); }
         __fhe_callee_0.report(__fhe_val_1);
     }
 

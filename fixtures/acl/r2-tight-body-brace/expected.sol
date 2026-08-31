@@ -14,7 +14,7 @@ contract R2TightBrace {
     IVault vault;
 
     function f(externalEuint32 amount_input, bytes memory inputProof) public {
-euint32 amount = FHE.asEuint32(amount_input, inputProof);FHE.allowTransient(amount, address(vault));
+euint32 amount = FHE.asEuint32(amount_input, inputProof);if (FHE.isInitialized(amount)) { FHE.allowTransient(amount, address(vault)); }
     vault.push(amount, 1);
     }
 }

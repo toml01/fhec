@@ -10,6 +10,13 @@
 //! ordered by [`fhec_ir::InsertOrder`], so they compose with every other
 //! patch inside the statement.
 //!
+//! Every inserted grant sequence that is not withheld under FHE4014 is
+//! wrapped in the spec §8.1 initialization guard —
+//! `if (FHE.isInitialized(<handle>)) { ... }` — because a grant on a handle
+//! that carries no CoFHE permission (an unwritten slot's zero sentinel, a
+//! `.wrap`-derived value arriving through a parameter) reverts instead of
+//! granting, and provenance is a runtime property (issue #103).
+//!
 //! Dedupe (spec §8.6): an equivalent existing call suppresses the insertion —
 //! same ACL function, syntactically identical argument after parenthesis
 //! stripping; method syntax counts as library syntax. An author-written
@@ -17,13 +24,16 @@
 //! `allowThis`. R1 scans forward from the trigger to the next write of the
 //! same location or the end of the block; R2/R3 insert *before* their trigger,
 //! so their window scans backward from the trigger to the start of the block
-//! (a §8.6 refinement — the spec's forward window is written for R1).
+//! (a §8.6 refinement — the spec's forward window is written for R1). The
+//! §8.1 initialization guard is transparent to every window scan (one
+//! level), so a re-transpile of guarded output inserts nothing (spec §1.4).
 
 use std::cell::RefCell;
 
 use fhec_bind::{FunctionId, MethodResolution};
 use fhec_check::{
-    EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, PlainTy, Severity, SlotKind, Ty,
+    EncryptedArgCall, EncryptedReturn, EncryptedStorageWrite, PlainTy, PolicyReader, PolicyReaders,
+    ReaderRoot, Severity, SlotKind, Ty,
 };
 use fhec_emit::{TempHint, TempNamer};
 use fhec_ir::{EType, FheOp, FilePlan, Patch, Provenance};
@@ -99,7 +109,420 @@ pub(crate) fn run_function<'ast>(
     while let Some(&(span, _, _, _)) = outcome.pending_r1.first() {
         refuse_pending_r1(ctx, span, &mut outcome)?;
     }
+
+    // R5 — policy grants at event arguments (spec §8.10). `emit` can never
+    // appear inside an encrypted branch (checker-rejected), so every emit
+    // statement of this function is in scope; patch byte position, not push
+    // order, decides the final splice order, so running this after W/C/R is
+    // safe.
+    for stmt in collect_emit_stmts(ctx, function) {
+        if !inside_if(stmt.span) {
+            rule_r5(
+                ctx,
+                function,
+                stmt,
+                namer,
+                acl_insert,
+                diags,
+                plan,
+                &mut outcome,
+            )?;
+        }
+    }
+
+    // Re-application (spec §8.11): a plain write to a state variable a
+    // policy names (in its readers or its `public if` condition) re-emits
+    // that policy's grants. Scoped to a target that is not a mapping/array
+    // (`policy.keys` empty) — a mapping/array target cannot be re-applied
+    // regardless of where the trigger fires (spec §8.11, FHE4007). An
+    // event target is excluded too: it has no persistent handle outside an
+    // actual `emit` to re-grant. A state-variable target is always
+    // nameable by its own bare name; a struct-field target additionally
+    // needs a way to *reach* that struct from the trigger's function — see
+    // `find_struct_reach` — and silently skips re-application there when
+    // no unambiguous one exists, rather than guess.
+    let triggers = reapply_triggers(&ctx.checked.policies);
+    if !triggers.is_empty() {
+        for stmt in collect_assign_stmts(ctx, function) {
+            if !inside_if(stmt.span) {
+                rule_reapply(
+                    ctx,
+                    function,
+                    stmt,
+                    &triggers,
+                    namer,
+                    acl_insert,
+                    diags,
+                    plan,
+                    &mut outcome,
+                )?;
+            }
+        }
+    }
     Ok(outcome)
+}
+
+/// Every policy a write to a given state variable must re-apply (spec
+/// §8.11): the variable names a bindable (non-mapping/array) target's
+/// reader, or its `public if` condition.
+fn reapply_triggers(
+    policies: &fhec_check::PolicyTable,
+) -> std::collections::HashMap<fhec_bind::VarId, Vec<&fhec_check::Policy>> {
+    use fhec_check::{PolicyReader, PolicyReaders, ReaderRoot};
+    let mut out: std::collections::HashMap<fhec_bind::VarId, Vec<&fhec_check::Policy>> =
+        std::collections::HashMap::new();
+    let all = policies
+        .by_state_var
+        .values()
+        .chain(policies.by_struct_field.values())
+        .chain(policies.by_event_param.values());
+    for p in all {
+        if !p.keys.is_empty() {
+            continue; // FHE4007: a mapping/array target cannot be re-applied
+        }
+        if matches!(p.owner, fhec_check::PolicyOwner::Event(_)) {
+            continue; // no persistent handle outside an emit to re-grant
+        }
+        let roots: Vec<&ReaderRoot> = match &p.readers {
+            PolicyReaders::Public { condition: Some(c) } => vec![&c.root],
+            PolicyReaders::Public { condition: None } => Vec::new(),
+            PolicyReaders::List(list) => list
+                .iter()
+                .filter_map(|r| match r {
+                    PolicyReader::Path(pp) => Some(&pp.root),
+                    PolicyReader::This => None,
+                })
+                .collect(),
+        };
+        for root in roots {
+            if let ReaderRoot::StateVar(vid) = root {
+                out.entry(*vid).or_default().push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Every plain `lhs = rhs;` expression-statement in a function's body, in
+/// source order.
+fn collect_assign_stmts<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+) -> Vec<&'ast ast::Stmt<'ast>> {
+    use solar_ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Finder<'ast> {
+        out: Vec<&'ast ast::Stmt<'ast>>,
+    }
+    impl<'ast> Visit<'ast> for Finder<'ast> {
+        type BreakValue = ();
+        fn visit_stmt(&mut self, s: &'ast ast::Stmt<'ast>) -> ControlFlow<()> {
+            if let ast::StmtKind::Expr(e) = &s.kind {
+                if matches!(e.kind, ast::ExprKind::Assign(_, None, _)) {
+                    self.out.push(s);
+                }
+            }
+            self.walk_stmt(s)
+        }
+    }
+
+    let Some(body) = ctx.unit.function(function).ast.body.as_ref() else {
+        return Vec::new();
+    };
+    let mut f = Finder { out: Vec::new() };
+    for s in body.iter() {
+        let _ = f.visit_stmt(s);
+    }
+    f.out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rule_reapply(
+    ctx: &Ctx<'_, '_>,
+    function: fhec_bind::FunctionId,
+    stmt: &ast::Stmt<'_>,
+    triggers: &std::collections::HashMap<fhec_bind::VarId, Vec<&fhec_check::Policy>>,
+    namer: &RefCell<TempNamer>,
+    acl_insert: bool,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+    plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
+) -> Result<()> {
+    let ast::StmtKind::Expr(e) = &stmt.kind else {
+        return Ok(());
+    };
+    let ast::ExprKind::Assign(lhs, None, _) = &e.kind else {
+        return Ok(());
+    };
+    let ast::ExprKind::Ident(id) = &lhs.peel_parens().kind else {
+        return Ok(());
+    };
+    let Some(fhec_bind::Resolution::StateVar(vid)) = ctx.unit.resolve(*id) else {
+        return Ok(());
+    };
+    let Some(policies) = triggers.get(vid) else {
+        return Ok(());
+    };
+
+    let indent = ctx.line_indent(ctx.unit.function(function).file, ctx.range(stmt.span).start);
+    let at = after_stmt_offset(
+        ctx.text(ctx.unit.function(function).file),
+        ctx.range(stmt.span).end,
+    );
+    // A struct-field target's accessor declaration is only worth emitting
+    // if it ends up backing at least one actual (non-deduped) call — an
+    // unused `Storage storage $ = _getStorage();` would be dead code.
+    // Tracked separately and spliced in front only for the struct types
+    // that were actually used, in first-use order.
+    let mut pending_prelude: Vec<(fhec_bind::TypeDeclId, String)> = Vec::new();
+    let mut used_structs: std::collections::HashSet<fhec_bind::TypeDeclId> =
+        std::collections::HashSet::new();
+    // Caches both outcomes per struct type: `Some(Some(text))` a found
+    // reach, `Some(None)` a already-diagnosed unreachable struct (so two
+    // policies on the same struct at the same trigger warn once, not
+    // twice).
+    let mut reach_cache: std::collections::HashMap<fhec_bind::TypeDeclId, Option<String>> =
+        std::collections::HashMap::new();
+    let mut lines: Vec<String> = Vec::new();
+    // One inline (single-line) guard rendering per policy, for suggest mode.
+    let mut inline: Vec<String> = Vec::new();
+    for policy in policies {
+        let (target_text, ty, struct_ty) = match policy.owner {
+            fhec_check::PolicyOwner::StateVar(_) => {
+                let Some(ty) = target_encrypted_type(ctx, policy) else {
+                    continue;
+                };
+                (policy.target.clone(), ty, None)
+            }
+            fhec_check::PolicyOwner::Struct(struct_ty) => {
+                let Some(ty) = policy.direct_value_ty else {
+                    continue;
+                };
+                let Some(contract) = ctx.unit.function(function).contract else {
+                    continue;
+                };
+                let cached = reach_cache.entry(struct_ty).or_insert_with(|| {
+                    match find_struct_reach(ctx, contract, struct_ty) {
+                        Some(StructReach::DirectVar(name)) => Some(name),
+                        Some(StructReach::Accessor(fn_name)) => {
+                            let temp = namer.borrow_mut().fresh(TempHint::Val);
+                            let struct_name = ctx.unit.type_decl(struct_ty).name;
+                            pending_prelude.push((
+                                struct_ty,
+                                format!("{struct_name} storage {temp} = {fn_name}();"),
+                            ));
+                            Some(temp)
+                        }
+                        None => {
+                            // No unambiguous way to reach this struct from
+                            // this function: skip re-application here
+                            // rather than guess (spec §1.3) — but the gap
+                            // is real, so it must not go unstated (spec
+                            // §8.11's own principle for the mapping/array
+                            // case, extended to this reason). The policy's
+                            // own R4 grants at its own write sites are
+                            // unaffected.
+                            diags.borrow_mut().push(fhec_check::Diagnostic {
+                                code: "FHE4007",
+                                severity: Severity::Warning,
+                                span: policy.span,
+                                message: format!(
+                                    "this policy's target field `{}` cannot be re-applied here: \
+                                     `{}` is not reachable from this function through exactly \
+                                     one state variable or one parameterless accessor, so the \
+                                     write to `{}` here does not refresh its grants (spec \
+                                     §8.11)",
+                                    policy.target,
+                                    ctx.unit.type_decl(struct_ty).name,
+                                    strip_parens(&ctx.snippet(lhs.span))
+                                ),
+                                fixits: Vec::new(),
+                                rule: Some("§8.11"),
+                            });
+                            None
+                        }
+                    }
+                });
+                let Some(reach) = cached else {
+                    continue;
+                };
+                (format!("{reach}.{}", policy.target), ty, Some(struct_ty))
+            }
+            fhec_check::PolicyOwner::Event(_) => continue,
+        };
+        let window = forward_window(ctx, function, stmt.span, &target_text);
+        let rendering =
+            crate::policy_bind::render_readers(ctx, function, policy, &target_text, &[])?;
+        let calls =
+            crate::policy_bind::render_call_lines(ctx, stmt.span, ty, &target_text, &rendering)?;
+        let missing: Vec<String> = calls
+            .into_iter()
+            .filter(|call| {
+                !window.iter().any(|s| {
+                    matches_through_guard(ctx, s, &|s| {
+                        policy_call_matches(
+                            ctx,
+                            function,
+                            s,
+                            &call.fn_name,
+                            &call.arg0,
+                            call.arg1.as_deref(),
+                        )
+                    })
+                })
+            })
+            .map(|call| call.text)
+            .collect();
+        if !missing.is_empty() {
+            // Spec §8.1 initialization guard on the re-application target:
+            // this is the guard's most-live site — the trigger writes a
+            // *reader*, so nothing here proves the target itself was ever
+            // written, and a grant on an unwritten handle reverts.
+            inline.push(guard_inline(ctx, &target_text, &missing));
+            lines.extend(guard_lines(ctx, &target_text, &missing));
+            if let Some(struct_ty) = struct_ty {
+                used_structs.insert(struct_ty);
+            }
+        }
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+    let prelude: Vec<String> = pending_prelude
+        .into_iter()
+        .filter(|(ty, _)| used_structs.contains(ty))
+        .map(|(_, line)| line)
+        .collect();
+    let lines: Vec<String> = prelude.iter().cloned().chain(lines).collect();
+
+    if !acl_insert {
+        let joined = prelude
+            .into_iter()
+            .chain(inline)
+            .collect::<Vec<_>>()
+            .join(" ");
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: crate::codes::SUGGEST_POLICY_GRANT,
+            severity: Severity::Note,
+            span: stmt.span,
+            message: format!(
+                "ACL suggestion: after this write, re-apply the policy with `{joined}`"
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.11"),
+        });
+        return Ok(());
+    }
+    brace_lone_stmt(ctx, function, stmt.span, plan, outcome)?;
+    for call in lines {
+        plan.push(Patch::insert(
+            at,
+            format!("\n{indent}{call}"),
+            Provenance::new("§8.11 re-application", ctx.range(stmt.span))
+                .with_code(crate::codes::SUGGEST_POLICY_GRANT),
+        ));
+    }
+    Ok(())
+}
+
+/// The encrypted type of a state-variable-attached policy's target.
+fn target_encrypted_type(_ctx: &Ctx<'_, '_>, policy: &fhec_check::Policy) -> Option<EType> {
+    policy.direct_value_ty
+}
+
+/// A way to reach a struct-typed value from an arbitrary function of the
+/// same contract, found for spec §8.11 re-application at a site other than
+/// the policy's own write.
+enum StructReach {
+    /// A state variable of exactly this struct type — always safely
+    /// nameable by its own name, no pointer or accessor needed.
+    DirectVar(String),
+    /// The one parameterless function of the contract returning exactly
+    /// this struct type by storage reference (the ERC-7201 accessor
+    /// shape); the caller must declare a fresh local bound to a call of it.
+    Accessor(String),
+}
+
+/// Finds `StructReach` for `struct_ty` within `contract`, or `None` when no
+/// *unambiguous* one exists (zero or more than one candidate either way) —
+/// the caller skips re-application there rather than guess (spec §1.3).
+/// Deliberately scoped to `contract`'s own members: an accessor or state
+/// variable declared in a base contract is not searched, since resolving
+/// that safely runs into the same incomplete-inheritance hazards the
+/// binder itself refuses to guess past.
+fn find_struct_reach(
+    ctx: &Ctx<'_, '_>,
+    contract: fhec_bind::ContractId,
+    struct_ty: fhec_bind::TypeDeclId,
+) -> Option<StructReach> {
+    let info = ctx.unit.contract(contract);
+
+    let mut direct_vars = info.state_vars.iter().filter_map(|&vid| {
+        let var = ctx.unit.var(vid);
+        if crate::policy_bind::declared_struct(ctx, var) != Some(struct_ty) {
+            return None;
+        }
+        Some(var.name?.as_str().to_string())
+    });
+    if let Some(name) = direct_vars.next() {
+        return if direct_vars.next().is_none() {
+            Some(StructReach::DirectVar(name))
+        } else {
+            None // ambiguous: more than one state variable of this type
+        };
+    }
+
+    let mut accessors = info.functions.iter().filter_map(|&fid| {
+        let f = ctx.unit.function(fid);
+        if !f.params.is_empty() || f.returns.len() != 1 {
+            return None;
+        }
+        let ret_var = ctx.unit.var(f.returns[0]);
+        if ret_var.decl.data_location != Some(ast::DataLocation::Storage) {
+            return None;
+        }
+        if crate::policy_bind::declared_struct(ctx, ret_var) != Some(struct_ty) {
+            return None;
+        }
+        f.name_str.clone()
+    });
+    let first = accessors.next()?;
+    if accessors.next().is_some() {
+        return None; // ambiguous: more than one candidate accessor
+    }
+    Some(StructReach::Accessor(first))
+}
+
+/// Every `emit` statement in a function's body, in source order.
+fn collect_emit_stmts<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+) -> Vec<&'ast ast::Stmt<'ast>> {
+    use solar_ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Finder<'ast> {
+        out: Vec<&'ast ast::Stmt<'ast>>,
+    }
+    impl<'ast> Visit<'ast> for Finder<'ast> {
+        type BreakValue = ();
+        fn visit_stmt(&mut self, s: &'ast ast::Stmt<'ast>) -> ControlFlow<()> {
+            if matches!(s.kind, ast::StmtKind::Emit(..)) {
+                self.out.push(s);
+            }
+            self.walk_stmt(s)
+        }
+    }
+
+    let Some(body) = ctx.unit.function(function).ast.body.as_ref() else {
+        return Vec::new();
+    };
+    let mut f = Finder { out: Vec::new() };
+    for s in body.iter() {
+        let _ = f.visit_stmt(s);
+    }
+    f.out
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +542,41 @@ fn rule_r1(
         return Ok(());
     }
     let lvalue = strip_parens(&ctx.snippet(w.lvalue_span)).to_string();
+
+    // FHE4014 (spec §8.1): a `.wrap`-derived value has no permission
+    // registered for anyone, including this contract — inserting any grant
+    // here (R1's own, or a policy's R4 sequence) would revert, not merely
+    // fail to help. This check precedes the R4 policy lookup below: the
+    // withholding applies uniformly, regardless of which rule would
+    // otherwise own the insertion.
+    if w.value_wrapped {
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: crate::codes::ACL_GRANT_ON_UNPERMISSIONED_HANDLE,
+            severity: Severity::Warning,
+            span: w.lvalue_span,
+            message: format!(
+                "the value written to `{lvalue}` is a `.wrap(...)` reinterpretation, which \
+                 never registers a CoFHE permission for anyone, including this contract; \
+                 inserting `FHE.allowThis` here would revert the transaction rather than grant \
+                 access, so no ACL call is inserted for this write. Add an explicit grant only \
+                 if this handle is independently known to carry a real permission (spec §8.1)"
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.1"),
+        });
+        return Ok(());
+    }
+
+    // R4 (spec §8.9): a policy on the written slot replaces this rule's
+    // ownership decision entirely, and FHE4001 is not emitted — the author
+    // has stated who owns the value, so nothing is being withheld.
+    if let Some(node) = find_expr(ctx, w.function, w.lvalue_span) {
+        if let Some(bound) =
+            crate::policy_bind::bind_write(ctx, &ctx.checked.policies, w.function, node)?
+        {
+            return rule_r4(ctx, w, &lvalue, &bound, acl_insert, diags, plan, outcome);
+        }
+    }
 
     // Whether the slot's owner is provably `msg.sender`. Only a mapping
     // keyed exactly by `msg.sender` earns that proof; every other slot kind
@@ -172,14 +630,17 @@ fn rule_r1(
     let mut missing: Vec<FheOp> = Vec::new();
     for &op in ops {
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
-        let equivalent_grant = window
-            .iter()
-            .any(|s| acl_call_matches(ctx, w.function, s, &name, &lvalue, None))
-            || local.as_ref().is_some_and(|(l, _)| {
-                local_window
-                    .iter()
-                    .any(|s| acl_call_matches(ctx, w.function, s, &name, l, None))
-            });
+        let equivalent_grant = window.iter().any(|s| {
+            matches_through_guard(ctx, s, &|s| {
+                acl_call_matches(ctx, w.function, s, &name, &lvalue, None)
+            })
+        }) || local.as_ref().is_some_and(|(l, _)| {
+            local_window.iter().any(|s| {
+                matches_through_guard(ctx, s, &|s| {
+                    acl_call_matches(ctx, w.function, s, &name, l, None)
+                })
+            })
+        });
         // An explicit broad grant on the local copied into the slot makes the
         // handle readable by this contract already, so R1 need not append its
         // `allowThis`. This is deliberately not applied to `allowSender`:
@@ -189,9 +650,11 @@ fn rule_r1(
         let broad_local_grant = op == FheOp::AllowThis
             && local.as_ref().is_some_and(|(l, _)| {
                 local_window.iter().any(|s| {
-                    ["allowPublic", "allowGlobal"]
-                        .into_iter()
-                        .any(|name| acl_call_matches(ctx, w.function, s, name, l, None))
+                    matches_through_guard(ctx, s, &|s| {
+                        ["allowPublic", "allowGlobal"]
+                            .into_iter()
+                            .any(|name| acl_call_matches(ctx, w.function, s, name, l, None))
+                    })
                 })
             });
         let granted = equivalent_grant || broad_local_grant;
@@ -205,52 +668,47 @@ fn rule_r1(
 
     let indent = ctx.line_indent(w.file, ctx.range(w.stmt_span).start);
     let at = after_stmt_offset(ctx.text(w.file), ctx.range(w.stmt_span).end);
+    let calls: Vec<String> = missing
+        .iter()
+        .map(|op| {
+            ctx.profile
+                .render_call(*op, &[w.value_ty], &[&lvalue])
+                .map(|c| format!("{c};"))
+        })
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| internal(w.stmt_span, e))?;
+    // Spec §8.1 initialization guard: the written handle's provenance is
+    // not provable here (a copy, a parameter, an opaque call, ...), and a
+    // grant on an uninitialized handle reverts instead of granting.
+    let lines = guard_lines(ctx, &lvalue, &calls);
     if acl_insert {
-        let calls: Vec<String> = missing
-            .iter()
-            .map(|op| {
-                ctx.profile
-                    .render_call(*op, &[w.value_ty], &[&lvalue])
-                    .map(|c| format!("{c};"))
-            })
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| internal(w.stmt_span, e))?;
         // `return slot = value;` states both an R1 write and an R3 return on
         // one statement. R1's insertion point is R3's replacement end, so the
         // grants would land after the `return` and never run (spec §8.0).
-        // R3 owns the statement: hand the calls over.
+        // R3 owns the statement: hand the (guarded) lines over.
         if is_return_site(ctx, w.function, w.stmt_span) {
             outcome
                 .pending_r1
-                .push((w.stmt_span, w.file, w.function, calls));
+                .push((w.stmt_span, w.file, w.function, lines));
             return Ok(());
         }
         brace_lone_stmt(ctx, w.function, w.stmt_span, plan, outcome)?;
-        for call in calls {
+        for line in lines {
             plan.push(Patch::insert(
                 at,
-                format!("\n{indent}{call}"),
+                format!("\n{indent}{line}"),
                 Provenance::new("§8.1 R1", ctx.range(w.stmt_span)).with_code("FHE4010"),
             ));
         }
     } else {
-        let calls: Vec<String> = missing
-            .iter()
-            .map(|op| {
-                ctx.profile
-                    .render_call(*op, &[w.value_ty], &[&lvalue])
-                    .map(|c| format!("{c};"))
-            })
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| internal(w.stmt_span, e))?;
-        let insertion: String = calls.iter().map(|c| format!("\n{indent}{c}")).collect();
+        let insertion: String = lines.iter().map(|l| format!("\n{indent}{l}")).collect();
         diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4010",
             severity: Severity::Note,
             span: w.stmt_span,
             message: format!(
                 "ACL suggestion: after this write, add `{}`",
-                calls.join(" ")
+                guard_inline(ctx, &lvalue, &calls)
             ),
             fixits: vec![fhec_check::FixIt {
                 span: zero_width_at(w.stmt_span),
@@ -258,6 +716,96 @@ fn rule_r1(
                 safe: true,
             }],
             rule: Some("§8.1"),
+        });
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// R4 — policy grants at storage writes (spec §8.9)
+// ---------------------------------------------------------------------------
+
+/// Replaces R1's ownership decision for a write whose slot carries a reader
+/// policy: `allowThis` unconditionally, then every resolved reader, in
+/// policy order (spec §8.9). Dedupe (§8.6), the return-site handover to R3,
+/// brace-wrapping, and suggest-mode all apply exactly as they do for R1.
+#[allow(clippy::too_many_arguments)]
+fn rule_r4(
+    ctx: &Ctx<'_, '_>,
+    w: &EncryptedStorageWrite,
+    lvalue: &str,
+    bound: &crate::policy_bind::BoundWrite<'_>,
+    acl_insert: bool,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+    plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
+) -> Result<()> {
+    check_cross_reader_copy(ctx, w, bound.policy, diags);
+
+    let rendering = crate::policy_bind::render_readers(
+        ctx,
+        w.function,
+        bound.policy,
+        &bound.self_text,
+        &bound.key_texts,
+    )?;
+    let lines =
+        crate::policy_bind::render_call_lines(ctx, w.lvalue_span, w.value_ty, lvalue, &rendering)?;
+
+    let window = forward_window(ctx, w.function, w.stmt_span, lvalue);
+    let missing: Vec<&crate::policy_bind::CallLine> = lines
+        .iter()
+        .filter(|c| {
+            !window.iter().any(|s| {
+                matches_through_guard(ctx, s, &|s| {
+                    policy_call_matches(ctx, w.function, s, &c.fn_name, &c.arg0, c.arg1.as_deref())
+                })
+            })
+        })
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let indent = ctx.line_indent(w.file, ctx.range(w.stmt_span).start);
+    let at = after_stmt_offset(ctx.text(w.file), ctx.range(w.stmt_span).end);
+    let calls: Vec<String> = missing.iter().map(|c| c.text.clone()).collect();
+    // Spec §8.1 initialization guard, exactly as at a plain R1 write; the
+    // §8.9 zero-address guard on individual readers nests inside it.
+    let guarded = guard_lines(ctx, lvalue, &calls);
+    if acl_insert {
+        // Same R1/R3 handover as the plain-ownership path (spec §8.0).
+        if is_return_site(ctx, w.function, w.stmt_span) {
+            outcome
+                .pending_r1
+                .push((w.stmt_span, w.file, w.function, guarded));
+            return Ok(());
+        }
+        brace_lone_stmt(ctx, w.function, w.stmt_span, plan, outcome)?;
+        for line in guarded {
+            plan.push(Patch::insert(
+                at,
+                format!("\n{indent}{line}"),
+                Provenance::new("§8.9 R4", ctx.range(w.stmt_span))
+                    .with_code(crate::codes::SUGGEST_POLICY_GRANT),
+            ));
+        }
+    } else {
+        let insertion: String = guarded.iter().map(|l| format!("\n{indent}{l}")).collect();
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: crate::codes::SUGGEST_POLICY_GRANT,
+            severity: Severity::Note,
+            span: w.stmt_span,
+            message: format!(
+                "ACL suggestion: after this write, add `{}`",
+                guard_inline(ctx, lvalue, &calls)
+            ),
+            fixits: vec![fhec_check::FixIt {
+                span: zero_width_at(w.stmt_span),
+                replacement: insertion,
+                safe: true,
+            }],
+            rule: Some("§8.9"),
         });
     }
     Ok(())
@@ -345,7 +893,9 @@ fn rule_r2<'ast>(
         let original = ctx.snippet(*span);
         let arg_key = strip_parens(&original).to_string();
         let deduped = window.iter().any(|s| {
-            acl_call_matches_normalized(ctx, c.function, s, &transient, &arg_key, &callee_key)
+            matches_through_guard(ctx, s, &|s| {
+                acl_call_matches_normalized(ctx, c.function, s, &transient, &arg_key, &callee_key)
+            })
         });
         args.push(ArgPlan {
             span: *span,
@@ -380,9 +930,13 @@ fn rule_r2<'ast>(
             .iter()
             .filter(|a| !a.deduped)
             .map(|a| {
-                format!(
-                    "FHE.allowTransient({}, address({callee_key}));",
-                    strip_parens(&a.original)
+                let handle = strip_parens(&a.original);
+                guard_inline(
+                    ctx,
+                    handle,
+                    &[format!(
+                        "FHE.allowTransient({handle}, address({callee_key}));"
+                    )],
                 )
             })
             .collect::<Vec<_>>()
@@ -462,7 +1016,10 @@ fn rule_r2<'ast>(
             .profile
             .render_call(FheOp::AllowTransient, &[a.ty], &[&handle, &account])
             .map_err(|e| internal(c.stmt_span, e))?;
-        lines.push(format!("{call};"));
+        // Spec §8.1 initialization guard: an argument handle whose
+        // provenance is not provable (a parameter, a copy, an opaque call)
+        // may be uninitialized, and granting on one reverts.
+        lines.extend(guard_lines(ctx, &handle, &[format!("{call};")]));
         let _ = a.node; // arg AST currently only needed for rendering above
     }
 
@@ -588,14 +1145,16 @@ fn rule_r3<'ast>(
     let expr_key = strip_parens(&ctx.snippet(r.expr_span)).to_string();
     let window = backward_window(ctx, r.function, r.stmt_span);
     if window.iter().any(|s| {
-        acl_call_matches(
-            ctx,
-            r.function,
-            s,
-            &transient,
-            &expr_key,
-            Some("msg.sender"),
-        )
+        matches_through_guard(ctx, s, &|s| {
+            acl_call_matches(
+                ctx,
+                r.function,
+                s,
+                &transient,
+                &expr_key,
+                Some("msg.sender"),
+            )
+        })
     }) {
         // Already granted (also the idempotence path, §8.6).
         return refuse_pending_r1(ctx, r.stmt_span, outcome);
@@ -612,7 +1171,8 @@ fn rule_r3<'ast>(
             span: r.stmt_span,
             message: format!(
                 "ACL suggestion: hoist the return value and add \
-                 `FHE.allowTransient(<ret>, msg.sender);` before returning `{expr_key}`"
+                 `if (FHE.isInitialized(<ret>)) {{ FHE.allowTransient(<ret>, msg.sender); }}` \
+                 before returning `{expr_key}`"
             ),
             fixits: Vec::new(),
             rule: Some("§8.3"),
@@ -631,15 +1191,23 @@ fn rule_r3<'ast>(
     // Cover the trailing `;` when the statement span excludes it.
     let end = after_stmt_offset(ctx.text(r.file), stmt_range.end);
     // Grants handed over by R1 for a `return slot = value;` statement: they
-    // must run before the `return`, inside the text R3 owns.
+    // must run before the `return`, inside the text R3 owns. Already
+    // guarded (spec §8.1) by the rule that handed them over.
     let storage_grants: String = take_pending_r1(outcome, r.stmt_span)
         .iter()
         .map(|c| format!("{c}\n{indent}"))
         .collect();
+    // Spec §8.1 initialization guard on the hoisted return temp: a public
+    // function can legally return a handle it never initialized, and
+    // granting on one reverts.
+    let guarded: String = guard_lines(ctx, &temp, &[format!("{call};")])
+        .iter()
+        .map(|l| format!("{l}\n{indent}"))
+        .collect();
     plan.push(Patch::replace(
         fhec_ir::ByteRange::new(stmt_range.start, end),
         format!(
-            "{} {} = {};\n{indent}{storage_grants}{call};\n{indent}return {temp};",
+            "{} {} = {};\n{indent}{storage_grants}{guarded}return {temp};",
             r.value_ty.solidity_name(),
             temp,
             rendered,
@@ -648,6 +1216,315 @@ fn rule_r3<'ast>(
     ));
     outcome.owned_stmts.push(r.stmt_span);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// R5 — policy grants at event arguments (spec §8.10)
+// ---------------------------------------------------------------------------
+
+/// One `emit` argument, resolved against the event's declared parameters.
+struct EmitArg<'ast, 'p> {
+    node: &'ast ast::Expr<'ast>,
+    /// The declared parameter name, when named.
+    param_name: Option<String>,
+    /// The policy governing this position, when its parameter carries one.
+    policy: Option<&'p fhec_check::Policy>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rule_r5<'a, 'ast>(
+    ctx: &Ctx<'a, 'ast>,
+    function: fhec_bind::FunctionId,
+    stmt: &'ast ast::Stmt<'ast>,
+    namer: &RefCell<TempNamer>,
+    acl_insert: bool,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+    plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
+) -> Result<()> {
+    let ast::StmtKind::Emit(path, call_args) = &stmt.kind else {
+        return Ok(());
+    };
+    let first = path.segments()[0];
+    let Some(fhec_bind::Resolution::Event(eid)) = ctx.unit.resolve_span(first.span) else {
+        return Ok(());
+    };
+    let eid = *eid;
+    let event = ctx.unit.event(eid);
+    let params = &event.ast.parameters.vars;
+    let arg_nodes = crate::expr::call_arg_exprs(call_args);
+    if arg_nodes.len() != params.len() {
+        // Named-argument emit-call syntax, or an arity this dialect does not
+        // otherwise reach: not a shape this revision binds (documented scope
+        // decision) — leave untouched rather than guess.
+        return Ok(());
+    }
+
+    let args: Vec<EmitArg<'ast, 'a>> = arg_nodes
+        .iter()
+        .zip(params.iter())
+        .map(|(&node, p)| {
+            let param_name = p.name.map(|n| n.as_str().to_string());
+            let policy = param_name
+                .as_ref()
+                .and_then(|n| ctx.checked.policies.by_event_param.get(&(eid, n.clone())));
+            EmitArg {
+                node,
+                param_name,
+                policy,
+            }
+        })
+        .collect();
+    if !args.iter().any(|a| a.policy.is_some()) {
+        return Ok(());
+    }
+
+    // Every position a governed argument's readers might reference by name
+    // (including itself) must be safe to evaluate twice: a plain identifier
+    // is; anything else is hoisted to `__fhe_evt_n` (spec §8.10 draft
+    // decision) and used everywhere it is referenced.
+    let mut needs_hoist = vec![false; args.len()];
+    for (i, a) in args.iter().enumerate() {
+        if a.policy.is_none() {
+            continue;
+        }
+        // A `.wrap`-derived governed argument gets no grant at all (FHE4014
+        // below), so nothing references it as *its own* target — hoisting
+        // it here would be needless. It can still be hoisted below as
+        // *another* reader's referenced position.
+        if is_wrap_call(ctx, a.node) {
+            continue;
+        }
+        let snippet = ctx.snippet(a.node.span);
+        let text = strip_parens(&snippet);
+        if !is_ident_text(text) {
+            needs_hoist[i] = true;
+        }
+        if let PolicyReaders::List(list) = &a.policy.unwrap().readers {
+            for reader in list {
+                if let PolicyReader::Path(p) = reader {
+                    if let ReaderRoot::EventParam(name) = &p.root {
+                        if let Some(j) = args
+                            .iter()
+                            .position(|x| x.param_name.as_deref() == Some(name.as_str()))
+                        {
+                            let jsnippet = ctx.snippet(args[j].node.span);
+                            let jtext = strip_parens(&jsnippet);
+                            if !is_ident_text(jtext) {
+                                needs_hoist[j] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let ty_of = |e: &'ast ast::Expr<'ast>| -> Option<EType> {
+        match ctx.checked.types.get(e.span) {
+            Some(Ty::Encrypted(t)) => Some(*t),
+            _ => None,
+        }
+    };
+
+    let indent = ctx.line_indent(ctx.unit.function(function).file, ctx.range(stmt.span).start);
+    let mut prelude: Vec<String> = Vec::new();
+    let mut arg_text: Vec<String> = Vec::with_capacity(args.len());
+    for (i, a) in args.iter().enumerate() {
+        let rendered = Renderer::new(ctx).render_expr(a.node)?;
+        if needs_hoist[i] {
+            let Some(ty) = ty_of(a.node) else {
+                return fail_coded(
+                    a.node.span,
+                    "cannot hoist this event argument for single evaluation: its encrypted \
+                     type could not be determined (spec §8.10)"
+                        .to_string(),
+                    "FHE4004",
+                    Some("§8.10"),
+                );
+            };
+            let temp = namer.borrow_mut().fresh(TempHint::Val);
+            prelude.push(format!("{} {} = {};", ty.solidity_name(), temp, rendered));
+            arg_text.push(temp);
+        } else {
+            arg_text.push(rendered);
+        }
+    }
+
+    // Build the grant lines for every governed position, using the (now
+    // hoist-stable) argument text as both `self` and every named reference.
+    // Each position's sequence is wrapped in its own §8.1 initialization
+    // guard on that position's handle: `grant_seqs` keeps the handle and
+    // the raw calls together so suggest mode can render the same guard
+    // inline.
+    let window = backward_window(ctx, function, stmt.span);
+    let mut grant_seqs: Vec<(String, Vec<String>)> = Vec::new();
+    for (i, a) in args.iter().enumerate() {
+        let Some(policy) = a.policy else { continue };
+        let Some(ty) = ty_of(a.node) else { continue };
+        // FHE4014 (spec §8.1, §8.10): a `.wrap`-derived argument has no
+        // permission registered for anyone — withhold this position's
+        // whole grant sequence rather than insert a call that would revert.
+        if is_wrap_call(ctx, a.node) {
+            diags.borrow_mut().push(fhec_check::Diagnostic {
+                code: crate::codes::ACL_GRANT_ON_UNPERMISSIONED_HANDLE,
+                severity: Severity::Warning,
+                span: a.node.span,
+                message: "this event argument is a `.wrap(...)` reinterpretation, which never \
+                     registers a CoFHE permission for anyone; inserting its policy's grants \
+                     here would revert the transaction rather than grant access, so none are \
+                     inserted for this argument (spec §8.1)"
+                    .to_string(),
+                fixits: Vec::new(),
+                rule: Some("§8.1"),
+            });
+            continue;
+        }
+        let target_text = &arg_text[i];
+        let rendering = render_event_policy(policy, &args, &arg_text)?;
+        let calls =
+            crate::policy_bind::render_call_lines(ctx, a.node.span, ty, target_text, &rendering)?;
+        let missing: Vec<String> = calls
+            .into_iter()
+            .filter(|call| {
+                !window.iter().any(|s| {
+                    matches_through_guard(ctx, s, &|s| {
+                        policy_call_matches(
+                            ctx,
+                            function,
+                            s,
+                            &call.fn_name,
+                            &call.arg0,
+                            call.arg1.as_deref(),
+                        )
+                    })
+                })
+            })
+            .map(|call| call.text)
+            .collect();
+        if !missing.is_empty() {
+            grant_seqs.push((target_text.clone(), missing));
+        }
+    }
+    if grant_seqs.is_empty() && prelude.is_empty() {
+        return Ok(());
+    }
+
+    if !acl_insert {
+        if !grant_seqs.is_empty() {
+            let joined = grant_seqs
+                .iter()
+                .map(|(handle, calls)| guard_inline(ctx, handle, calls))
+                .collect::<Vec<_>>()
+                .join(" ");
+            diags.borrow_mut().push(fhec_check::Diagnostic {
+                code: crate::codes::SUGGEST_POLICY_GRANT,
+                severity: Severity::Note,
+                span: stmt.span,
+                message: format!("ACL suggestion: before this emit, add `{joined}`"),
+                fixits: Vec::new(),
+                rule: Some("§8.10"),
+            });
+        }
+        return Ok(());
+    }
+
+    brace_lone_stmt(ctx, function, stmt.span, plan, outcome)?;
+
+    let mut lines = prelude;
+    for (handle, calls) in &grant_seqs {
+        lines.extend(guard_lines(ctx, handle, calls));
+    }
+    let insertion: String = lines.iter().map(|l| format!("{l}\n{indent}")).collect();
+    plan.push(Patch::insert(
+        ctx.range(stmt.span).start,
+        insertion,
+        Provenance::new("§8.10 R5", ctx.range(stmt.span))
+            .with_code(crate::codes::SUGGEST_POLICY_GRANT),
+    ));
+
+    if needs_hoist.iter().any(|&h| h) {
+        // A hoisted argument's slot in the emit call must read the temp, not
+        // its original (now-duplicated) expression.
+        let replaced: Vec<(Span, String, &str)> = args
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| needs_hoist[*i])
+            .map(|(i, a)| (a.node.span, arg_text[i].clone(), "§8.10 R5 arg-hoist"))
+            .collect();
+        for (span, text, rule) in &replaced {
+            plan.push(Patch::replace(
+                ctx.range(*span),
+                text.clone(),
+                Provenance::new(*rule, ctx.range(*span)),
+            ));
+        }
+        outcome.owned_stmts.push(stmt.span);
+    }
+    Ok(())
+}
+
+/// Renders one event-attached policy's readers at its emit site: a bound
+/// key/`self` never arises for an event target (event params have no
+/// mapping/array nesting to key into), and an `EventParam` root renders the
+/// corresponding argument's (possibly hoisted) text.
+fn render_event_policy<'ast, 'p>(
+    policy: &fhec_check::Policy,
+    args: &[EmitArg<'ast, 'p>],
+    arg_text: &[String],
+) -> Result<crate::policy_bind::PolicyRendering> {
+    use crate::policy_bind::{PolicyRendering, RenderedReader};
+    match &policy.readers {
+        PolicyReaders::Public { condition } => {
+            if condition.is_some() {
+                return fail_coded(
+                    policy.span,
+                    "a gated `public if` policy on an event parameter has no re-application \
+                     site to gate (spec §8.10, §8.11): only a plain `public` reader is \
+                     supported on an event target"
+                        .to_string(),
+                    "FHE4005",
+                    Some("§8.10"),
+                );
+            }
+            Ok(PolicyRendering::Public { condition: None })
+        }
+        PolicyReaders::List(list) => {
+            let mut out = Vec::new();
+            for reader in list {
+                match reader {
+                    PolicyReader::This => {}
+                    PolicyReader::Path(p) => {
+                        let ReaderRoot::EventParam(name) = &p.root else {
+                            return fail_coded(
+                                p.span,
+                                "an event-attached policy's readers may only name `this` or \
+                                 another parameter of the same event (spec §8.8 resolution \
+                                 rule 4)"
+                                    .to_string(),
+                                "FHE9001",
+                                None,
+                            );
+                        };
+                        let j = args
+                            .iter()
+                            .position(|a| a.param_name.as_deref() == Some(name.as_str()))
+                            .expect("resolved at check time");
+                        let mut text = arg_text[j].clone();
+                        for seg in &p.tail {
+                            text.push('.');
+                            text.push_str(seg);
+                        }
+                        out.push(RenderedReader::Named {
+                            text,
+                            is_const_nonzero: false,
+                        });
+                    }
+                }
+            }
+            Ok(PolicyRendering::List(out))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -976,6 +1853,53 @@ fn search_stmt<'ast>(
 /// ([`local_grant_window`]) only sees sibling statements in the same block,
 /// so it cannot prove a state variable (or anything reachable through a call)
 /// still holds the value an earlier grant covered (spec §1.3).
+/// Spec §8.12 "Cross-reader copy" (FHE4008): a storage write whose
+/// right-hand value is a bare read of another policy-governed slot, with no
+/// intervening profile operation, and the two policies name different
+/// readers (neither being `this`-only). A handle produced by a profile
+/// operation is fresh and never reaches here — `decompose` only matches an
+/// identifier/member/index read shape, never a call.
+fn check_cross_reader_copy(
+    ctx: &Ctx<'_, '_>,
+    w: &EncryptedStorageWrite,
+    target_policy: &fhec_check::Policy,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+) {
+    let Some((stmts, idx)) = enclosing_block(ctx, w.function, w.stmt_span) else {
+        return;
+    };
+    let ast::StmtKind::Expr(e) = &stmts[idx].kind else {
+        return;
+    };
+    let ast::ExprKind::Assign(lhs, None, rhs) = &e.kind else {
+        return;
+    };
+    if strip_parens(&ctx.snippet(lhs.span)) != strip_parens(&ctx.snippet(w.lvalue_span)) {
+        return;
+    }
+    let Some(source_policy) = crate::policy_bind::find_read_policy(ctx, &ctx.checked.policies, rhs)
+    else {
+        return;
+    };
+    if !crate::policy_bind::cross_reader_copy_finding(target_policy, source_policy) {
+        return;
+    }
+    diags.borrow_mut().push(fhec_check::Diagnostic {
+        code: "FHE4008",
+        severity: Severity::Warning,
+        span: w.lvalue_span,
+        message: format!(
+            "`{}` is a handle copied from another policy-governed slot with no intervening \
+             profile operation; the profile files permissions against the handle, not the \
+             slot, so it now carries the union of both slots' readers, not just this one's \
+             (spec §8.12)",
+            strip_parens(&ctx.snippet(w.lvalue_span))
+        ),
+        fixits: Vec::new(),
+        rule: Some("§8.12"),
+    });
+}
+
 fn assigned_local<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,
@@ -1046,7 +1970,7 @@ fn local_grant_window<'ast>(
 
 /// What [`writes_to`] compares a candidate lvalue against.
 #[derive(Clone, Copy)]
-enum WriteTarget<'a> {
+pub(crate) enum WriteTarget<'a> {
     /// An arbitrary source-text lvalue path (a state variable, a mapping or
     /// array element, a struct field, ...). Compared by snippet text only —
     /// there is no single resolved identity for a structural path.
@@ -1075,7 +1999,7 @@ impl WriteTarget<'_> {
 /// This is deliberately conservative: assembly and parser-recovery nodes are
 /// barriers because proving that they leave the tracked value untouched would
 /// require semantics this pass does not model (spec §1.3).
-fn writes_to<'ast>(
+pub(crate) fn writes_to<'ast>(
     ctx: &Ctx<'_, 'ast>,
     stmt: &'ast ast::Stmt<'ast>,
     target: WriteTarget<'_>,
@@ -1303,6 +2227,34 @@ fn callee_type_text<'ast>(ctx: &Ctx<'_, 'ast>, e: &'ast ast::Expr<'ast>) -> Opti
     }
 }
 
+/// Like [`acl_call_matches`], but also recognizes the call as the sole
+/// statement inside an else-less `if`'s body (spec §8.9's zero-address
+/// guard, and a `public if <condition>` gate, spec §8.11):
+/// `if (<anything>) FHE.<name>(<args>);`. The guard's own condition text is
+/// not compared for dedupe purposes — any single wrapped statement that
+/// itself matches states the same fact §8.6 already recognizes ungated.
+pub(crate) fn policy_call_matches<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: FunctionId,
+    stmt: &'ast ast::Stmt<'ast>,
+    name: &str,
+    arg0: &str,
+    arg1: Option<&str>,
+) -> bool {
+    if acl_call_matches(ctx, function, stmt, name, arg0, arg1) {
+        return true;
+    }
+    let ast::StmtKind::If(_, then, None) = &stmt.kind else {
+        return false;
+    };
+    let inner = match &then.kind {
+        ast::StmtKind::Block(b) if b.len() == 1 => &b[0],
+        ast::StmtKind::Block(_) => return false,
+        _ => then,
+    };
+    acl_call_matches(ctx, function, inner, name, arg0, arg1)
+}
+
 /// Whether a statement is an ACL call `FHE.<name>(arg0[, arg1])` or
 /// `arg0.<name>([arg1])` with the given argument texts (spec §8.6).
 fn acl_call_matches<'ast>(
@@ -1359,7 +2311,7 @@ fn acl_call_matches<'ast>(
 // ---------------------------------------------------------------------------
 
 /// Finds the expression node with exactly this span in a function body.
-fn find_expr<'ast>(
+pub(crate) fn find_expr<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,
     span: Span,
@@ -1391,6 +2343,113 @@ fn find_expr<'ast>(
         }
     }
     f.found
+}
+
+/// Whether `e`, peeled, is exactly a `eT.wrap(x)` UDVT cast (spec §8.1
+/// FHE4014): a compile-time-only type reinterpretation that never reaches
+/// CoFHE, so it registers no permission for anyone on its result,
+/// regardless of `x`. Mirrors `fhec_check`'s `is_wrap_call` (checker-side
+/// twin, used for the R1/R4 write fact); this free-function copy is for
+/// sites — R5's emit arguments — that have no such fact to consult.
+fn is_wrap_call(ctx: &Ctx<'_, '_>, e: &ast::Expr<'_>) -> bool {
+    let ast::ExprKind::Call(callee, _) = &e.peel_parens().kind else {
+        return false;
+    };
+    let ast::ExprKind::Member(obj, name) = &callee.peel_parens().kind else {
+        return false;
+    };
+    name.as_str() == "wrap"
+        && matches!(
+            ctx.checked.types.get(obj.span),
+            Some(Ty::Plain(PlainTy::EncTypeRef(_)))
+        )
+}
+
+// ---------------------------------------------------------------------------
+// The initialization guard (spec §8.1)
+// ---------------------------------------------------------------------------
+
+/// Renders the spec §8.1 initialization guard around one handle's grant
+/// sequence, as physical lines with no leading indentation (the caller
+/// prefixes each line with the site indent): a single call stays on the
+/// guard's own line, two or more open a block. The calls themselves are
+/// complete statements (trailing `;` included).
+pub(crate) fn guard_lines(ctx: &Ctx<'_, '_>, handle: &str, calls: &[String]) -> Vec<String> {
+    let probe = ctx.profile.is_initialized_fn();
+    match calls {
+        [] => Vec::new(),
+        [one] => vec![format!("if ({probe}({handle})) {{ {one} }}")],
+        many => {
+            let mut out = Vec::with_capacity(many.len() + 2);
+            out.push(format!("if ({probe}({handle})) {{"));
+            out.extend(many.iter().map(|c| format!("    {c}")));
+            out.push("}".to_string());
+            out
+        }
+    }
+}
+
+/// The same guard on one line, for suggest-mode messages (spec §8.1).
+pub(crate) fn guard_inline(ctx: &Ctx<'_, '_>, handle: &str, calls: &[String]) -> String {
+    format!(
+        "if ({}({handle})) {{ {} }}",
+        ctx.profile.is_initialized_fn(),
+        calls.join(" ")
+    )
+}
+
+/// The body statements of a spec §8.1 initialization guard: an else-less
+/// `if` whose condition is a call to the trusted profile's initialization
+/// probe (`FHE.isInitialized(...)`). Spec §8.6 makes such a guard
+/// transparent to the window scan — its body's statements count as if they
+/// stood in the window directly — so a re-transpile of guarded output
+/// recognizes the grants it inserted and `T(T(x)) == T(x)` holds (spec
+/// §1.4). The condition's argument is deliberately not compared, matching
+/// the §8.6 rule for the zero-address guard.
+fn init_guard_body<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+) -> Option<&'ast [ast::Stmt<'ast>]> {
+    let ast::StmtKind::If(cond, then, None) = &stmt.kind else {
+        return None;
+    };
+    let ast::ExprKind::Call(callee, _) = &cond.peel_parens().kind else {
+        return None;
+    };
+    let ast::ExprKind::Member(base, name) = &callee.peel_parens().kind else {
+        return None;
+    };
+    let probe = ctx.profile.is_initialized_fn();
+    let probe_name = probe.rsplit('.').next().unwrap_or(&probe);
+    if name.as_str() != probe_name {
+        return None;
+    }
+    // Same trust rule library-syntax grants get (spec §8.6): the base must
+    // be the checker-confirmed profile library, not a same-named impostor.
+    if !matches!(
+        ctx.checked.types.get(base.span),
+        Some(Ty::Plain(PlainTy::FheLib))
+    ) {
+        return None;
+    }
+    Some(match &then.kind {
+        ast::StmtKind::Block(b) => b,
+        _ => std::slice::from_ref(then),
+    })
+}
+
+/// Applies `matches` to a window statement directly and, when the statement
+/// is a §8.1 initialization guard, to each statement of the guard's body
+/// (one level — spec §8.6 guard transparency).
+fn matches_through_guard<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+    matches: &dyn Fn(&'ast ast::Stmt<'ast>) -> bool,
+) -> bool {
+    if matches(stmt) {
+        return true;
+    }
+    init_guard_body(ctx, stmt).is_some_and(|body| body.iter().any(matches))
 }
 
 fn is_ident_text(s: &str) -> bool {

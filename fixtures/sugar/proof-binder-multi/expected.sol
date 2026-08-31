@@ -26,11 +26,11 @@ contract SugarProofBinderMulti {
         eaddress owner_ = eaddress.wrap(__fhe_hashes_1[1]);
         euint128 value = euint128.wrap(__fhe_hashes_1[2]);
         eb = flag;
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
         ea = owner_;
-        FHE.allowThis(ea);
+        if (FHE.isInitialized(ea)) { FHE.allowThis(ea); }
         ev = value;
-        FHE.allowThis(ev);
+        if (FHE.isInitialized(ev)) { FHE.allowThis(ev); }
         tag;
     }
 }

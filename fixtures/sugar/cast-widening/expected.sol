@@ -10,8 +10,8 @@ contract CastWidening {
     function widen(externalEuint8 amount_input, bytes memory inputProof) public {
         euint8 amount = FHE.asEuint8(amount_input, inputProof);
         small = amount;
-        FHE.allowThis(small);
+        if (FHE.isInitialized(small)) { FHE.allowThis(small); }
         big = FHE.asEuint32(small);
-        FHE.allowThis(big);
+        if (FHE.isInitialized(big)) { FHE.allowThis(big); }
     }
 }

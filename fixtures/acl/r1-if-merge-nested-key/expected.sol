@@ -26,8 +26,10 @@ contract NestedKey {
                 __fhe_then_4 = v;
             }
             m[__fhe_key_1][__fhe_key_2] = FHE.select(__fhe_cond_0, __fhe_then_4, __fhe_pre_3);
-            FHE.allowThis(m[__fhe_key_1][__fhe_key_2]);
-            FHE.allowSender(m[__fhe_key_1][__fhe_key_2]);
+            if (FHE.isInitialized(m[__fhe_key_1][__fhe_key_2])) {
+                FHE.allowThis(m[__fhe_key_1][__fhe_key_2]);
+                FHE.allowSender(m[__fhe_key_1][__fhe_key_2]);
+            }
         }
     }
 
@@ -44,7 +46,7 @@ contract NestedKey {
                 __fhe_then_3 = v;
             }
             accts[__fhe_key_1].balance = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_2);
-            FHE.allowThis(accts[__fhe_key_1].balance);
+            if (FHE.isInitialized(accts[__fhe_key_1].balance)) { FHE.allowThis(accts[__fhe_key_1].balance); }
         }
     }
 }

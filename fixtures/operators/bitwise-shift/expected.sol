@@ -9,16 +9,16 @@ contract BitwiseShift {
 
     function f() public {
         a = FHE.and(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.or(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.xor(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.not(a);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.shl(a, FHE.asEuint32(2));
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.shr(a, FHE.asEuint32(1));
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
     }
 }

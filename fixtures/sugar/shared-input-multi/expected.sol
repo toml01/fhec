@@ -20,11 +20,11 @@ contract SharedInputMulti {
         euint64 total = FHE.receiveEuint64Param(total_shared);
         ebool ok = FHE.receiveEboolParam(ok_shared);
         a = amount;
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         b = total;
-        FHE.allowThis(b);
+        if (FHE.isInitialized(b)) { FHE.allowThis(b); }
         flag = ok;
-        FHE.allowThis(flag);
+        if (FHE.isInitialized(flag)) { FHE.allowThis(flag); }
         tag;
     }
 }

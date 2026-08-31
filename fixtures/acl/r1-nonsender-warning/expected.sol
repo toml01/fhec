@@ -9,6 +9,6 @@ contract NonSenderKey {
 
     function f(address who) public {
         balances[who] = a;
-        FHE.allowThis(balances[who]);
+        if (FHE.isInitialized(balances[who])) { FHE.allowThis(balances[who]); }
     }
 }

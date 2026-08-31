@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 0.6.7 |
+| **Version** | 0.9.0 |
 | **Status** | Draft |
-| **Date** | 2026-08-28 |
+| **Date** | 2026-08-31 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**, **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **MAY**, and **OPTIONAL** in this document are to be interpreted as described in RFC 2119 and RFC 8174 when, and only when, they appear in all capitals, as shown here.
@@ -526,7 +526,7 @@ Every FHE3xxx diagnostic MUST carry the source span of the offending construct a
 
 ## §8 ACL insertion
 
-ACL insertion is always on. With `--acl=suggest`, insertions are downgraded to fix-it diagnostics (FHE4010–FHE4012, severity `note`) and NOT applied; the rest of the transpile proceeds unchanged. These notes appear on `check` as well as `build`. The R1 suggest fix-it is the canonical `safe: true` fix-it that `--fix` auto-applies; fix-its that change semantics non-mechanically (e.g. the §3.3 unary-minus rewrite) MUST be marked `safe: false`.
+ACL insertion is always on. Rules R1–R3 insert only what the transpiler can prove (§8.1–§8.3); rules R4–R5 insert what an author's **reader policy** states (§8.8–§8.10). With `--acl=suggest`, insertions are downgraded to fix-it diagnostics (FHE4010–FHE4013, severity `note`) and NOT applied; the rest of the transpile proceeds unchanged. These notes appear on `check` as well as `build`. The R1 suggest fix-it is the canonical `safe: true` fix-it that `--fix` auto-applies; fix-its that change semantics non-mechanically (e.g. the §3.3 unary-minus rewrite) MUST be marked `safe: false`.
 
 ### §8.0 Braceless branch bodies
 
@@ -549,7 +549,19 @@ FHE.allowSender(<lvalue>);
 
 immediately after the write statement.
 
-`FHE.allowThis` is unconditional: it grants the contract access to its own slot and cannot leak. `FHE.allowSender` is a claim about who owns the value, and the transpiler MUST NOT insert it unless the written slot is *provably* owned by `msg.sender` — a mapping slot keyed by exactly the expression `msg.sender`. Every other slot kind has no such proof: a simple state variable and a struct field carry no key at all, an array element is keyed by an index, not an owner, and a mapping keyed by anything else — a different address, or a non-address key — is filed under a key that is not the caller's. In every one of those cases the transpiler MUST NOT insert `FHE.allowSender`, and MUST emit warning FHE4001 naming the withheld grant. An author who intends an escrow, or a shared aggregate some other account must read, writes the grant explicitly. Warning about a leak and then writing it is not an option a confidentiality tool has (spec §1.3).
+`FHE.allowThis` is unconditional: it grants the contract access to its own slot and cannot leak. `FHE.allowSender` is a claim about who owns the value, and the transpiler MUST NOT insert it unless the written slot is *provably* owned by `msg.sender` — a mapping slot keyed by exactly the expression `msg.sender`. Every other slot kind has no such proof: a simple state variable and a struct field carry no key at all, an array element is keyed by an index, not an owner, and a mapping keyed by anything else — a different address, or a non-address key — is filed under a key that is not the caller's. In every one of those cases the transpiler MUST NOT insert `FHE.allowSender`, and MUST emit warning FHE4001 naming the withheld grant. An author who intends an escrow, or a shared aggregate some other account must read, states it in a reader policy (§8.8) or writes the grant explicitly. Warning about a leak and then writing it is not an option a confidentiality tool has (spec §1.3).
+
+When the written slot carries a reader policy, R4 (§8.9) replaces this rule's ownership decision for that slot and FHE4001 is NOT emitted: the author has stated who owns the value, so no grant is being withheld.
+
+**Handles with no registered permission — FHE4014.** "Unconditional" above is a confidentiality claim, not a runtime-safety one: `FHE.allowThis` is `ITaskManager.allow(handle, address(this))` under a different name, and `allow` reverts unless its caller already holds permission on `handle`. An ordinary FHE operation registers that permission for the calling contract as a side effect of computing its result; a bare `eT.wrap(x)` reinterpretation does not — it is a Solidity user-defined-value-type cast, resolved entirely at compile time, and never reaches CoFHE at all. A value whose write reduces, with no intervening profile operation, to exactly `eT.wrap(x)` therefore has no permission registered for anyone, including the contract that wrote it, regardless of `x`. Inserting `allowThis` there does not merely fail to help; it reverts the transaction. The transpiler MUST NOT insert `FHE.allowThis` or `FHE.allowSender` for such a write (R1), and MUST NOT insert any R4 (§8.9) or R5 (§8.10) grant for one either — the same reasoning applies wherever this rule's insertion point is reached with a `.wrap`-derived value, regardless of which rule owns that insertion. The transpiler MUST instead emit warning FHE4014 naming the withheld grants. A value produced by a real profile operation — including one whose *operand* was `.wrap`-derived, since the operation itself registers the result's permission — is unaffected. A runtime guard would not substitute for this withholding: a `.wrap` of a *non-zero* value passes an `isInitialized` check and still reverts every grant, so the direct case must stay fully withheld.
+
+**The initialization guard.** FHE4014 catches only the write it can see. The same unpermissioned handle also arrives with no syntactic marker at all — passed through a function argument into a parameter, or returned from a branch that never assigned it — and whether a handle carries a permission is a runtime property no static provenance rule closes. Every grant inserted by rules R1–R5 (§8.1–§8.3, §8.9, §8.10) or by §8.11 re-application that is not withheld under FHE4014 MUST therefore be wrapped in a runtime guard:
+
+```solidity
+if (FHE.isInitialized(<handle>)) { <grants> }
+```
+
+where `<handle>` is the value the grants are about — for R1 and R4 the written lvalue, for R2 the encrypted call argument, for R3 the hoisted return temp `__fhe_ret_n`, for R5 the (possibly hoisted) event argument, and for §8.11 re-application the policy target. One guard covers one handle's whole grant sequence at one trigger; grants about different handles at the same trigger get separate guards. Hoisted temp *declarations* stay outside the guard — the guarded statement still consumes them. `FHE.isInitialized(h)` is `internal pure` (`h != 0`), so the guard costs a comparison next to grants that each make an external call; an uninitialized handle holds no value and has no readers to serve, so skipping its grants is always correct and no diagnostic is stated. The guard is emitted uniformly, including where the handle is provably fresh (a §5.2 merge's own `FHE.select` result): a provably-true guard costs a comparison, while a freshness proof that is ever wrong reintroduces the revert. §8.9's zero-address guard protects a different hazard — a useless persistent grant to `address(0)` — and nests unchanged *inside* the initialization guard. Under `--acl=suggest`, the suggested text and any fix-it carry the same guard, so `--fix` output equals insert-mode output.
 
 ### §8.2 R2 — encrypted arguments to external calls
 
@@ -560,6 +572,8 @@ FHE.allowTransient(a, address(<callee>));
 ```
 
 The second argument of `allowTransient` is an `address`; contract-typed callee expressions do not convert implicitly, so the transpiler MUST wrap the callee in an explicit `address(...)` cast.
+
+Each inserted grant is wrapped in the §8.1 initialization guard on its own argument `a` — an argument handle the transpiler cannot prove initialized (a parameter, a copy, an opaque call result) would otherwise revert the call instead of granting.
 
 R2 MUST claim ownership of the statement it rewrote, and only then: pass 1 skips any statement R2 owns, so claiming a statement R2 did not rewrite leaves that statement's other operators unlowered, and claiming nothing while rewriting an argument makes the two passes patch the same bytes (FHE9001). When a rewritten argument sits inside a larger operator, ternary or cast site, R2 MUST render that whole site with the argument substituted, because pass 1 will not re-enter the statement.
 
@@ -577,7 +591,7 @@ In a non-`view`, non-`pure` `public`/`external` function returning an encrypted 
 FHE.allowTransient(__fhe_ret_n, msg.sender);
 ```
 
-inserted before `return __fhe_ret_n;`.
+inserted before `return __fhe_ret_n;`, wrapped in the §8.1 initialization guard on `__fhe_ret_n` — a `public` function can legally return a handle it never initialized (a pass-through parameter, an uninitialized branch's zero sentinel), and an unguarded grant on one reverts.
 
 R3 does **not** apply to a function whose return is declared `shared(...)` (§2.8): the share call already directs the handle at the caller, and inserting `allowTransient` as well would grant twice.
 
@@ -589,7 +603,9 @@ ACL operations cannot execute in `view` or `pure` context — `allowTransient` m
 
 ### §8.5 The never-auto-allow rule
 
-The transpiler MUST NOT auto-insert `FHE.allow(x, <address>)` for any address other than the patterns in R1–R3 (`allowThis`, `allowSender`, `allowTransient` to callee / `msg.sender`), and MUST NOT auto-insert `allowGlobal` or `allowPublic` under any circumstances. Over-broad allowance is a recognized vulnerability class; broad grants require explicit code (or a future annotation syntax, out of scope for v1).
+Absent a reader policy (§8.8), the transpiler MUST NOT auto-insert `FHE.allow(x, <address>)` for any address other than the patterns in R1–R3 (`allowThis`, `allowSender`, `allowTransient` to callee / `msg.sender`), and MUST NOT auto-insert `allowGlobal` or `allowPublic` under any circumstances. Over-broad allowance is a recognized vulnerability class.
+
+A reader policy is the only mechanism that widens this rule, and it does not weaken it: a policy is an author-written statement of ownership, checked at every site that acts on it, and the grants it produces appear verbatim in the generated `.sol`. What R4 and R5 (§8.9, §8.10) insert is never inferred — it is transcribed. Every reader that is neither proven by R1–R3 nor stated by a policy still requires explicit code.
 
 ### §8.6 Dedupe and idempotence
 
@@ -597,11 +613,195 @@ An insertion is suppressed when an equivalent call is already present. **⚠ Dra
 
 CoFHE files ACL permissions against the ciphertext *handle*, not against the storage location, so for R1 a grant on the copied value counts as a grant on the slot. When the triggering statement is exactly `slot = local;` with `local` a plain identifier, the R1 window additionally looks **backward** for a grant whose argument is `local`, stopping at the statement that declares `local` or any intervening statement whose subtree can reassign it (including conditional/loop bodies, nested blocks, and tuple-destructuring assignments). A statement that cannot be conclusively shown not to write the local is a barrier. In that local window, an author-written `allowPublic(local)` or `allowGlobal(local)` through the trusted profile library, or the equivalent encrypted-receiver method syntax, also suppresses R1's `allowThis`: either broad grant already permits the contract to read the copied handle. This subsumption is limited to `allowThis`; `allowSender` remains the separate §8.1 owner-proven grant. This is the most common CoFHE idiom — compute into a local, grant on the local, then store — and without it every such site receives a redundant on-chain grant.
 
-This rule is what makes §1.4 idempotence hold through the ACL pass: re-transpiling output inserts nothing.
+R4 and R5 grants (§8.9, §8.10) are subject to this section unchanged: an equivalent author-written call in the same window suppresses the policy's insertion, and a policy MUST NOT produce a grant that duplicates one already present.
+
+**Guard transparency.** The §8.1 initialization guard is transparent to the window scan: a statement that is an else-less `if` whose condition is a call to the trusted profile library's initialization probe (`FHE.isInitialized(...)`, the same §8.6 trust rule library-syntax grants get) contributes each statement of its body to the window as if it stood there directly — one level; the guard's condition argument is not compared, on the same principle as the §8.9 zero-address guard's dedupe (a wrapped statement that itself matches states the same fact the unwrapped form does). This applies to every window in this section (R1's forward and local windows, R2/R3's backward windows, and the R4/R5 policy windows), and it is what keeps §1.4 on guarded output: a re-transpile finds its own guarded grants, recognizes them as present, and in particular MUST NOT nest a second guard around one already emitted. An `isInitialized` on any other base is not the guard, and grants inside its body do not count as present.
+
+This rule is what makes §1.4 idempotence hold through the ACL pass: re-transpiling output inserts nothing. It is also why a reader policy survives a round trip: the generated `.sol` carries the grants but not the policy, so a second pass reproduces the grants and inserts nothing new.
 
 ### §8.7 Transient-only values
 
 Encrypted values that never reach storage and never cross a call boundary (locals consumed within the transaction) get NO insertion.
+
+### §8.8 Reader policies
+
+Rules R1–R3 grant only where the transpiler can *prove* ownership: the contract itself, a mapping slot keyed by exactly `msg.sender`, a callee it is passing a handle to, a caller it is returning one to. Every other reader is a claim the transpiler cannot check, and §8.5 refuses to guess it. A **reader policy** is the author's statement of that claim, written once at the declaration and checked at every site that acts on it.
+
+A policy is a NatSpec `@custom:fhe-allow` item. It adds no grammar, no parser production, and no ABI change; solc ignores it. In this it follows §2.9 rather than §2.3, §2.7, or §2.8.
+
+```
+policy    := '@custom:fhe-allow' target ':' readers
+target    := identifier
+readers   := reader (',' reader)*
+reader    := 'this' | 'public' [ 'if' condition ] | path
+path      := name ( '.' name | '[' subscript ']' )*
+subscript := name
+name      := identifier
+condition := path
+```
+
+**Placement.** A policy MUST sit in a doc comment (`///` or `/** … */`) attached to one of:
+
+| Attached to | `target` names |
+|---|---|
+| a state variable definition | that variable |
+| a `struct` definition | a field of that struct |
+| an `event` definition | a parameter of that event |
+
+The struct form exists because a struct field is a `VariableDefinition`, which carries no doc comments of its own, and because ERC-7201 namespaced storage places every slot of a contract in one struct. Attaching there also keeps a contract's whole policy set in one reviewable block.
+
+**Key binding.** ⚠ Draft decision (key names): when `target` is a mapping, its keys bind as `key0`, `key1`, … outermost first, and `key` is an alias for `key0`. When the mapping declares named keys (`mapping(address account => euint64)`), those names bind as well.
+
+These names exist only inside the policy; they declare nothing in the contract. Each stands for the index expression the *write site* supplies, so one policy covers `_balances[from]`, `_balances[to]`, and `_balances[msg.sender]` alike, granting a different address at each. The positional names are available on every mapping; a declared key name is an alias for the same binder, and neither form is refused. When `target` is an array, its index binds as `index`. `self` binds to the target location the write addresses: for a policy on `mapping(uint256 => Bid) _bids`, `self` at a write to `_bids[id].amount` is `_bids[id]`, so `self.bidder` names that element's sibling field. When the policy is attached to a `struct` definition, a sibling field of that struct is nameable directly (resolution rule 5) and `self` is not required.
+
+**Reader resolution.** A `path`'s first `name` MUST resolve, in this order, to exactly one of:
+
+1. a bound key, index, or `self` (above);
+2. `this` — the contract, rendered `FHE.allowThis`;
+3. `public` — everyone, rendered `FHE.allowPublic`;
+4. for an `event` target, a parameter of that same event;
+5. a state variable, or a field of the struct the policy is attached to.
+
+Nothing else resolves. A local, a function parameter of an unrelated function, a function call, and a literal are all refused: a policy is evaluated at sites the declaration cannot see, so only names that are in scope at *every* such site may appear.
+
+**Restrictions.** Every violation is FHE4005 unless noted.
+
+1. A policy written in an ordinary comment is discarded by the parser before the transpiler sees it (only doc comments survive trivia collection). The transpiler MUST scan the raw text of every `.fsol` unit for the literal `@custom:fhe-allow` inside a non-doc comment and refuse, rather than let a policy silently do nothing.
+2. A policy in a `.sol` file is refused. §1.4 forbids rewriting a `.sol` file, so the policy could never take effect, and silence there would be indistinguishable from a policy that grants nothing.
+3. Any `@custom:fhe-` NatSpec key the transpiler does not recognize is refused. A misspelled policy MUST NOT degrade to "no policy".
+4. `target` MUST resolve to a declaration of the stated kind, and two policies in one declaration MUST NOT name the same target.
+5. The target's type MUST contain an encrypted type of the pinned profile (§1.5), directly or through a mapping, array, or struct.
+6. `msg.sender`, `tx.origin`, and any path rooted at `msg`, `tx`, or `block` are refused inside `readers`. A declaration is not a call site. A policy naming the caller would apply to every write of that slot, including writes made on another account's behalf — which is exactly the inference §8.1 refuses to make.
+7. `public` MUST be the only reader in its list. It MAY carry an `if` condition (§8.11).
+8. A reader path MUST NOT name the target itself.
+
+**No-op.** A policy is a comment. §2.5 reproduces comments byte for byte, and the grants it produces are ordinary profile calls, so a re-transpile of the output finds explicit grants, suppresses reinsertion under §8.6, and `T(T(x)) == T(x)` holds. Generated `.sol` output carries no policy, which is why restriction 2 exists.
+
+**Example (informative).** A confidential token whose balances are owned by the account they are filed under, whose supply is contract-only, and whose transfer event must stay readable by both parties after the transaction ends:
+
+```solidity
+/// @custom:storage-location erc7201:token.storage.Confidential
+/// @custom:fhe-allow _balances: account
+/// @custom:fhe-allow _totalSupply: this
+struct ConfidentialStorage {
+    mapping(address account => euint64) _balances;
+    euint64 _totalSupply;
+    address _observer;
+}
+
+/// @custom:fhe-allow amount: from, to
+event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);
+```
+
+`_balances: account, _observer` is also well formed. It grants a compliance observer on every balance written while the observer is set, and carries the FHE4007 warning of §8.11: the policy is forward-only, and handles written before the observer was set keep the readers they already have.
+
+### §8.9 R4 — policy grants at storage writes
+
+Where a §8.1 R1 storage write's slot carries a reader policy, the transpiler MUST insert, immediately after the write statement and in this order:
+
+```solidity
+FHE.allowThis(<lvalue>);
+FHE.allow(<lvalue>, <reader>);   // once per reader, in policy order
+```
+
+`allowThis` is emitted first and unconditionally. The profile refuses a grant made by a contract that is not itself allowed on the handle, so the contract's own grant MUST precede every other grant on that handle. A policy naming `this` explicitly produces no second call.
+
+A `public` reader renders `FHE.allowPublic(<lvalue>)` and replaces the whole reader list.
+
+**Zero-address guard.** A reader that is not a compile-time constant MUST be emitted as
+
+```solidity
+if (<reader> != address(0)) FHE.allow(<lvalue>, <reader>);
+```
+
+A grant to the zero address is never useful and costs a persistent store; the guard costs a comparison and a branch. ⚠ Draft decision (unconditional form): a reader the transpiler can prove non-zero — `address(this)`, a non-zero address literal, an `immutable` initialized to one — is emitted without the guard.
+
+**Binding at the write site.** Every reader path MUST be resolvable to concrete text at the write site. The transpiler MUST support at least:
+
+- a direct index — `m[k]`, `m[k0][k1]`, `a[i]`, `s.f`, and any composition of these;
+- a path through a **storage-pointer local** — a local of a `storage` reference type assigned exactly once in the function, from a call to a parameterless function or from a state variable, and not reassigned or conditionally bound. This is the ERC-7201 accessor shape (`Storage storage $ = _getStorage(); $.balances[from] = ptr;`) and it MUST bind `$` through to the struct the policy is attached to.
+
+Where a path cannot be bound — a pointer assigned in a branch, a `... storage` function parameter, an assembly-derived slot the transpiler cannot follow — the transpiler MUST refuse the file with FHE4006 rather than emit a partial or guessed grant (§1.3). A silent skip is forbidden: the value would be stored and permanently unreadable, and nothing would say so.
+
+**Relation to R1.** When a slot carries a policy, R4 replaces §8.1's ownership decision for that slot and FHE4001 is NOT emitted — the author has stated ownership, so there is nothing withheld to warn about. When a slot carries no policy, §8.1 is unchanged: `allowThis` only, plus FHE4001 wherever the sender grant is withheld.
+
+**Encrypted-branch merges.** A storage write produced by a §5.2 merge is an R4 site like any other, and a policy MUST be applied there exactly as it is at a direct write. This is the path on which the pre-policy sender inference produced a live disclosure, so silence here is not an option.
+
+The merge hoists every key of the written location into a temp before the write, so the merged lvalue reads `m[__fhe_key_1][__fhe_key_2]` rather than the author's key expressions:
+
+```solidity
+address __fhe_key_1 = other;
+address __fhe_key_2 = holder;
+euint32 __fhe_pre_3 = m[__fhe_key_1][__fhe_key_2];
+...
+m[__fhe_key_1][__fhe_key_2] = FHE.select(__fhe_cond_0, __fhe_then_4, __fhe_pre_3);
+```
+
+A reader path MUST bind to those temps, not to the source text they were hoisted from. The hoist is what guarantees each key expression is evaluated once; re-rendering the original expression inside a grant would evaluate it a second time, which §4.4 forbids. `key0` at the write above therefore renders `__fhe_key_1`, and the grant reads `FHE.allow(m[__fhe_key_1][__fhe_key_2], __fhe_key_1)`.
+
+R4 is subject to §8.0 brace wrapping, §8.6 dedupe, and the §8.0 R1/R3 handover exactly as R1 is. Under `--acl=suggest`, R4 insertions are downgraded to FHE4013 notes carrying a `safe: true` fix-it.
+
+R4's `allowThis` is unconditional in the same sense R1's is, and no more: when the written value is `.wrap`-derived (§8.1's FHE4014), the transpiler MUST withhold the entire grant sequence — `allowThis` and every reader — and warn, rather than insert a call that would revert. Every R4 sequence that is inserted is wrapped in the §8.1 initialization guard on the written lvalue — merge sites included — with the zero-address guard nested inside it; the two guards protect different hazards and neither replaces the other.
+
+### §8.10 R5 — policy grants at event arguments
+
+Before an `emit` whose event declares a reader policy on an encrypted parameter, the transpiler MUST insert the §8.9 grant sequence for the argument in that position, using the policy's readers resolved at the emit site.
+
+The insertion goes **before** the `emit` statement; §8.0 wrapping applies when the `emit` is a braceless branch body.
+
+⚠ Draft decision (argument hoisting): when the argument is not a plain identifier or a bindable storage path, it MUST be hoisted to a temp `__fhe_evt_n` (§2.4) that is used in both the grants and the `emit`, preserving single evaluation — as R3 does for returns. When the hoist is not possible because the `emit` is itself a rewrite site another rule has claimed, the transpiler MUST refuse with FHE4004.
+
+**Which declaration.** A policy is read from the event declaration the `emit` resolves to, by ordinary Solidity name resolution. An event redeclared with a matching signature — as an interface member, and again in the library that emits it so the topic is unchanged under `DELEGATECALL` — is a separate declaration, carrying its own policy or none. Nothing propagates between them, and the transpiler states no diagnostic for an unannotated redeclaration: where it matters, the emitted value reaches the `emit` with a known-empty reader set and §8.12's FHE4009 reports it against the value rather than against a coincidence of names.
+
+R5 exists because an event is the only boundary at which an EOA receives a handle it must read later. The profile's `allowTransient` and its `share` operation both store to transient storage and are cleared at the end of the transaction, so neither R2, nor R3, nor a §2.8 shared return can serve an off-chain reader. Only a persistent grant can, and only the author knows who that reader is.
+
+Like R4, R5 withholds its entire grant sequence and warns with FHE4014 (§8.1) instead when the argument is `.wrap`-derived. Every R5 sequence that is inserted is wrapped in the §8.1 initialization guard on that position's (possibly hoisted) argument, one guard per governed position; hoist declarations stay outside the guards, before them.
+
+### §8.11 Policy re-application and gated disclosure
+
+A policy's readers may name mutable state. A write to that state changes who *should* hold access, but it does not change any handle, and the profile has no revoke (§8.13). The transpiler therefore re-applies the policy at the moment the policy's own inputs change.
+
+**Re-application.** A write to a state variable or struct field that a policy names — in `readers` or in a `public if` condition — MUST re-emit that policy's grants for the policy target's current handle, at the same position and in the same order R4 uses, wrapped in the §8.1 initialization guard on the target. Re-application is the guard's most-live site: the trigger writes a *reader*, so nothing at it proves the target itself was ever written, and a grant on an unwritten handle reverts the reader update.
+
+**Restriction.** Re-application is possible only where the target's location is bindable at the re-application site. A write to a policy variable carries no key, and the transpiler cannot enumerate a mapping's keys, so a mapping or array target cannot be re-applied at all. This does **not** make such a policy illegal: its readers still bind at every R4 and R5 site, where the key is present. The policy is *forward-only* — it grants on handles written from that point on, and past handles keep the readers they were given.
+
+The transpiler MUST NOT leave that difference unstated. A policy whose target is a mapping or array and whose readers name mutable state MUST produce FHE4007 at the policy declaration, severity **warning**, naming the reader that cannot be re-applied. Backfilling past handles is possible only from off-chain — the handles are not reachable on-chain — so the author must write that grant loop explicitly.
+
+FHE4007 is an **error**, and the policy is refused, in one case: a `public if <condition>` reader on a mapping or array target. A gated disclosure that can never be re-applied publishes nothing at all, since the write that flips the condition is the only site that would ever publish. Warning there would describe a policy with no effect.
+
+**Gated disclosure.** A `public if <condition>` reader renders
+
+```solidity
+if (<condition>) FHE.allowPublic(<target>);
+```
+
+at every R4/R5 site of that target, and — by the re-application rule above — after every write to `<condition>`. This is what makes "public after the reveal" expressible: the writes during the private phase emit nothing, and the write that flips the condition publishes. The mapping restriction applies unchanged, so a gated-public mapping is FHE4007.
+
+`<condition>` MUST resolve under §8.8 reader resolution and MUST type as `bool`.
+
+### §8.12 Policy checks
+
+**Cross-reader copy — FHE4008, warning.** The profile files permissions against the ciphertext handle, not the storage location (§8.6). A handle stored into two slots therefore carries the union of both slots' readers. The transpiler MUST warn when a storage write's right-hand value is a handle read from another slot, with no intervening profile operation, and the two slots' policies name different readers, neither list being `this` alone.
+
+A handle produced by a profile operation — including the `FHE.select` of a §5.2 merge — is fresh and states no fact. Widening from a slot whose policy is `this` is not a finding: adding the first named reader to a contract-only handle is the ordinary way to hand a computed value to its recipient.
+
+⚠ Draft decision (warning, not error): the shape is legal and occasionally intended, and the transpiler cannot distinguish a deliberate hand-off from an accidental disclosure. It states the fact and leaves the decision with the author.
+
+**Known-empty reader set — FHE4009, warning.** The transpiler MUST warn when an encrypted value reaches an `emit` or a `return` and its reader set is *known* to be empty. Transient grants do not count toward the set: the profile clears them at the end of the transaction, so they cannot serve a reader who decrypts later.
+
+The rule fires only on a set the transpiler knows. A value whose provenance it cannot see — an encrypted parameter, the result of a call it types as `Unknown` — states no fact and produces no diagnostic, on the same principle §8.2 already applies to an `Unknown` callee. Warning on an unknown set would fire on every legitimate second-transaction handler.
+
+**Outside the model.** A handle unwrapped out of an encrypted type (`FHE.unwrap` into a `bytes32` field) leaves the reach of §8.8–§8.12 entirely: no policy can name it and no check can see it. ⚠ Draft decision: this revision emits no diagnostic for the unwrap, and states the limit here so that a conformance reviewer does not read silence as coverage.
+
+### §8.13 Non-revocability
+
+The profile grants access permanently. It exposes no operation that removes a persistent grant, and its reference ACL never writes `false` to a permission pair. `allowTransient` is the only self-clearing grant, and it dies with the transaction.
+
+Three consequences are normative for this section:
+
+1. The transpiler MUST NOT emit any construct that presents itself as removing access, and MUST NOT translate a policy change into a revocation.
+2. Re-application (§8.11) only adds readers. A policy edit, or a write that changes a policy's inputs, never removes a reader from a handle that already carries one.
+3. Replacing a reader requires a new handle. Re-minting through a profile operation — `x = x + FHE.as<T>(0)` — yields a handle no previous reader is granted on. The transpiler MUST NOT insert such a re-mint on its own: it is an FHE operation with real cost, and only the author knows whether replacement or accumulation is meant.
 
 ---
 
@@ -677,9 +877,16 @@ Assigned in this version:
 | FHE4002 | warning | view-or-pure-without-acl (§8.4) |
 | FHE4003 | error | acl-callee-type-underivable (§8.2) |
 | FHE4004 | error | acl-position-illegal (§8) |
+| FHE4005 | error | acl-policy-invalid (§8.8) |
+| FHE4006 | error | acl-policy-target-unbindable (§8.9) |
+| FHE4007 | error / warning | acl-policy-not-reapplicable (§8.11) — warning for a forward-only mapping/array policy; error only for `public if` on one |
+| FHE4008 | warning | acl-cross-reader-copy (§8.12) |
+| FHE4009 | warning | acl-empty-reader-set (§8.12) |
 | FHE4010 | note | suggest-allow-after-write (`--acl=suggest`) |
 | FHE4011 | note | suggest-transient-for-argument (`--acl=suggest`) |
 | FHE4012 | note | suggest-transient-for-return (`--acl=suggest`) |
+| FHE4013 | note | suggest-policy-grant (`--acl=suggest`, §8.9, §8.10) |
+| FHE4014 | warning | acl-grant-on-unpermissioned-handle (§8.1) — a `.wrap`-derived write; the withheld grant would revert, not merely fail to help |
 | FHE5001 | error | op-not-in-profile-version (§1.5) |
 | FHE5002 | error | unknown-target-profile |
 | FHE5003 | error | installed-library-version-mismatch |
@@ -763,3 +970,6 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.6.5 (2026-08-28)** — §1.3's emit-time trust rule is corrected and widened. Corrected: an unseen base or an unconfirmed plain import (`Unresolved(IncompleteInheritance)`/`Unresolved(MaybeExternal)`) now refuses with FHE1022 like any other shadow, unless positively trusted through the explicit-profile-import exception; only a provable total absence of any binding (`Unresolved(NotFound)`) is exempt, since that fails loudly at solc instead of silently. Widened: the same check now also covers `Impl`, `Utils`, and `UnsignedEncryptedInput`, the identifiers the batched `in`-sugar materializer (§2.3) writes when a function has more than one `in` parameter.
 - **0.6.6 (2026-08-28)** — §1.3's emit-time trust rule is corrected again on three points found in review. (1) The `Impl`/`Utils`/`UnsignedEncryptedInput` check now also trusts a `Contract`/`TypeName` resolution declared in-unit in the same file as the recognized profile `library FHE` (the conformance-corpus case), not only the generic exposure paths — an in-unit-vendored profile file no longer produces a spurious refusal on ordinary multi-parameter `in` sugar. (2) A known (in-unit) ancestor's own declaration now always beats the incomplete-inheritance fallback's benefit of the doubt, even when a *trailing* opaque base in the same `is` list would otherwise keep the binder from certifying it as the provably-first member. (3) The check now also covers the batch materializer's `externalT.unwrap(...)`/`eT.wrap(...)` type names, not only its three fixed identifiers.
 - **0.6.7 (2026-08-28)** — §1.3's emit-time trust rule fix from 0.6.6 was applied inconsistently: `is_fhe_library`'s rule 4 and the `encrypted_type`/`external_input_type` UDVT bypass still pattern-matched only the *direct* `Contract`/`TypeName` resolution, so an in-unit `import "./FHE.sol"` combined with an unrelated unseen base — an ordinary shape, not an edge case — still produced a spurious FHE1022 on plain `FHE.add(...)` calls and on wrap/unwrap type checks, because that combination wraps the resolution in `Unresolved(IncompleteInheritance)` before it ever reaches those variants. All three trust checks now unwrap that fallback first, matching what the 0.6.6 fix already did for the batch-materializer names.
+- **0.7.0 (2026-08-30)** — §8.8–§8.13 add **reader policies**: a `@custom:fhe-allow <target>: <readers>` NatSpec item — the key takes the profile's own verb, and keeps the `fhe-` prefix so that §8.8 restriction 3 can refuse any unrecognized `@custom:fhe-` key and a misspelling never degrades to "no policy" — on a state variable, a `struct`, or an `event` states who may read the ciphertexts that declaration holds. Like §2.9 this adds no parser grammar; unlike §2.9 it is consumed from doc comments rather than name resolution. Two new insertion rules act on a policy: R4 (§8.9) emits `allowThis` plus one grant per reader after a storage write, binding the policy through direct indexes and through the single-assignment ERC-7201 storage-pointer shape; R5 (§8.10) emits the same sequence before an `emit`, which is the only boundary at which an EOA receives a handle it must read after the transaction ends — the profile's `allowTransient` and `share` both clear at end of transaction and cannot serve one. §8.11 re-applies a policy when a variable the policy names is written, which is what makes a late reader and a `public if <condition>` gated disclosure expressible, and states plainly where it cannot reach: a mapping or array target whose readers name mutable state is *forward-only*, because the keys of a mapping cannot be enumerated at a write to the policy variable, and carries a FHE4007 warning naming the reader that will not be re-applied; the one refused combination is `public if` on such a target (FHE4007 as an error), which would publish nothing at all. §8.12 adds two checks: a handle copied between slots with different readers (FHE4008 `acl-cross-reader-copy`, warning — permissions are filed against the handle, so both readers gain access), and an encrypted value reaching an `emit` or `return` with a *known*-empty reader set (FHE4009, warning; an unknown set states no fact). §8.13 records that the profile has no revoke: grants accumulate, re-application only adds, and replacing a reader requires re-minting the handle, which the transpiler MUST NOT do on its own. §8.1's ownership decision and FHE4001 are superseded for a slot that carries a policy; §8.5 is widened to admit policies and reworded to state that R4/R5 transcribe an author's claim rather than infer one. R4 applies to a §5.2 merge write, where reader paths bind to the merge's hoisted key temps rather than the author's key expressions, so §4.4 single evaluation holds. An event policy is read from the declaration the `emit` resolves to and never propagates between redeclarations of one signature. New codes FHE4005 (policy invalid, including a policy in an ordinary comment, in a `.sol` file, or naming `msg.sender`), FHE4006 (target unbindable at the write site), FHE4007, FHE4008, FHE4009, FHE4013 (suggest-mode note).
+- **0.8.0 (2026-08-31)** — §8.1 corrects a runtime-safety gap found against the `fhenix-confidential-contracts` port: `FHE.allowThis` is `allow(handle, address(this))` under a different name, and CoFHE's `allow` reverts unless its caller already holds permission on `handle`. An ordinary FHE operation registers that permission for the calling contract as a side effect of computing its result; a bare `eT.wrap(x)` reinterpretation is a compile-time UDVT cast that never reaches CoFHE and registers nothing, for anyone, regardless of `x`. "Unconditional" was a confidentiality claim, not a runtime one — inserting `allowThis` on a `.wrap`-derived write does not fail to help, it reverts the transaction. R1, R4 (§8.9), and R5 (§8.10) now withhold every grant they would otherwise insert at such a write or emit argument and warn with new code FHE4014 instead; a value produced by a real profile operation, even one whose operand was `.wrap`-derived, is unaffected, since the operation itself registers the result's permission.
+- **0.9.0 (2026-08-31)** — §8.1 adds the **initialization guard**, generalizing 0.8.0's fix: re-testing against the reference corpus showed the same unpermissioned zero handle arriving with no syntactic marker at all — `euint64.wrap(bytes32(0))` passed through a call argument into a parameter and then written, or returned from a branch that never assigned it — and whether a handle carries a permission is a runtime property no static provenance rule closes. Every grant inserted by R1–R5 or §8.11 re-application that is not withheld under FHE4014 is now wrapped in `if (FHE.isInitialized(<handle>)) { … }` on the handle the grants are about: one guard per handle per trigger, hoist declarations outside it, the §8.9 zero-address guard nested inside it, suggest-mode fix-its carrying the same guard. The guard is uniform — emitted even where the handle is provably fresh, such as a §5.2 merge's own `FHE.select` result — because a provably-true guard costs a comparison while a wrong freshness proof reintroduces the revert. The direct `.wrap` case keeps 0.8.0's full withholding and FHE4014: a `.wrap` of a non-zero value passes `isInitialized` and still reverts every grant, so a guard alone cannot protect it. §8.6 makes the guard transparent to the dedupe window scan — an else-less `if` on the trusted profile's `isInitialized` contributes its body's statements to the window directly, one level, condition argument uncompared — which is what keeps §1.4 idempotence byte-for-byte on the new guarded shape and prevents a second pass from nesting a second guard. No new diagnostic: skipping a grant on an uninitialized handle is silent, always-correct behavior — the handle holds no value and has no readers to serve, so nothing observable is dropped.

@@ -39,9 +39,11 @@
 mod decl;
 mod diag;
 mod emit_trust;
+mod empty_reader;
 mod exprs;
 mod imports;
 mod ops;
+mod policy;
 mod precondition;
 mod shared;
 mod sites;
@@ -52,6 +54,10 @@ mod walk;
 
 pub use diag::{codes, Diagnostic, FixIt, Severity};
 pub use ops::is_msg_sender;
+pub use policy::{
+    KeyBinder, Policy, PolicyOwner, PolicyReader, PolicyReaders, PolicyTable, ReaderPath,
+    ReaderRoot,
+};
 pub use sites::{
     AclFacts, CastSugarSite, CheckedUnit, CompoundAssignSite, EncryptedArgCall, EncryptedIfSite,
     EncryptedReturn, EncryptedStorageWrite, InSugarSite, IncDecSite, OperandKind, OperandPlan,
@@ -82,6 +88,7 @@ pub fn check<'ast>(
 
     sugar::scan(files, unit, &trust, profile, &mut out);
     precondition::scan(unit, &mut out);
+    policy::collect(unit, &trust, sm, &mut out);
 
     let mut safe_cache: FxHashMap<fhec_bind::FunctionId, bool> = FxHashMap::default();
     let fids: Vec<fhec_bind::FunctionId> = unit.functions().map(|(id, _)| id).collect();
@@ -93,5 +100,8 @@ pub fn check<'ast>(
     shared::scan(files, unit, &trust, profile, &mut out);
     // Emit-time trust (FHE1022): needs every site/fact vector above final.
     emit_trust::scan(unit, &trust, &mut out);
+    // FHE4009: needs `out.types` and `out.cast_sugar_sites` populated by the
+    // walk above.
+    empty_reader::scan(unit, &mut out);
     out
 }

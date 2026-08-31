@@ -22,6 +22,22 @@ const DEFAULT_DIRS: &[&str] = &[
     "/Users/toml/dev/cofhesdk/packages/site/snippets",
 ];
 
+/// Files excluded from the scan on evidence, not convenience: each one is
+/// the CoFHE library's *own* adversarial test of its low-level primitives
+/// (e.g. deliberately trivial-encrypting an out-of-range literal to check
+/// that the runtime reverts), never reachable by anything `fhec` actually
+/// compiles. Confirmed: `contracts/internal/` does not exist in the
+/// published `@fhenixprotocol/cofhe-contracts` npm package a real project
+/// imports (`packages/difftest/node_modules/@fhenixprotocol/cofhe-contracts`
+/// is flat — no `internal/`, no `tests/`) — this tree is checked out from
+/// the library's own source repo, not from what it ships. An explicit list
+/// (not a directory-name heuristic like `internal` or `tests`) keeps the
+/// scan's fuzzing power over everything else in the tree, including the
+/// deliberately-included `mock-contracts` and `snippets` dirs, which *do*
+/// represent code a real project writes.
+const KNOWN_NON_REPRESENTATIVE_FILES: &[&str] =
+    &["contracts/internal/host-chain/contracts/tests/OnChain.sol"];
+
 fn corpus_dirs() -> Vec<PathBuf> {
     match std::env::var("FHEC_CORPUS_DIRS") {
         Ok(v) => v.split(':').map(PathBuf::from).collect(),
@@ -42,7 +58,11 @@ fn collect_sol_files(dir: &Path, out: &mut Vec<PathBuf>) {
         }
         if path.is_dir() {
             collect_sol_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "sol") {
+        } else if path.extension().is_some_and(|e| e == "sol")
+            && !KNOWN_NON_REPRESENTATIVE_FILES
+                .iter()
+                .any(|suffix| path.to_string_lossy().ends_with(suffix))
+        {
             out.push(path);
         }
     }

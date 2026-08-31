@@ -131,6 +131,14 @@ impl<'ast> BoundUnit<'ast> {
         &self.events[id.index()]
     }
 
+    /// All event declarations in the unit, in declaration order.
+    pub fn events(&self) -> impl Iterator<Item = (EventId, &EventInfo<'ast>)> + use<'_, 'ast> {
+        self.events
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (EventId::new(i), e))
+    }
+
     /// The error declaration with the given id.
     pub fn error(&self, id: ErrorId) -> &ErrorInfo<'ast> {
         &self.errors[id.index()]

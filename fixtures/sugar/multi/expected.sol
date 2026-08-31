@@ -15,8 +15,8 @@ contract SugarMulti {
         ebool flag = ebool.wrap(__fhe_hashes_1[0]);
         eaddress owner_ = eaddress.wrap(__fhe_hashes_1[1]);
         eb = flag;
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
         ea = owner_;
-        FHE.allowThis(ea);
+        if (FHE.isInitialized(ea)) { FHE.allowThis(ea); }
     }
 }

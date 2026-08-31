@@ -11,6 +11,6 @@ contract NonAddressKey {
 
     function set(uint256 id, euint32 v) public {
         accounts[id] = v;
-        FHE.allowThis(accounts[id]);
+        if (FHE.isInitialized(accounts[id])) { FHE.allowThis(accounts[id]); }
     }
 }
