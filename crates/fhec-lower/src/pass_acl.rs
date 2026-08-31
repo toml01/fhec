@@ -120,7 +120,203 @@ pub(crate) fn run_function<'ast>(
             )?;
         }
     }
+
+    // Re-application (spec §8.11): a plain write to a state variable a
+    // policy names (in its readers or its `public if` condition) re-emits
+    // that policy's grants. Scoped to a state-variable-attached policy whose
+    // own target is not a mapping/array (`policy.keys` empty) — such a
+    // target is always nameable by its own bare name, so re-application
+    // needs no pointer/key context from the triggering site at all. A
+    // mapping/array target cannot be re-applied regardless of where the
+    // trigger fires (spec §8.11, FHE4007) and a struct/event target would
+    // need an accessor this revision does not attempt to rediscover at an
+    // arbitrary other call site — documented scope decision, not a guess.
+    let triggers = reapply_triggers(&ctx.checked.policies);
+    if !triggers.is_empty() {
+        for stmt in collect_assign_stmts(ctx, function) {
+            if !inside_if(stmt.span) {
+                rule_reapply(
+                    ctx,
+                    function,
+                    stmt,
+                    &triggers,
+                    acl_insert,
+                    diags,
+                    plan,
+                    &mut outcome,
+                )?;
+            }
+        }
+    }
     Ok(outcome)
+}
+
+/// Every policy a write to a given state variable must re-apply (spec
+/// §8.11): the variable names a bindable (non-mapping/array) target's
+/// reader, or its `public if` condition.
+fn reapply_triggers(
+    policies: &fhec_check::PolicyTable,
+) -> std::collections::HashMap<fhec_bind::VarId, Vec<&fhec_check::Policy>> {
+    use fhec_check::{PolicyReader, PolicyReaders, ReaderRoot};
+    let mut out: std::collections::HashMap<fhec_bind::VarId, Vec<&fhec_check::Policy>> =
+        std::collections::HashMap::new();
+    let all = policies
+        .by_state_var
+        .values()
+        .chain(policies.by_struct_field.values())
+        .chain(policies.by_event_param.values());
+    for p in all {
+        if !p.keys.is_empty() {
+            continue; // FHE4007: a mapping/array target cannot be re-applied
+        }
+        if !matches!(p.owner, fhec_check::PolicyOwner::StateVar(_)) {
+            continue; // scope decision: only a state-variable-attached target is re-applied here
+        }
+        let roots: Vec<&ReaderRoot> = match &p.readers {
+            PolicyReaders::Public { condition: Some(c) } => vec![&c.root],
+            PolicyReaders::Public { condition: None } => Vec::new(),
+            PolicyReaders::List(list) => list
+                .iter()
+                .filter_map(|r| match r {
+                    PolicyReader::Path(pp) => Some(&pp.root),
+                    PolicyReader::This => None,
+                })
+                .collect(),
+        };
+        for root in roots {
+            if let ReaderRoot::StateVar(vid) = root {
+                out.entry(*vid).or_default().push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Every plain `lhs = rhs;` expression-statement in a function's body, in
+/// source order.
+fn collect_assign_stmts<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
+) -> Vec<&'ast ast::Stmt<'ast>> {
+    use solar_ast::visit::Visit;
+    use std::ops::ControlFlow;
+
+    struct Finder<'ast> {
+        out: Vec<&'ast ast::Stmt<'ast>>,
+    }
+    impl<'ast> Visit<'ast> for Finder<'ast> {
+        type BreakValue = ();
+        fn visit_stmt(&mut self, s: &'ast ast::Stmt<'ast>) -> ControlFlow<()> {
+            if let ast::StmtKind::Expr(e) = &s.kind {
+                if matches!(e.kind, ast::ExprKind::Assign(_, None, _)) {
+                    self.out.push(s);
+                }
+            }
+            self.walk_stmt(s)
+        }
+    }
+
+    let Some(body) = ctx.unit.function(function).ast.body.as_ref() else {
+        return Vec::new();
+    };
+    let mut f = Finder { out: Vec::new() };
+    for s in body.iter() {
+        let _ = f.visit_stmt(s);
+    }
+    f.out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rule_reapply(
+    ctx: &Ctx<'_, '_>,
+    function: fhec_bind::FunctionId,
+    stmt: &ast::Stmt<'_>,
+    triggers: &std::collections::HashMap<fhec_bind::VarId, Vec<&fhec_check::Policy>>,
+    acl_insert: bool,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+    plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
+) -> Result<()> {
+    let ast::StmtKind::Expr(e) = &stmt.kind else {
+        return Ok(());
+    };
+    let ast::ExprKind::Assign(lhs, None, _) = &e.kind else {
+        return Ok(());
+    };
+    let ast::ExprKind::Ident(id) = &lhs.peel_parens().kind else {
+        return Ok(());
+    };
+    let Some(fhec_bind::Resolution::StateVar(vid)) = ctx.unit.resolve(*id) else {
+        return Ok(());
+    };
+    let Some(policies) = triggers.get(vid) else {
+        return Ok(());
+    };
+
+    let indent = ctx.line_indent(ctx.unit.function(function).file, ctx.range(stmt.span).start);
+    let at = after_stmt_offset(
+        ctx.text(ctx.unit.function(function).file),
+        ctx.range(stmt.span).end,
+    );
+    let mut lines: Vec<String> = Vec::new();
+    for policy in policies {
+        let target_text = policy.target.clone();
+        let Some(ty) = target_encrypted_type(ctx, policy) else {
+            continue;
+        };
+        let window = forward_window(ctx, function, stmt.span, &target_text);
+        let rendering =
+            crate::policy_bind::render_readers(ctx, function, policy, &target_text, &[])?;
+        let calls =
+            crate::policy_bind::render_call_lines(ctx, stmt.span, ty, &target_text, &rendering)?;
+        for call in calls {
+            if !window.iter().any(|s| {
+                policy_call_matches(
+                    ctx,
+                    function,
+                    s,
+                    &call.fn_name,
+                    &call.arg0,
+                    call.arg1.as_deref(),
+                )
+            }) {
+                lines.push(call.text);
+            }
+        }
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+
+    if !acl_insert {
+        let joined: String = lines.iter().map(|c| format!("{c} ")).collect();
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4013",
+            severity: Severity::Note,
+            span: stmt.span,
+            message: format!(
+                "ACL suggestion: after this write, re-apply the policy with `{}`",
+                joined.trim_end()
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.11"),
+        });
+        return Ok(());
+    }
+    brace_lone_stmt(ctx, function, stmt.span, plan, outcome)?;
+    for call in lines {
+        plan.push(Patch::insert(
+            at,
+            format!("\n{indent}{call}"),
+            Provenance::new("§8.11 re-application", ctx.range(stmt.span)).with_code("FHE4013"),
+        ));
+    }
+    Ok(())
+}
+
+/// The encrypted type of a state-variable-attached policy's target.
+fn target_encrypted_type(_ctx: &Ctx<'_, '_>, policy: &fhec_check::Policy) -> Option<EType> {
+    policy.direct_value_ty
 }
 
 /// Every `emit` statement in a function's body, in source order.

@@ -70,6 +70,12 @@ pub struct Policy {
     pub keys: Vec<KeyBinder>,
     /// The reader list, or a gated/ungated `public`.
     pub readers: PolicyReaders,
+    /// The encrypted type of the target itself, when its *own* declared
+    /// type is directly encrypted (not reached through a mapping, array,
+    /// or struct). `None` for every other shape — spec §8.11
+    /// re-application needs this to know the target is nameable by its own
+    /// bare name alone, with no key or field access to add.
+    pub direct_value_ty: Option<fhec_ir::EType>,
     /// Anchor span for diagnostics and for R4/R5 fix-it/note placement (the
     /// doc-comment tag).
     pub span: Span,
@@ -307,6 +313,9 @@ pub(crate) fn collect(unit: &BoundUnit<'_>, trust: &Trust, sm: &SourceMap, out: 
             let Some(readers) = parse_readers(&mut ctx, &tc, doc.span, readers_text) else {
                 continue;
             };
+            if !check_reapplication(&mut ctx, &tc, &readers, doc.span) {
+                continue;
+            }
             seen.push(target_name.to_string());
             out.policies.by_struct_field.insert(
                 (tid, target_name.to_string()),
@@ -315,6 +324,10 @@ pub(crate) fn collect(unit: &BoundUnit<'_>, trust: &Trust, sm: &SourceMap, out: 
                     target: target_name.to_string(),
                     keys: tc.keys,
                     readers,
+                    direct_value_ty: match &target_ty {
+                        Ty::Encrypted(e) => Some(*e),
+                        _ => None,
+                    },
                     span: doc.span,
                 },
             );
@@ -404,6 +417,9 @@ pub(crate) fn collect(unit: &BoundUnit<'_>, trust: &Trust, sm: &SourceMap, out: 
             let Some(readers) = parse_readers(&mut ctx, &tc, doc.span, readers_text) else {
                 continue;
             };
+            if !check_reapplication(&mut ctx, &tc, &readers, doc.span) {
+                continue;
+            }
             seen.push(target_name.to_string());
             out.policies.by_event_param.insert(
                 (eid, target_name.to_string()),
@@ -412,6 +428,10 @@ pub(crate) fn collect(unit: &BoundUnit<'_>, trust: &Trust, sm: &SourceMap, out: 
                     target: target_name.to_string(),
                     keys: tc.keys,
                     readers,
+                    direct_value_ty: match &target_ty {
+                        Ty::Encrypted(e) => Some(*e),
+                        _ => None,
+                    },
                     span: doc.span,
                 },
             );
@@ -567,12 +587,19 @@ fn build_policy<'ast>(
         }
     }
     let readers = parse_readers(ctx, tc, doc.span, readers_text)?;
+    if !check_reapplication(ctx, tc, &readers, doc.span) {
+        return None;
+    }
     seen.push(target_name.to_string());
     Some(Policy {
         owner: tc.owner,
         target: target_name.to_string(),
         keys: tc.keys.clone(),
         readers,
+        direct_value_ty: match target_ty {
+            Ty::Encrypted(e) => Some(*e),
+            _ => None,
+        },
         span: doc.span,
     })
 }
@@ -872,6 +899,90 @@ fn resolve_root<'ast>(
         ),
     );
     None
+}
+
+/// Spec §8.11: a mapping/array target has no key to re-apply with, so a
+/// reader naming mutable state on one is forward-only. Returns `false` when
+/// the policy must be refused (a gated `public if` on such a target — a
+/// disclosure that could never actually re-fire); pushes the FHE4007
+/// warning and returns `true` otherwise (the policy stays legal).
+fn check_reapplication(
+    ctx: &mut Ctx,
+    tc: &TargetCtx<'_>,
+    readers: &PolicyReaders,
+    span: Span,
+) -> bool {
+    if tc.keys.is_empty() {
+        return true; // not a mapping/array target: re-application has a key to bind, always
+    }
+    match readers {
+        PolicyReaders::Public {
+            condition: Some(cond),
+        } => {
+            let Some(name) = mutable_state_name(ctx.unit, &cond.root) else {
+                return true;
+            };
+            ctx.diags.push(Diagnostic {
+                code: codes::ACL_POLICY_NOT_REAPPLICABLE,
+                severity: Severity::Error,
+                span,
+                message: format!(
+                    "a `public if {name}` gate on a mapping/array target can never re-apply: \
+                     re-application requires a key this policy's own writes do not carry, so \
+                     the write that flips `{name}` would be the only site that ever publishes \
+                     — and it is not a site of this policy at all (spec §8.11)"
+                ),
+                fixits: Vec::new(),
+                rule: Some("§8.11"),
+            });
+            false
+        }
+        PolicyReaders::Public { condition: None } => true,
+        PolicyReaders::List(list) => {
+            for reader in list {
+                let PolicyReader::Path(p) = reader else {
+                    continue;
+                };
+                if let Some(name) = mutable_state_name(ctx.unit, &p.root) {
+                    ctx.diags.push(Diagnostic {
+                        code: codes::ACL_POLICY_NOT_REAPPLICABLE,
+                        severity: Severity::Warning,
+                        span,
+                        message: format!(
+                            "reader `{name}` names mutable state, but this policy's target is \
+                             a mapping/array: the transpiler cannot enumerate its keys, so a \
+                             write to `{name}` cannot re-apply the grant to handles already \
+                             written. The policy is forward-only — it grants on handles \
+                             written from now on; backfilling past handles is only possible \
+                             off-chain (spec §8.11)"
+                        ),
+                        fixits: Vec::new(),
+                        rule: Some("§8.11"),
+                    });
+                }
+            }
+            true
+        }
+    }
+}
+
+/// The name of the mutable state `root` names, when re-application would
+/// need to reach it: a non-`constant`/`immutable` state variable, or any
+/// struct sibling field (Solidity has no constant/immutable struct field).
+/// A bound key, `self`, and an event parameter are not "state" in the
+/// re-application sense — nothing writes them independently of the policy's
+/// own write sites.
+fn mutable_state_name(unit: &BoundUnit<'_>, root: &ReaderRoot) -> Option<String> {
+    match root {
+        ReaderRoot::StateVar(vid) => {
+            let var = unit.var(*vid);
+            (var.decl.mutability.is_none())
+                .then(|| var.name.map(|n| n.as_str().to_string()))
+                .flatten()
+        }
+        ReaderRoot::SiblingField(name) => Some(name.clone()),
+        ReaderRoot::Key(_) | ReaderRoot::SelfRef | ReaderRoot::EventParam(_) => None,
+    }
 }
 
 fn resolve_key_binder(tc: &TargetCtx<'_>, root_text: &str) -> Option<usize> {

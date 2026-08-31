@@ -4627,4 +4627,62 @@ mod policy_tests {
             assert!(c.policies.by_state_var.is_empty());
         });
     }
+
+    #[test]
+    fn fhe4007_warning_forward_only_mapping_policy_names_mutable_state() {
+        // Spec §8.8's own informative example: a compliance observer named
+        // alongside a mapping-keyed reader is legal but forward-only.
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                address _observer;
+                /// @custom:fhe-allow _balances: account, _observer
+                mapping(address account => euint32) _balances;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4007"], "{:?}", c.diagnostics);
+            assert_eq!(c.diagnostics[0].severity, fhec_check::Severity::Warning);
+            // Forward-only, not refused: the policy still resolves.
+            assert_eq!(c.policies.by_state_var.len(), 1);
+        });
+    }
+
+    #[test]
+    fn fhe4007_error_gated_public_on_a_mapping_target() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                bool revealed;
+                /// @custom:fhe-allow _balances: public if revealed
+                mapping(address => euint32) _balances;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4007"], "{:?}", c.diagnostics);
+            assert_eq!(c.diagnostics[0].severity, fhec_check::Severity::Error);
+            assert!(c.policies.by_state_var.is_empty());
+        });
+    }
+
+    #[test]
+    fn fhe4007_does_not_fire_for_a_non_mapping_target() {
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                address _observer;
+                /// @custom:fhe-allow _total: _observer
+                euint32 _total;
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+            assert_eq!(c.policies.by_state_var.len(), 1);
+        });
+    }
 }

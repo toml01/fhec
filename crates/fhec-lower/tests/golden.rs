@@ -2995,3 +2995,67 @@ fn r5_hoists_a_non_identifier_governed_argument() {
         "output: {text}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Re-application and gated disclosure (spec §8.11)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reapply_gated_public_on_the_reveal_flip() {
+    // The "public after the reveal" idiom: writes during the private phase
+    // emit nothing extra; the write that flips `revealed` publishes.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   bool revealed;\n\
+        \x20   /// @custom:fhe-allow secret: public if revealed\n\
+        \x20   euint32 secret;\n\
+        \x20   function reveal() public {\n\
+        \x20       revealed = true;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   bool revealed;\n\
+        \x20   /// @custom:fhe-allow secret: public if revealed\n\
+        \x20   euint32 secret;\n\
+        \x20   function reveal() public {\n\
+        \x20       revealed = true;\n\
+        \x20       FHE.allowThis(secret);\n\
+        \x20       if (revealed) FHE.allowPublic(secret);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn reapply_named_observer_on_a_plain_state_var() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   address observer;\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   euint32 secret;\n\
+        \x20   function setObserver(address o) public {\n\
+        \x20       observer = o;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   address observer;\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   euint32 secret;\n\
+        \x20   function setObserver(address o) public {\n\
+        \x20       observer = o;\n\
+        \x20       FHE.allowThis(secret);\n\
+        \x20       if (observer != address(0)) FHE.allow(secret, observer);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
