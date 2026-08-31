@@ -3177,3 +3177,107 @@ fn r4_struct_field_reached_directly_through_a_state_variable() {
         }\n";
     golden(src, expected);
 }
+
+// ---------------------------------------------------------------------------
+// Struct-field re-application (spec §8.11)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reapply_struct_field_via_direct_state_variable() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   struct Config {\n\
+        \x20       euint32 secret;\n\
+        \x20   }\n\
+        \x20   address observer;\n\
+        \x20   Config config;\n\
+        \x20   function setObserver(address o) public {\n\
+        \x20       observer = o;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   struct Config {\n\
+        \x20       euint32 secret;\n\
+        \x20   }\n\
+        \x20   address observer;\n\
+        \x20   Config config;\n\
+        \x20   function setObserver(address o) public {\n\
+        \x20       observer = o;\n\
+        \x20       FHE.allowThis(config.secret);\n\
+        \x20       if (observer != address(0)) FHE.allow(config.secret, observer);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn reapply_struct_field_via_the_unique_accessor() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   struct Storage {\n\
+        \x20       euint32 secret;\n\
+        \x20   }\n\
+        \x20   address observer;\n\
+        \x20   function _getStorage() internal pure returns (Storage storage $) {\n\
+        \x20       assembly {\n\
+        \x20           $.slot := 0\n\
+        \x20       }\n\
+        \x20   }\n\
+        \x20   function setObserver(address o) public {\n\
+        \x20       observer = o;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("Storage storage __fhe_val_0 = _getStorage();"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("FHE.allowThis(__fhe_val_0.secret);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("if (observer != address(0)) FHE.allow(__fhe_val_0.secret, observer);"),
+        "output: {text}"
+    );
+}
+
+#[test]
+fn reapply_skips_silently_when_the_struct_is_ambiguously_reachable() {
+    // Two state variables of the same struct type: no unambiguous way to
+    // reach it from `setObserver`, so re-application is silently skipped —
+    // the policy's own R4 site (not exercised here) is unaffected.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow secret: observer\n\
+        \x20   struct Config {\n\
+        \x20       euint32 secret;\n\
+        \x20   }\n\
+        \x20   address observer;\n\
+        \x20   Config configA;\n\
+        \x20   Config configB;\n\
+        \x20   function setObserver(address o) public {\n\
+        \x20       observer = o;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert_eq!(
+        out.files[0].1, src,
+        "no unambiguous accessor: must be a no-op here"
+    );
+}

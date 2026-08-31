@@ -123,14 +123,15 @@ pub(crate) fn run_function<'ast>(
 
     // Re-application (spec §8.11): a plain write to a state variable a
     // policy names (in its readers or its `public if` condition) re-emits
-    // that policy's grants. Scoped to a state-variable-attached policy whose
-    // own target is not a mapping/array (`policy.keys` empty) — such a
-    // target is always nameable by its own bare name, so re-application
-    // needs no pointer/key context from the triggering site at all. A
-    // mapping/array target cannot be re-applied regardless of where the
-    // trigger fires (spec §8.11, FHE4007) and a struct/event target would
-    // need an accessor this revision does not attempt to rediscover at an
-    // arbitrary other call site — documented scope decision, not a guess.
+    // that policy's grants. Scoped to a target that is not a mapping/array
+    // (`policy.keys` empty) — a mapping/array target cannot be re-applied
+    // regardless of where the trigger fires (spec §8.11, FHE4007). An
+    // event target is excluded too: it has no persistent handle outside an
+    // actual `emit` to re-grant. A state-variable target is always
+    // nameable by its own bare name; a struct-field target additionally
+    // needs a way to *reach* that struct from the trigger's function — see
+    // `find_struct_reach` — and silently skips re-application there when
+    // no unambiguous one exists, rather than guess.
     let triggers = reapply_triggers(&ctx.checked.policies);
     if !triggers.is_empty() {
         for stmt in collect_assign_stmts(ctx, function) {
@@ -140,6 +141,7 @@ pub(crate) fn run_function<'ast>(
                     function,
                     stmt,
                     &triggers,
+                    namer,
                     acl_insert,
                     diags,
                     plan,
@@ -169,8 +171,8 @@ fn reapply_triggers(
         if !p.keys.is_empty() {
             continue; // FHE4007: a mapping/array target cannot be re-applied
         }
-        if !matches!(p.owner, fhec_check::PolicyOwner::StateVar(_)) {
-            continue; // scope decision: only a state-variable-attached target is re-applied here
+        if matches!(p.owner, fhec_check::PolicyOwner::Event(_)) {
+            continue; // no persistent handle outside an emit to re-grant
         }
         let roots: Vec<&ReaderRoot> = match &p.readers {
             PolicyReaders::Public { condition: Some(c) } => vec![&c.root],
@@ -232,6 +234,7 @@ fn rule_reapply(
     function: fhec_bind::FunctionId,
     stmt: &ast::Stmt<'_>,
     triggers: &std::collections::HashMap<fhec_bind::VarId, Vec<&fhec_check::Policy>>,
+    namer: &RefCell<TempNamer>,
     acl_insert: bool,
     diags: &RefCell<Vec<fhec_check::Diagnostic>>,
     plan: &mut FilePlan,
@@ -258,11 +261,59 @@ fn rule_reapply(
         ctx.text(ctx.unit.function(function).file),
         ctx.range(stmt.span).end,
     );
+    // A struct-field target's accessor declaration is only worth emitting
+    // if it ends up backing at least one actual (non-deduped) call — an
+    // unused `Storage storage $ = _getStorage();` would be dead code.
+    // Tracked separately and spliced in front only for the struct types
+    // that were actually used, in first-use order.
+    let mut pending_prelude: Vec<(fhec_bind::TypeDeclId, String)> = Vec::new();
+    let mut used_structs: std::collections::HashSet<fhec_bind::TypeDeclId> =
+        std::collections::HashSet::new();
+    let mut reach_cache: std::collections::HashMap<fhec_bind::TypeDeclId, String> =
+        std::collections::HashMap::new();
     let mut lines: Vec<String> = Vec::new();
     for policy in policies {
-        let target_text = policy.target.clone();
-        let Some(ty) = target_encrypted_type(ctx, policy) else {
-            continue;
+        let (target_text, ty, struct_ty) = match policy.owner {
+            fhec_check::PolicyOwner::StateVar(_) => {
+                let Some(ty) = target_encrypted_type(ctx, policy) else {
+                    continue;
+                };
+                (policy.target.clone(), ty, None)
+            }
+            fhec_check::PolicyOwner::Struct(struct_ty) => {
+                let Some(ty) = policy.direct_value_ty else {
+                    continue;
+                };
+                let Some(contract) = ctx.unit.function(function).contract else {
+                    continue;
+                };
+                let reach = match reach_cache.get(&struct_ty) {
+                    Some(text) => text.clone(),
+                    None => match find_struct_reach(ctx, contract, struct_ty) {
+                        Some(StructReach::DirectVar(name)) => {
+                            reach_cache.insert(struct_ty, name.clone());
+                            name
+                        }
+                        Some(StructReach::Accessor(fn_name)) => {
+                            let temp = namer.borrow_mut().fresh(TempHint::Val);
+                            let struct_name = ctx.unit.type_decl(struct_ty).name;
+                            pending_prelude.push((
+                                struct_ty,
+                                format!("{struct_name} storage {temp} = {fn_name}();"),
+                            ));
+                            reach_cache.insert(struct_ty, temp.clone());
+                            temp
+                        }
+                        // No unambiguous way to reach this struct from this
+                        // function: skip re-application here rather than
+                        // guess (spec §1.3). The policy's own R4 site is
+                        // unaffected.
+                        None => continue,
+                    },
+                };
+                (format!("{reach}.{}", policy.target), ty, Some(struct_ty))
+            }
+            fhec_check::PolicyOwner::Event(_) => continue,
         };
         let window = forward_window(ctx, function, stmt.span, &target_text);
         let rendering =
@@ -281,12 +332,20 @@ fn rule_reapply(
                 )
             }) {
                 lines.push(call.text);
+                if let Some(struct_ty) = struct_ty {
+                    used_structs.insert(struct_ty);
+                }
             }
         }
     }
     if lines.is_empty() {
         return Ok(());
     }
+    let prelude = pending_prelude
+        .into_iter()
+        .filter(|(ty, _)| used_structs.contains(ty))
+        .map(|(_, line)| line);
+    let lines: Vec<String> = prelude.chain(lines).collect();
 
     if !acl_insert {
         let joined: String = lines.iter().map(|c| format!("{c} ")).collect();
@@ -318,6 +377,69 @@ fn rule_reapply(
 /// The encrypted type of a state-variable-attached policy's target.
 fn target_encrypted_type(_ctx: &Ctx<'_, '_>, policy: &fhec_check::Policy) -> Option<EType> {
     policy.direct_value_ty
+}
+
+/// A way to reach a struct-typed value from an arbitrary function of the
+/// same contract, found for spec §8.11 re-application at a site other than
+/// the policy's own write.
+enum StructReach {
+    /// A state variable of exactly this struct type — always safely
+    /// nameable by its own name, no pointer or accessor needed.
+    DirectVar(String),
+    /// The one parameterless function of the contract returning exactly
+    /// this struct type by storage reference (the ERC-7201 accessor
+    /// shape); the caller must declare a fresh local bound to a call of it.
+    Accessor(String),
+}
+
+/// Finds `StructReach` for `struct_ty` within `contract`, or `None` when no
+/// *unambiguous* one exists (zero or more than one candidate either way) —
+/// the caller skips re-application there rather than guess (spec §1.3).
+/// Deliberately scoped to `contract`'s own members: an accessor or state
+/// variable declared in a base contract is not searched, since resolving
+/// that safely runs into the same incomplete-inheritance hazards the
+/// binder itself refuses to guess past.
+fn find_struct_reach(
+    ctx: &Ctx<'_, '_>,
+    contract: fhec_bind::ContractId,
+    struct_ty: fhec_bind::TypeDeclId,
+) -> Option<StructReach> {
+    let info = ctx.unit.contract(contract);
+
+    let mut direct_vars = info.state_vars.iter().filter_map(|&vid| {
+        let var = ctx.unit.var(vid);
+        if crate::policy_bind::declared_struct(ctx, var) != Some(struct_ty) {
+            return None;
+        }
+        Some(var.name?.as_str().to_string())
+    });
+    if let Some(name) = direct_vars.next() {
+        return if direct_vars.next().is_none() {
+            Some(StructReach::DirectVar(name))
+        } else {
+            None // ambiguous: more than one state variable of this type
+        };
+    }
+
+    let mut accessors = info.functions.iter().filter_map(|&fid| {
+        let f = ctx.unit.function(fid);
+        if !f.params.is_empty() || f.returns.len() != 1 {
+            return None;
+        }
+        let ret_var = ctx.unit.var(f.returns[0]);
+        if ret_var.decl.data_location != Some(ast::DataLocation::Storage) {
+            return None;
+        }
+        if crate::policy_bind::declared_struct(ctx, ret_var) != Some(struct_ty) {
+            return None;
+        }
+        f.name_str.clone()
+    });
+    let first = accessors.next()?;
+    if accessors.next().is_some() {
+        return None; // ambiguous: more than one candidate accessor
+    }
+    Some(StructReach::Accessor(first))
 }
 
 /// Every `emit` statement in a function's body, in source order.

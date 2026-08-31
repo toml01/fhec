@@ -235,7 +235,10 @@ fn decompose<'ast>(
 /// The struct type declaration a variable's own declared type names
 /// (`Storage storage $` → `Storage`), when it is a single-identifier custom
 /// type resolving to a struct.
-fn declared_struct(ctx: &Ctx<'_, '_>, var: &fhec_bind::VarInfo<'_>) -> Option<TypeDeclId> {
+pub(crate) fn declared_struct(
+    ctx: &Ctx<'_, '_>,
+    var: &fhec_bind::VarInfo<'_>,
+) -> Option<TypeDeclId> {
     struct_of(ctx, &var.decl.ty)
 }
 
