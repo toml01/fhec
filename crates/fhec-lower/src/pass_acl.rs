@@ -542,6 +542,8 @@ fn rule_r4(
     plan: &mut FilePlan,
     outcome: &mut AclOutcome,
 ) -> Result<()> {
+    check_cross_reader_copy(ctx, w, bound.policy, diags);
+
     let rendering = crate::policy_bind::render_readers(
         ctx,
         w.function,
@@ -1589,6 +1591,53 @@ fn search_stmt<'ast>(
 /// ([`local_grant_window`]) only sees sibling statements in the same block,
 /// so it cannot prove a state variable (or anything reachable through a call)
 /// still holds the value an earlier grant covered (spec §1.3).
+/// Spec §8.12 "Cross-reader copy" (FHE4008): a storage write whose
+/// right-hand value is a bare read of another policy-governed slot, with no
+/// intervening profile operation, and the two policies name different
+/// readers (neither being `this`-only). A handle produced by a profile
+/// operation is fresh and never reaches here — `decompose` only matches an
+/// identifier/member/index read shape, never a call.
+fn check_cross_reader_copy(
+    ctx: &Ctx<'_, '_>,
+    w: &EncryptedStorageWrite,
+    target_policy: &fhec_check::Policy,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+) {
+    let Some((stmts, idx)) = enclosing_block(ctx, w.function, w.stmt_span) else {
+        return;
+    };
+    let ast::StmtKind::Expr(e) = &stmts[idx].kind else {
+        return;
+    };
+    let ast::ExprKind::Assign(lhs, None, rhs) = &e.kind else {
+        return;
+    };
+    if strip_parens(&ctx.snippet(lhs.span)) != strip_parens(&ctx.snippet(w.lvalue_span)) {
+        return;
+    }
+    let Some(source_policy) = crate::policy_bind::find_read_policy(ctx, &ctx.checked.policies, rhs)
+    else {
+        return;
+    };
+    if !crate::policy_bind::cross_reader_copy_finding(target_policy, source_policy) {
+        return;
+    }
+    diags.borrow_mut().push(fhec_check::Diagnostic {
+        code: "FHE4008",
+        severity: Severity::Warning,
+        span: w.lvalue_span,
+        message: format!(
+            "`{}` is a handle copied from another policy-governed slot with no intervening \
+             profile operation; the profile files permissions against the handle, not the \
+             slot, so it now carries the union of both slots' readers, not just this one's \
+             (spec §8.12)",
+            strip_parens(&ctx.snippet(w.lvalue_span))
+        ),
+        fixits: Vec::new(),
+        rule: Some("§8.12"),
+    });
+}
+
 fn assigned_local<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,

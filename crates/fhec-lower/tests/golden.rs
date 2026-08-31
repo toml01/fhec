@@ -3059,3 +3059,84 @@ fn reapply_named_observer_on_a_plain_state_var() {
         }\n";
     golden(src, expected);
 }
+
+// ---------------------------------------------------------------------------
+// FHE4008 — cross-reader copy (spec §8.12)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fhe4008_warns_when_copying_a_handle_between_differently_governed_slots() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow a: alice\n\
+        \x20   euint32 a;\n\
+        \x20   /// @custom:fhe-allow b: bob\n\
+        \x20   euint32 b;\n\
+        \x20   address alice;\n\
+        \x20   address bob;\n\
+        \x20   function copy() public {\n\
+        \x20       b = a;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4008")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+}
+
+#[test]
+fn fhe4008_is_not_a_finding_when_widening_from_this_only() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow a: this\n\
+        \x20   euint32 a;\n\
+        \x20   /// @custom:fhe-allow b: bob\n\
+        \x20   euint32 b;\n\
+        \x20   address bob;\n\
+        \x20   function copy() public {\n\
+        \x20       b = a;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4008")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+}
+
+#[test]
+fn fhe4008_is_not_a_finding_for_a_fresh_profile_operation_result() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow a: alice\n\
+        \x20   euint32 a;\n\
+        \x20   /// @custom:fhe-allow b: bob\n\
+        \x20   euint32 b;\n\
+        \x20   address alice;\n\
+        \x20   address bob;\n\
+        \x20   function copy() public {\n\
+        \x20       b = FHE.add(a, a);\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4008")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+}

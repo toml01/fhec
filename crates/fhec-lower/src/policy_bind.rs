@@ -303,6 +303,74 @@ pub(crate) enum RenderedReader {
     },
 }
 
+// ---------------------------------------------------------------------------
+// FHE4008 — cross-reader copy (spec §8.12)
+// ---------------------------------------------------------------------------
+
+/// Finds the policy governing a location this expression *reads*, for the
+/// spec §8.12 cross-reader-copy check. Unlike [`bind_write`], an unbindable
+/// storage pointer here simply states no fact — this is an informational
+/// warning, not a grant a write depends on, so there is nothing to refuse.
+pub(crate) fn find_read_policy<'p, 'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    checked_policies: &'p fhec_check::PolicyTable,
+    e: &'ast ast::Expr<'ast>,
+) -> Option<&'p Policy> {
+    let decomposed = decompose(ctx, e, &|k| strip_parens(&ctx.snippet(k.span)).to_string())?;
+    if !decomposed.is_pointer {
+        return checked_policies.by_state_var.get(&decomposed.root_var);
+    }
+    let struct_ty = declared_struct(ctx, ctx.unit.var(decomposed.root_var))?;
+    let Step::Field(field) = decomposed.steps.first()? else {
+        return None;
+    };
+    checked_policies
+        .by_struct_field
+        .get(&(struct_ty, field.clone()))
+}
+
+enum ReaderSetId {
+    /// No reader beyond the contract itself.
+    ThisOnly,
+    Public,
+    Named(Vec<ReaderRoot>),
+}
+
+fn reader_set_id(p: &Policy) -> ReaderSetId {
+    match &p.readers {
+        PolicyReaders::Public { .. } => ReaderSetId::Public,
+        PolicyReaders::List(list) => {
+            let named: Vec<ReaderRoot> = list
+                .iter()
+                .filter_map(|r| match r {
+                    PolicyReader::This => None,
+                    PolicyReader::Path(p) => Some(p.root.clone()),
+                })
+                .collect();
+            if named.is_empty() {
+                ReaderSetId::ThisOnly
+            } else {
+                ReaderSetId::Named(named)
+            }
+        }
+    }
+}
+
+/// Whether copying a handle from `source`'s slot into `target`'s slot is a
+/// spec §8.12 finding: both name a reader beyond the contract itself, and
+/// those reader sets differ. Widening from a `this`-only slot is the
+/// ordinary hand-off idiom, not a finding (spec §8.12).
+pub(crate) fn cross_reader_copy_finding(target: &Policy, source: &Policy) -> bool {
+    match (reader_set_id(target), reader_set_id(source)) {
+        (ReaderSetId::ThisOnly, _) | (_, ReaderSetId::ThisOnly) => false,
+        (ReaderSetId::Public, ReaderSetId::Public) => false,
+        (ReaderSetId::Named(a), ReaderSetId::Named(b)) => {
+            a.len() != b.len() || !a.iter().all(|x| b.contains(x))
+        }
+        _ => true,
+    }
+}
+
 /// Renders every reader of a policy at a bound write/emit site to concrete
 /// address-expression text, re-confirming a bare state-variable reader's
 /// name resolution at the *insertion* site (the emit-time twin of
