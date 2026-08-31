@@ -144,6 +144,47 @@ pub struct VarInfo<'ast> {
     pub file: FileId,
     /// Where the variable lives.
     pub owner: VarOwner,
+    /// Raw `@custom:fhe-*` NatSpec items attached to this declaration (spec
+    /// §8.8). Only ever non-empty for a state variable: a struct field or a
+    /// function parameter is a bare `VariableDefinition` with no doc
+    /// comments of its own.
+    pub policy_docs: Vec<PolicyDoc>,
+}
+
+/// One raw `@custom:fhe-<key>` NatSpec item, carried unparsed from the
+/// binder to the checker's policy module (spec §8.8). `key` is the text
+/// after `fhe-`, so `@custom:fhe-allow` yields `key == "allow"`.
+#[derive(Clone, Debug)]
+pub struct PolicyDoc {
+    /// The part of the custom tag name after `fhe-`.
+    pub key: String,
+    /// The natspec item's content, trimmed.
+    pub content: String,
+    /// The span of the tag (the `@` is not included).
+    pub span: Span,
+}
+
+/// Extracts every `@custom:fhe-*` item from a declaration's doc comments,
+/// in source order. A policy written in an ordinary (non-doc) comment is
+/// invisible here by construction — trivia collection already discarded it
+/// before binding — which is exactly the gap spec §8.8 restriction 1's raw
+/// source scan (in `fhec-check`) exists to close.
+pub(crate) fn extract_policy_docs(docs: &ast::DocComments<'_>) -> Vec<PolicyDoc> {
+    let mut out = Vec::new();
+    for doc in docs.iter() {
+        for item in doc.natspec.iter() {
+            if let ast::NatSpecKind::Custom { name } = &item.kind {
+                if let Some(key) = name.as_str().strip_prefix("fhe-") {
+                    out.push(PolicyDoc {
+                        key: key.to_string(),
+                        content: item.content().trim().to_string(),
+                        span: item.span,
+                    });
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A function-like declaration (function, constructor, modifier, fallback, receive).
@@ -249,6 +290,10 @@ pub struct TypeDeclInfo<'ast> {
     pub contract: Option<ContractId>,
     /// The declared name.
     pub name: Ident,
+    /// Raw `@custom:fhe-*` NatSpec items attached to this declaration (spec
+    /// §8.8). Only meaningful for a `struct`; always empty for an enum or a
+    /// user-defined value type.
+    pub policy_docs: Vec<PolicyDoc>,
 }
 
 /// The AST node behind a [`TypeDeclInfo`].
@@ -271,6 +316,9 @@ pub struct EventInfo<'ast> {
     pub file: FileId,
     /// The contract scope, if declared inside a contract.
     pub contract: Option<ContractId>,
+    /// Raw `@custom:fhe-*` NatSpec items attached to this declaration (spec
+    /// §8.8).
+    pub policy_docs: Vec<PolicyDoc>,
 }
 
 /// An error declaration.

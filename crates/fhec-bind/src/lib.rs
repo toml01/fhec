@@ -54,8 +54,8 @@ pub use binder::bind;
 pub use ids::{ContractId, ErrorId, EventId, FileId, FunctionId, TypeDeclId, VarId};
 pub use model::{
     BaseRef, BindDiagnostic, Builtin, ContractInfo, ErrorInfo, EventInfo, FunctionInfo,
-    IncompleteReason, Linearization, MethodResolution, Resolution, TypeDeclInfo, TypeDeclKind,
-    UnresolvedReason, UsingEntry, UsingFunction, UsingListResolution, UsingTarget, VarInfo,
-    VarOwner, CODE_DUPLICATE_DEFINITION, CODE_UNRESOLVED_IMPORT,
+    IncompleteReason, Linearization, MethodResolution, PolicyDoc, Resolution, TypeDeclInfo,
+    TypeDeclKind, UnresolvedReason, UsingEntry, UsingFunction, UsingListResolution, UsingTarget,
+    VarInfo, VarOwner, CODE_DUPLICATE_DEFINITION, CODE_UNRESOLVED_IMPORT,
 };
 pub use unit::{BoundUnit, SourceFile};
