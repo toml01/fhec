@@ -3255,10 +3255,11 @@ fn reapply_struct_field_via_the_unique_accessor() {
 }
 
 #[test]
-fn reapply_skips_silently_when_the_struct_is_ambiguously_reachable() {
+fn reapply_warns_and_skips_when_the_struct_is_ambiguously_reachable() {
     // Two state variables of the same struct type: no unambiguous way to
-    // reach it from `setObserver`, so re-application is silently skipped —
-    // the policy's own R4 site (not exercised here) is unaffected.
+    // reach it from `setObserver`, so re-application is skipped there — but
+    // stated, not left silent (spec §8.11's own principle). The policy's
+    // own R4 site (not exercised here) is unaffected.
     let src = "pragma solidity ^0.8.25;\n\
         import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
         \n\
@@ -3276,8 +3277,43 @@ fn reapply_skips_silently_when_the_struct_is_ambiguously_reachable() {
         }\n";
     let out = transpile(&[("t.fsol", src)]);
     assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4007")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
     assert_eq!(
         out.files[0].1, src,
-        "no unambiguous accessor: must be a no-op here"
+        "no unambiguous accessor: no patch, warning only"
     );
+}
+
+#[test]
+fn reapply_warns_once_for_two_policies_sharing_the_same_unreachable_struct() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow secretA: observer\n\
+        \x20   /// @custom:fhe-allow secretB: observer\n\
+        \x20   struct Config {\n\
+        \x20       euint32 secretA;\n\
+        \x20       euint32 secretB;\n\
+        \x20   }\n\
+        \x20   address observer;\n\
+        \x20   Config configA;\n\
+        \x20   Config configB;\n\
+        \x20   function setObserver(address o) public {\n\
+        \x20       observer = o;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    let count = out
+        .lower_diag_codes
+        .iter()
+        .filter(|d| d.starts_with("FHE4007"))
+        .count();
+    assert_eq!(count, 1, "diags: {:?}", out.lower_diag_codes);
 }

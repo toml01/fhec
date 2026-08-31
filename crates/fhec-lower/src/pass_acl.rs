@@ -269,7 +269,11 @@ fn rule_reapply(
     let mut pending_prelude: Vec<(fhec_bind::TypeDeclId, String)> = Vec::new();
     let mut used_structs: std::collections::HashSet<fhec_bind::TypeDeclId> =
         std::collections::HashSet::new();
-    let mut reach_cache: std::collections::HashMap<fhec_bind::TypeDeclId, String> =
+    // Caches both outcomes per struct type: `Some(Some(text))` a found
+    // reach, `Some(None)` a already-diagnosed unreachable struct (so two
+    // policies on the same struct at the same trigger warn once, not
+    // twice).
+    let mut reach_cache: std::collections::HashMap<fhec_bind::TypeDeclId, Option<String>> =
         std::collections::HashMap::new();
     let mut lines: Vec<String> = Vec::new();
     for policy in policies {
@@ -287,13 +291,9 @@ fn rule_reapply(
                 let Some(contract) = ctx.unit.function(function).contract else {
                     continue;
                 };
-                let reach = match reach_cache.get(&struct_ty) {
-                    Some(text) => text.clone(),
-                    None => match find_struct_reach(ctx, contract, struct_ty) {
-                        Some(StructReach::DirectVar(name)) => {
-                            reach_cache.insert(struct_ty, name.clone());
-                            name
-                        }
+                let cached = reach_cache.entry(struct_ty).or_insert_with(|| {
+                    match find_struct_reach(ctx, contract, struct_ty) {
+                        Some(StructReach::DirectVar(name)) => Some(name),
                         Some(StructReach::Accessor(fn_name)) => {
                             let temp = namer.borrow_mut().fresh(TempHint::Val);
                             let struct_name = ctx.unit.type_decl(struct_ty).name;
@@ -301,15 +301,40 @@ fn rule_reapply(
                                 struct_ty,
                                 format!("{struct_name} storage {temp} = {fn_name}();"),
                             ));
-                            reach_cache.insert(struct_ty, temp.clone());
-                            temp
+                            Some(temp)
                         }
-                        // No unambiguous way to reach this struct from this
-                        // function: skip re-application here rather than
-                        // guess (spec §1.3). The policy's own R4 site is
-                        // unaffected.
-                        None => continue,
-                    },
+                        None => {
+                            // No unambiguous way to reach this struct from
+                            // this function: skip re-application here
+                            // rather than guess (spec §1.3) — but the gap
+                            // is real, so it must not go unstated (spec
+                            // §8.11's own principle for the mapping/array
+                            // case, extended to this reason). The policy's
+                            // own R4 grants at its own write sites are
+                            // unaffected.
+                            diags.borrow_mut().push(fhec_check::Diagnostic {
+                                code: "FHE4007",
+                                severity: Severity::Warning,
+                                span: policy.span,
+                                message: format!(
+                                    "this policy's target field `{}` cannot be re-applied here: \
+                                     `{}` is not reachable from this function through exactly \
+                                     one state variable or one parameterless accessor, so the \
+                                     write to `{}` here does not refresh its grants (spec \
+                                     §8.11)",
+                                    policy.target,
+                                    ctx.unit.type_decl(struct_ty).name,
+                                    strip_parens(&ctx.snippet(lhs.span))
+                                ),
+                                fixits: Vec::new(),
+                                rule: Some("§8.11"),
+                            });
+                            None
+                        }
+                    }
+                });
+                let Some(reach) = cached else {
+                    continue;
                 };
                 (format!("{reach}.{}", policy.target), ty, Some(struct_ty))
             }
