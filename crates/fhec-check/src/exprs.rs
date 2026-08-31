@@ -78,7 +78,7 @@ impl<'ast> FnChecker<'_, 'ast> {
                         file: self.file,
                     };
                     self.out.incdec_sites.push(site);
-                    self.finish_encrypted_write(&lv, target.span, t);
+                    self.finish_encrypted_write(&lv, target.span, t, false);
                     return;
                 }
                 // Plaintext / unknown inc-dec: a write.

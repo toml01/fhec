@@ -186,4 +186,8 @@ pub mod codes {
     pub const ACL_EMPTY_READER_SET: &str = "FHE4009";
     /// suggest-policy-grant (§8.9, §8.10, `--acl=suggest`).
     pub const SUGGEST_POLICY_GRANT: &str = "FHE4013";
+    /// acl-grant-on-unpermissioned-handle (§8.1): a `.wrap`-derived write or
+    /// emit argument, where every grant an R1/R4/R5 site would insert is
+    /// withheld because it would revert rather than grant.
+    pub const ACL_GRANT_ON_UNPERMISSIONED_HANDLE: &str = "FHE4014";
 }

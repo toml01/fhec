@@ -3317,3 +3317,119 @@ fn reapply_warns_once_for_two_policies_sharing_the_same_unreachable_struct() {
         .count();
     assert_eq!(count, 1, "diags: {:?}", out.lower_diag_codes);
 }
+
+// ---------------------------------------------------------------------------
+// FHE4014 — no grant on a .wrap-derived handle (spec §8.1, issue #103)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fhe4014_r1_withholds_allowthis_on_a_wrapped_sentinel() {
+    // The issue #103 repro exactly: a deliberately zero/sentinel handle
+    // must not receive an `allowThis` that would revert at runtime.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract T {\n\
+        \x20   euint64 stored;\n\
+        \x20   function keepSentinel() external {\n\
+        \x20       stored = euint64.wrap(bytes32(0));\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4014")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "withheld-for-a-different-reason path must not also fire: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(
+        out.files[0].1, src,
+        "no ACL call may be inserted on a wrap-derived write"
+    );
+}
+
+#[test]
+fn fhe4014_r4_withholds_the_whole_policy_grant_sequence() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract T {\n\
+        \x20   /// @custom:fhe-allow balances: account\n\
+        \x20   mapping(address account => euint64) balances;\n\
+        \x20   function reset(address to) public {\n\
+        \x20       balances[to] = euint64.wrap(bytes32(0));\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4014")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(
+        out.files[0].1, src,
+        "no ACL call may be inserted on a wrap-derived policy-governed write"
+    );
+}
+
+#[test]
+fn fhe4014_r5_withholds_the_event_grant_for_a_wrapped_argument() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract T {\n\
+        \x20   /// @custom:fhe-allow amount: to\n\
+        \x20   event Paid(address indexed to, euint64 indexed amount);\n\
+        \x20   function pay(address to) public {\n\
+        \x20       emit Paid(to, euint64.wrap(bytes32(0)));\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4014")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(
+        out.files[0].1, src,
+        "no ACL call may be inserted for a wrap-derived event argument"
+    );
+}
+
+#[test]
+fn fhe4014_does_not_fire_when_a_real_operation_wraps_the_result() {
+    // A real profile operation registers its own result's permission even
+    // when one of its operands was itself `.wrap`-derived — only the
+    // top-level shape of the *written* value matters (spec §8.1).
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract T {\n\
+        \x20   euint64 stored;\n\
+        \x20   function set(euint64 v) public {\n\
+        \x20       stored = FHE.add(v, euint64.wrap(bytes32(0)));\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4014")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    let text = &out.files[0].1;
+    assert!(text.contains("FHE.allowThis(stored);"), "output: {text}");
+}

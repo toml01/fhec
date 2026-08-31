@@ -516,6 +516,30 @@ fn rule_r1(
     }
     let lvalue = strip_parens(&ctx.snippet(w.lvalue_span)).to_string();
 
+    // FHE4014 (spec §8.1): a `.wrap`-derived value has no permission
+    // registered for anyone, including this contract — inserting any grant
+    // here (R1's own, or a policy's R4 sequence) would revert, not merely
+    // fail to help. This check precedes the R4 policy lookup below: the
+    // withholding applies uniformly, regardless of which rule would
+    // otherwise own the insertion.
+    if w.value_wrapped {
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: crate::codes::ACL_GRANT_ON_UNPERMISSIONED_HANDLE,
+            severity: Severity::Warning,
+            span: w.lvalue_span,
+            message: format!(
+                "the value written to `{lvalue}` is a `.wrap(...)` reinterpretation, which \
+                 never registers a CoFHE permission for anyone, including this contract; \
+                 inserting `FHE.allowThis` here would revert the transaction rather than grant \
+                 access, so no ACL call is inserted for this write. Add an explicit grant only \
+                 if this handle is independently known to carry a real permission (spec §8.1)"
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.1"),
+        });
+        return Ok(());
+    }
+
     // R4 (spec §8.9): a policy on the written slot replaces this rule's
     // ownership decision entirely, and FHE4001 is not emitted — the author
     // has stated who owns the value, so nothing is being withheld.
@@ -1212,6 +1236,13 @@ fn rule_r5<'a, 'ast>(
         if a.policy.is_none() {
             continue;
         }
+        // A `.wrap`-derived governed argument gets no grant at all (FHE4014
+        // below), so nothing references it as *its own* target — hoisting
+        // it here would be needless. It can still be hoisted below as
+        // *another* reader's referenced position.
+        if is_wrap_call(ctx, a.node) {
+            continue;
+        }
         let snippet = ctx.snippet(a.node.span);
         let text = strip_parens(&snippet);
         if !is_ident_text(text) {
@@ -1275,6 +1306,24 @@ fn rule_r5<'a, 'ast>(
     for (i, a) in args.iter().enumerate() {
         let Some(policy) = a.policy else { continue };
         let Some(ty) = ty_of(a.node) else { continue };
+        // FHE4014 (spec §8.1, §8.10): a `.wrap`-derived argument has no
+        // permission registered for anyone — withhold this position's
+        // whole grant sequence rather than insert a call that would revert.
+        if is_wrap_call(ctx, a.node) {
+            diags.borrow_mut().push(fhec_check::Diagnostic {
+                code: crate::codes::ACL_GRANT_ON_UNPERMISSIONED_HANDLE,
+                severity: Severity::Warning,
+                span: a.node.span,
+                message: "this event argument is a `.wrap(...)` reinterpretation, which never \
+                     registers a CoFHE permission for anyone; inserting its policy's grants \
+                     here would revert the transaction rather than grant access, so none are \
+                     inserted for this argument (spec §8.1)"
+                    .to_string(),
+                fixits: Vec::new(),
+                rule: Some("§8.1"),
+            });
+            continue;
+        }
         let target_text = &arg_text[i];
         let rendering = render_event_policy(policy, &args, &arg_text)?;
         let calls =
@@ -2228,6 +2277,26 @@ pub(crate) fn find_expr<'ast>(
         }
     }
     f.found
+}
+
+/// Whether `e`, peeled, is exactly a `eT.wrap(x)` UDVT cast (spec §8.1
+/// FHE4014): a compile-time-only type reinterpretation that never reaches
+/// CoFHE, so it registers no permission for anyone on its result,
+/// regardless of `x`. Mirrors `fhec_check`'s `is_wrap_call` (checker-side
+/// twin, used for the R1/R4 write fact); this free-function copy is for
+/// sites — R5's emit arguments — that have no such fact to consult.
+fn is_wrap_call(ctx: &Ctx<'_, '_>, e: &ast::Expr<'_>) -> bool {
+    let ast::ExprKind::Call(callee, _) = &e.peel_parens().kind else {
+        return false;
+    };
+    let ast::ExprKind::Member(obj, name) = &callee.peel_parens().kind else {
+        return false;
+    };
+    name.as_str() == "wrap"
+        && matches!(
+            ctx.checked.types.get(obj.span),
+            Some(Ty::Plain(PlainTy::EncTypeRef(_)))
+        )
 }
 
 fn is_ident_text(s: &str) -> bool {

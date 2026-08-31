@@ -50,6 +50,10 @@ pub(crate) mod codes {
     /// A reader policy's target cannot be bound at this write site (spec
     /// §8.9).
     pub(crate) const ACL_POLICY_TARGET_UNBINDABLE: &str = "FHE4006";
+    /// A `.wrap`-derived write or emit argument: every grant an R1/R4/R5
+    /// site would insert is withheld because it would revert rather than
+    /// grant (spec §8.1).
+    pub(crate) const ACL_GRANT_ON_UNPERMISSIONED_HANDLE: &str = "FHE4014";
 }
 
 mod ctx;
