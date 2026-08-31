@@ -685,7 +685,7 @@ fn append_policy_grants(
     } else {
         let joined: String = calls.iter().map(|c| format!("{} ", c.text)).collect();
         ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
-            code: "FHE4013",
+            code: crate::codes::SUGGEST_POLICY_GRANT,
             severity: Severity::Note,
             span: loc.first_write,
             message: format!(

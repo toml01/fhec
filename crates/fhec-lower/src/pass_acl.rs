@@ -291,7 +291,7 @@ fn rule_reapply(
     if !acl_insert {
         let joined: String = lines.iter().map(|c| format!("{c} ")).collect();
         diags.borrow_mut().push(fhec_check::Diagnostic {
-            code: "FHE4013",
+            code: crate::codes::SUGGEST_POLICY_GRANT,
             severity: Severity::Note,
             span: stmt.span,
             message: format!(
@@ -308,7 +308,8 @@ fn rule_reapply(
         plan.push(Patch::insert(
             at,
             format!("\n{indent}{call}"),
-            Provenance::new("§8.11 re-application", ctx.range(stmt.span)).with_code("FHE4013"),
+            Provenance::new("§8.11 re-application", ctx.range(stmt.span))
+                .with_code(crate::codes::SUGGEST_POLICY_GRANT),
         ));
     }
     Ok(())
@@ -580,13 +581,14 @@ fn rule_r4(
             plan.push(Patch::insert(
                 at,
                 format!("\n{indent}{call}"),
-                Provenance::new("§8.9 R4", ctx.range(w.stmt_span)).with_code("FHE4013"),
+                Provenance::new("§8.9 R4", ctx.range(w.stmt_span))
+                    .with_code(crate::codes::SUGGEST_POLICY_GRANT),
             ));
         }
     } else {
         let insertion: String = calls.iter().map(|c| format!("\n{indent}{c}")).collect();
         diags.borrow_mut().push(fhec_check::Diagnostic {
-            code: "FHE4013",
+            code: crate::codes::SUGGEST_POLICY_GRANT,
             severity: Severity::Note,
             span: w.stmt_span,
             message: format!(
@@ -1151,7 +1153,7 @@ fn rule_r5<'a, 'ast>(
         let joined: String = grant_lines.iter().map(|c| format!("{c} ")).collect();
         if !joined.is_empty() {
             diags.borrow_mut().push(fhec_check::Diagnostic {
-                code: "FHE4013",
+                code: crate::codes::SUGGEST_POLICY_GRANT,
                 severity: Severity::Note,
                 span: stmt.span,
                 message: format!(
@@ -1173,7 +1175,8 @@ fn rule_r5<'a, 'ast>(
     plan.push(Patch::insert(
         ctx.range(stmt.span).start,
         insertion,
-        Provenance::new("§8.10 R5", ctx.range(stmt.span)).with_code("FHE4013"),
+        Provenance::new("§8.10 R5", ctx.range(stmt.span))
+            .with_code(crate::codes::SUGGEST_POLICY_GRANT),
     ));
 
     if needs_hoist.iter().any(|&h| h) {

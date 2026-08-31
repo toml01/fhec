@@ -130,7 +130,7 @@ fn bind_decomposed<'p, 'ast>(
                 ctx.unit.type_decl(struct_ty).name,
                 decomposed.root_text
             ),
-            "FHE4006",
+            crate::codes::ACL_POLICY_TARGET_UNBINDABLE,
             Some("§8.9"),
         );
     }
@@ -538,7 +538,7 @@ fn confirm_state_var_in_scope(
             "reader `{name}` is shadowed by a local or parameter in this function, so the \
              grant cannot be written safely here (spec §8.9)"
         ),
-        "FHE4006",
+        crate::codes::ACL_POLICY_TARGET_UNBINDABLE,
         Some("§8.9"),
     )
 }
