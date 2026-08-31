@@ -90,6 +90,13 @@ pub enum FheOp {
     /// ACL: global allowance. Never auto-inserted (spec §8.5); present so
     /// existing calls can be typed and rendered.
     AllowGlobal,
+    /// ACL: allow a named reader (spec §8.9 R4/R5, §8.10). Two arguments:
+    /// the handle and the reader's address expression. Only ever inserted
+    /// where an author-stated reader policy (§8.8) names that reader.
+    Allow,
+    /// ACL: allow everyone (spec §8.9 `public` reader). One argument: the
+    /// handle. Only ever inserted from a `public` reader policy (§8.8).
+    AllowPublic,
 }
 
 impl FheOp {
@@ -105,7 +112,8 @@ impl FheOp {
             | FheOp::Widen { .. }
             | FheOp::AllowThis
             | FheOp::AllowSender
-            | FheOp::AllowGlobal => 1,
+            | FheOp::AllowGlobal
+            | FheOp::AllowPublic => 1,
             FheOp::Add
             | FheOp::Sub
             | FheOp::Mul
@@ -127,7 +135,8 @@ impl FheOp {
             | FheOp::Rol
             | FheOp::Ror
             | FheOp::FromExternal { .. }
-            | FheOp::AllowTransient => 2,
+            | FheOp::AllowTransient
+            | FheOp::Allow => 2,
             FheOp::Select => 3,
         }
     }
@@ -136,7 +145,12 @@ impl FheOp {
     pub fn is_acl(self) -> bool {
         matches!(
             self,
-            FheOp::AllowThis | FheOp::AllowSender | FheOp::AllowTransient | FheOp::AllowGlobal
+            FheOp::AllowThis
+                | FheOp::AllowSender
+                | FheOp::AllowTransient
+                | FheOp::AllowGlobal
+                | FheOp::Allow
+                | FheOp::AllowPublic
         )
     }
 
@@ -176,6 +190,8 @@ impl FheOp {
             FheOp::AllowSender => "allow-sender",
             FheOp::AllowTransient => "allow-transient",
             FheOp::AllowGlobal => "allow-global",
+            FheOp::Allow => "allow",
+            FheOp::AllowPublic => "allow-public",
         }
     }
 }

@@ -144,6 +144,18 @@ const COFHE_0_2_OPS: &[OpEntry] = &[
         Applicability::AnyEncrypted,
         ResultKind::Void,
     ),
+    entry(
+        FheOp::Allow,
+        "allow",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
+    entry(
+        FheOp::AllowPublic,
+        "allowPublic",
+        Applicability::AnyEncrypted,
+        ResultKind::Void,
+    ),
 ];
 
 /// The CoFHE target profile.
@@ -214,7 +226,7 @@ impl CofheProfile {
     fn encrypted_operand_count(op: FheOp) -> usize {
         match op {
             FheOp::TrivialEncrypt { .. } | FheOp::FromExternal { .. } => 0,
-            FheOp::AllowTransient => 1,
+            FheOp::AllowTransient | FheOp::Allow => 1,
             _ => op.arity(),
         }
     }
