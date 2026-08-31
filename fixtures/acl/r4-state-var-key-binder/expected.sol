@@ -12,7 +12,9 @@ contract PolicyOnMapping {
 
     function set(address to, euint32 v) public {
         balances[to] = v;
-        FHE.allowThis(balances[to]);
-        if (to != address(0)) FHE.allow(balances[to], to);
+        if (FHE.isInitialized(balances[to])) {
+            FHE.allowThis(balances[to]);
+            if (to != address(0)) FHE.allow(balances[to], to);
+        }
     }
 }

@@ -10,6 +10,13 @@
 //! ordered by [`fhec_ir::InsertOrder`], so they compose with every other
 //! patch inside the statement.
 //!
+//! Every inserted grant sequence that is not withheld under FHE4014 is
+//! wrapped in the spec §8.1 initialization guard —
+//! `if (FHE.isInitialized(<handle>)) { ... }` — because a grant on a handle
+//! that carries no CoFHE permission (an unwritten slot's zero sentinel, a
+//! `.wrap`-derived value arriving through a parameter) reverts instead of
+//! granting, and provenance is a runtime property (issue #103).
+//!
 //! Dedupe (spec §8.6): an equivalent existing call suppresses the insertion —
 //! same ACL function, syntactically identical argument after parenthesis
 //! stripping; method syntax counts as library syntax. An author-written
@@ -17,7 +24,9 @@
 //! `allowThis`. R1 scans forward from the trigger to the next write of the
 //! same location or the end of the block; R2/R3 insert *before* their trigger,
 //! so their window scans backward from the trigger to the start of the block
-//! (a §8.6 refinement — the spec's forward window is written for R1).
+//! (a §8.6 refinement — the spec's forward window is written for R1). The
+//! §8.1 initialization guard is transparent to every window scan (one
+//! level), so a re-transpile of guarded output inserts nothing (spec §1.4).
 
 use std::cell::RefCell;
 
@@ -276,6 +285,8 @@ fn rule_reapply(
     let mut reach_cache: std::collections::HashMap<fhec_bind::TypeDeclId, Option<String>> =
         std::collections::HashMap::new();
     let mut lines: Vec<String> = Vec::new();
+    // One inline (single-line) guard rendering per policy, for suggest mode.
+    let mut inline: Vec<String> = Vec::new();
     for policy in policies {
         let (target_text, ty, struct_ty) = match policy.owner {
             fhec_check::PolicyOwner::StateVar(_) => {
@@ -345,42 +356,58 @@ fn rule_reapply(
             crate::policy_bind::render_readers(ctx, function, policy, &target_text, &[])?;
         let calls =
             crate::policy_bind::render_call_lines(ctx, stmt.span, ty, &target_text, &rendering)?;
-        for call in calls {
-            if !window.iter().any(|s| {
-                policy_call_matches(
-                    ctx,
-                    function,
-                    s,
-                    &call.fn_name,
-                    &call.arg0,
-                    call.arg1.as_deref(),
-                )
-            }) {
-                lines.push(call.text);
-                if let Some(struct_ty) = struct_ty {
-                    used_structs.insert(struct_ty);
-                }
+        let missing: Vec<String> = calls
+            .into_iter()
+            .filter(|call| {
+                !window.iter().any(|s| {
+                    matches_through_guard(ctx, s, &|s| {
+                        policy_call_matches(
+                            ctx,
+                            function,
+                            s,
+                            &call.fn_name,
+                            &call.arg0,
+                            call.arg1.as_deref(),
+                        )
+                    })
+                })
+            })
+            .map(|call| call.text)
+            .collect();
+        if !missing.is_empty() {
+            // Spec §8.1 initialization guard on the re-application target:
+            // this is the guard's most-live site — the trigger writes a
+            // *reader*, so nothing here proves the target itself was ever
+            // written, and a grant on an unwritten handle reverts.
+            inline.push(guard_inline(ctx, &target_text, &missing));
+            lines.extend(guard_lines(ctx, &target_text, &missing));
+            if let Some(struct_ty) = struct_ty {
+                used_structs.insert(struct_ty);
             }
         }
     }
     if lines.is_empty() {
         return Ok(());
     }
-    let prelude = pending_prelude
+    let prelude: Vec<String> = pending_prelude
         .into_iter()
         .filter(|(ty, _)| used_structs.contains(ty))
-        .map(|(_, line)| line);
-    let lines: Vec<String> = prelude.chain(lines).collect();
+        .map(|(_, line)| line)
+        .collect();
+    let lines: Vec<String> = prelude.iter().cloned().chain(lines).collect();
 
     if !acl_insert {
-        let joined: String = lines.iter().map(|c| format!("{c} ")).collect();
+        let joined = prelude
+            .into_iter()
+            .chain(inline)
+            .collect::<Vec<_>>()
+            .join(" ");
         diags.borrow_mut().push(fhec_check::Diagnostic {
             code: crate::codes::SUGGEST_POLICY_GRANT,
             severity: Severity::Note,
             span: stmt.span,
             message: format!(
-                "ACL suggestion: after this write, re-apply the policy with `{}`",
-                joined.trim_end()
+                "ACL suggestion: after this write, re-apply the policy with `{joined}`"
             ),
             fixits: Vec::new(),
             rule: Some("§8.11"),
@@ -603,14 +630,17 @@ fn rule_r1(
     let mut missing: Vec<FheOp> = Vec::new();
     for &op in ops {
         let name = ctx.profile.acl_fn_name(op).unwrap_or_default();
-        let equivalent_grant = window
-            .iter()
-            .any(|s| acl_call_matches(ctx, w.function, s, &name, &lvalue, None))
-            || local.as_ref().is_some_and(|(l, _)| {
-                local_window
-                    .iter()
-                    .any(|s| acl_call_matches(ctx, w.function, s, &name, l, None))
-            });
+        let equivalent_grant = window.iter().any(|s| {
+            matches_through_guard(ctx, s, &|s| {
+                acl_call_matches(ctx, w.function, s, &name, &lvalue, None)
+            })
+        }) || local.as_ref().is_some_and(|(l, _)| {
+            local_window.iter().any(|s| {
+                matches_through_guard(ctx, s, &|s| {
+                    acl_call_matches(ctx, w.function, s, &name, l, None)
+                })
+            })
+        });
         // An explicit broad grant on the local copied into the slot makes the
         // handle readable by this contract already, so R1 need not append its
         // `allowThis`. This is deliberately not applied to `allowSender`:
@@ -620,9 +650,11 @@ fn rule_r1(
         let broad_local_grant = op == FheOp::AllowThis
             && local.as_ref().is_some_and(|(l, _)| {
                 local_window.iter().any(|s| {
-                    ["allowPublic", "allowGlobal"]
-                        .into_iter()
-                        .any(|name| acl_call_matches(ctx, w.function, s, name, l, None))
+                    matches_through_guard(ctx, s, &|s| {
+                        ["allowPublic", "allowGlobal"]
+                            .into_iter()
+                            .any(|name| acl_call_matches(ctx, w.function, s, name, l, None))
+                    })
                 })
             });
         let granted = equivalent_grant || broad_local_grant;
@@ -636,52 +668,47 @@ fn rule_r1(
 
     let indent = ctx.line_indent(w.file, ctx.range(w.stmt_span).start);
     let at = after_stmt_offset(ctx.text(w.file), ctx.range(w.stmt_span).end);
+    let calls: Vec<String> = missing
+        .iter()
+        .map(|op| {
+            ctx.profile
+                .render_call(*op, &[w.value_ty], &[&lvalue])
+                .map(|c| format!("{c};"))
+        })
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| internal(w.stmt_span, e))?;
+    // Spec §8.1 initialization guard: the written handle's provenance is
+    // not provable here (a copy, a parameter, an opaque call, ...), and a
+    // grant on an uninitialized handle reverts instead of granting.
+    let lines = guard_lines(ctx, &lvalue, &calls);
     if acl_insert {
-        let calls: Vec<String> = missing
-            .iter()
-            .map(|op| {
-                ctx.profile
-                    .render_call(*op, &[w.value_ty], &[&lvalue])
-                    .map(|c| format!("{c};"))
-            })
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| internal(w.stmt_span, e))?;
         // `return slot = value;` states both an R1 write and an R3 return on
         // one statement. R1's insertion point is R3's replacement end, so the
         // grants would land after the `return` and never run (spec §8.0).
-        // R3 owns the statement: hand the calls over.
+        // R3 owns the statement: hand the (guarded) lines over.
         if is_return_site(ctx, w.function, w.stmt_span) {
             outcome
                 .pending_r1
-                .push((w.stmt_span, w.file, w.function, calls));
+                .push((w.stmt_span, w.file, w.function, lines));
             return Ok(());
         }
         brace_lone_stmt(ctx, w.function, w.stmt_span, plan, outcome)?;
-        for call in calls {
+        for line in lines {
             plan.push(Patch::insert(
                 at,
-                format!("\n{indent}{call}"),
+                format!("\n{indent}{line}"),
                 Provenance::new("§8.1 R1", ctx.range(w.stmt_span)).with_code("FHE4010"),
             ));
         }
     } else {
-        let calls: Vec<String> = missing
-            .iter()
-            .map(|op| {
-                ctx.profile
-                    .render_call(*op, &[w.value_ty], &[&lvalue])
-                    .map(|c| format!("{c};"))
-            })
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| internal(w.stmt_span, e))?;
-        let insertion: String = calls.iter().map(|c| format!("\n{indent}{c}")).collect();
+        let insertion: String = lines.iter().map(|l| format!("\n{indent}{l}")).collect();
         diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4010",
             severity: Severity::Note,
             span: w.stmt_span,
             message: format!(
                 "ACL suggestion: after this write, add `{}`",
-                calls.join(" ")
+                guard_inline(ctx, &lvalue, &calls)
             ),
             fixits: vec![fhec_check::FixIt {
                 span: zero_width_at(w.stmt_span),
@@ -730,7 +757,9 @@ fn rule_r4(
         .iter()
         .filter(|c| {
             !window.iter().any(|s| {
-                policy_call_matches(ctx, w.function, s, &c.fn_name, &c.arg0, c.arg1.as_deref())
+                matches_through_guard(ctx, s, &|s| {
+                    policy_call_matches(ctx, w.function, s, &c.fn_name, &c.arg0, c.arg1.as_deref())
+                })
             })
         })
         .collect();
@@ -741,32 +770,35 @@ fn rule_r4(
     let indent = ctx.line_indent(w.file, ctx.range(w.stmt_span).start);
     let at = after_stmt_offset(ctx.text(w.file), ctx.range(w.stmt_span).end);
     let calls: Vec<String> = missing.iter().map(|c| c.text.clone()).collect();
+    // Spec §8.1 initialization guard, exactly as at a plain R1 write; the
+    // §8.9 zero-address guard on individual readers nests inside it.
+    let guarded = guard_lines(ctx, lvalue, &calls);
     if acl_insert {
         // Same R1/R3 handover as the plain-ownership path (spec §8.0).
         if is_return_site(ctx, w.function, w.stmt_span) {
             outcome
                 .pending_r1
-                .push((w.stmt_span, w.file, w.function, calls));
+                .push((w.stmt_span, w.file, w.function, guarded));
             return Ok(());
         }
         brace_lone_stmt(ctx, w.function, w.stmt_span, plan, outcome)?;
-        for call in calls {
+        for line in guarded {
             plan.push(Patch::insert(
                 at,
-                format!("\n{indent}{call}"),
+                format!("\n{indent}{line}"),
                 Provenance::new("§8.9 R4", ctx.range(w.stmt_span))
                     .with_code(crate::codes::SUGGEST_POLICY_GRANT),
             ));
         }
     } else {
-        let insertion: String = calls.iter().map(|c| format!("\n{indent}{c}")).collect();
+        let insertion: String = guarded.iter().map(|l| format!("\n{indent}{l}")).collect();
         diags.borrow_mut().push(fhec_check::Diagnostic {
             code: crate::codes::SUGGEST_POLICY_GRANT,
             severity: Severity::Note,
             span: w.stmt_span,
             message: format!(
                 "ACL suggestion: after this write, add `{}`",
-                calls.join(" ")
+                guard_inline(ctx, lvalue, &calls)
             ),
             fixits: vec![fhec_check::FixIt {
                 span: zero_width_at(w.stmt_span),
@@ -861,7 +893,9 @@ fn rule_r2<'ast>(
         let original = ctx.snippet(*span);
         let arg_key = strip_parens(&original).to_string();
         let deduped = window.iter().any(|s| {
-            acl_call_matches_normalized(ctx, c.function, s, &transient, &arg_key, &callee_key)
+            matches_through_guard(ctx, s, &|s| {
+                acl_call_matches_normalized(ctx, c.function, s, &transient, &arg_key, &callee_key)
+            })
         });
         args.push(ArgPlan {
             span: *span,
@@ -896,9 +930,13 @@ fn rule_r2<'ast>(
             .iter()
             .filter(|a| !a.deduped)
             .map(|a| {
-                format!(
-                    "FHE.allowTransient({}, address({callee_key}));",
-                    strip_parens(&a.original)
+                let handle = strip_parens(&a.original);
+                guard_inline(
+                    ctx,
+                    handle,
+                    &[format!(
+                        "FHE.allowTransient({handle}, address({callee_key}));"
+                    )],
                 )
             })
             .collect::<Vec<_>>()
@@ -978,7 +1016,10 @@ fn rule_r2<'ast>(
             .profile
             .render_call(FheOp::AllowTransient, &[a.ty], &[&handle, &account])
             .map_err(|e| internal(c.stmt_span, e))?;
-        lines.push(format!("{call};"));
+        // Spec §8.1 initialization guard: an argument handle whose
+        // provenance is not provable (a parameter, a copy, an opaque call)
+        // may be uninitialized, and granting on one reverts.
+        lines.extend(guard_lines(ctx, &handle, &[format!("{call};")]));
         let _ = a.node; // arg AST currently only needed for rendering above
     }
 
@@ -1104,14 +1145,16 @@ fn rule_r3<'ast>(
     let expr_key = strip_parens(&ctx.snippet(r.expr_span)).to_string();
     let window = backward_window(ctx, r.function, r.stmt_span);
     if window.iter().any(|s| {
-        acl_call_matches(
-            ctx,
-            r.function,
-            s,
-            &transient,
-            &expr_key,
-            Some("msg.sender"),
-        )
+        matches_through_guard(ctx, s, &|s| {
+            acl_call_matches(
+                ctx,
+                r.function,
+                s,
+                &transient,
+                &expr_key,
+                Some("msg.sender"),
+            )
+        })
     }) {
         // Already granted (also the idempotence path, §8.6).
         return refuse_pending_r1(ctx, r.stmt_span, outcome);
@@ -1128,7 +1171,8 @@ fn rule_r3<'ast>(
             span: r.stmt_span,
             message: format!(
                 "ACL suggestion: hoist the return value and add \
-                 `FHE.allowTransient(<ret>, msg.sender);` before returning `{expr_key}`"
+                 `if (FHE.isInitialized(<ret>)) {{ FHE.allowTransient(<ret>, msg.sender); }}` \
+                 before returning `{expr_key}`"
             ),
             fixits: Vec::new(),
             rule: Some("§8.3"),
@@ -1147,15 +1191,23 @@ fn rule_r3<'ast>(
     // Cover the trailing `;` when the statement span excludes it.
     let end = after_stmt_offset(ctx.text(r.file), stmt_range.end);
     // Grants handed over by R1 for a `return slot = value;` statement: they
-    // must run before the `return`, inside the text R3 owns.
+    // must run before the `return`, inside the text R3 owns. Already
+    // guarded (spec §8.1) by the rule that handed them over.
     let storage_grants: String = take_pending_r1(outcome, r.stmt_span)
         .iter()
         .map(|c| format!("{c}\n{indent}"))
         .collect();
+    // Spec §8.1 initialization guard on the hoisted return temp: a public
+    // function can legally return a handle it never initialized, and
+    // granting on one reverts.
+    let guarded: String = guard_lines(ctx, &temp, &[format!("{call};")])
+        .iter()
+        .map(|l| format!("{l}\n{indent}"))
+        .collect();
     plan.push(Patch::replace(
         fhec_ir::ByteRange::new(stmt_range.start, end),
         format!(
-            "{} {} = {};\n{indent}{storage_grants}{call};\n{indent}return {temp};",
+            "{} {} = {};\n{indent}{storage_grants}{guarded}return {temp};",
             r.value_ty.solidity_name(),
             temp,
             rendered,
@@ -1301,8 +1353,12 @@ fn rule_r5<'a, 'ast>(
 
     // Build the grant lines for every governed position, using the (now
     // hoist-stable) argument text as both `self` and every named reference.
+    // Each position's sequence is wrapped in its own §8.1 initialization
+    // guard on that position's handle: `grant_seqs` keeps the handle and
+    // the raw calls together so suggest mode can render the same guard
+    // inline.
     let window = backward_window(ctx, function, stmt.span);
-    let mut grant_lines: Vec<String> = Vec::new();
+    let mut grant_seqs: Vec<(String, Vec<String>)> = Vec::new();
     for (i, a) in args.iter().enumerate() {
         let Some(policy) = a.policy else { continue };
         let Some(ty) = ty_of(a.node) else { continue };
@@ -1328,36 +1384,44 @@ fn rule_r5<'a, 'ast>(
         let rendering = render_event_policy(policy, &args, &arg_text)?;
         let calls =
             crate::policy_bind::render_call_lines(ctx, a.node.span, ty, target_text, &rendering)?;
-        for call in calls {
-            if !window.iter().any(|s| {
-                policy_call_matches(
-                    ctx,
-                    function,
-                    s,
-                    &call.fn_name,
-                    &call.arg0,
-                    call.arg1.as_deref(),
-                )
-            }) {
-                grant_lines.push(call.text);
-            }
+        let missing: Vec<String> = calls
+            .into_iter()
+            .filter(|call| {
+                !window.iter().any(|s| {
+                    matches_through_guard(ctx, s, &|s| {
+                        policy_call_matches(
+                            ctx,
+                            function,
+                            s,
+                            &call.fn_name,
+                            &call.arg0,
+                            call.arg1.as_deref(),
+                        )
+                    })
+                })
+            })
+            .map(|call| call.text)
+            .collect();
+        if !missing.is_empty() {
+            grant_seqs.push((target_text.clone(), missing));
         }
     }
-    if grant_lines.is_empty() && prelude.is_empty() {
+    if grant_seqs.is_empty() && prelude.is_empty() {
         return Ok(());
     }
 
     if !acl_insert {
-        let joined: String = grant_lines.iter().map(|c| format!("{c} ")).collect();
-        if !joined.is_empty() {
+        if !grant_seqs.is_empty() {
+            let joined = grant_seqs
+                .iter()
+                .map(|(handle, calls)| guard_inline(ctx, handle, calls))
+                .collect::<Vec<_>>()
+                .join(" ");
             diags.borrow_mut().push(fhec_check::Diagnostic {
                 code: crate::codes::SUGGEST_POLICY_GRANT,
                 severity: Severity::Note,
                 span: stmt.span,
-                message: format!(
-                    "ACL suggestion: before this emit, add `{}`",
-                    joined.trim_end()
-                ),
+                message: format!("ACL suggestion: before this emit, add `{joined}`"),
                 fixits: Vec::new(),
                 rule: Some("§8.10"),
             });
@@ -1368,7 +1432,9 @@ fn rule_r5<'a, 'ast>(
     brace_lone_stmt(ctx, function, stmt.span, plan, outcome)?;
 
     let mut lines = prelude;
-    lines.extend(grant_lines);
+    for (handle, calls) in &grant_seqs {
+        lines.extend(guard_lines(ctx, handle, calls));
+    }
     let insertion: String = lines.iter().map(|l| format!("{l}\n{indent}")).collect();
     plan.push(Patch::insert(
         ctx.range(stmt.span).start,
@@ -2297,6 +2363,93 @@ fn is_wrap_call(ctx: &Ctx<'_, '_>, e: &ast::Expr<'_>) -> bool {
             ctx.checked.types.get(obj.span),
             Some(Ty::Plain(PlainTy::EncTypeRef(_)))
         )
+}
+
+// ---------------------------------------------------------------------------
+// The initialization guard (spec §8.1)
+// ---------------------------------------------------------------------------
+
+/// Renders the spec §8.1 initialization guard around one handle's grant
+/// sequence, as physical lines with no leading indentation (the caller
+/// prefixes each line with the site indent): a single call stays on the
+/// guard's own line, two or more open a block. The calls themselves are
+/// complete statements (trailing `;` included).
+pub(crate) fn guard_lines(ctx: &Ctx<'_, '_>, handle: &str, calls: &[String]) -> Vec<String> {
+    let probe = ctx.profile.is_initialized_fn();
+    match calls {
+        [] => Vec::new(),
+        [one] => vec![format!("if ({probe}({handle})) {{ {one} }}")],
+        many => {
+            let mut out = Vec::with_capacity(many.len() + 2);
+            out.push(format!("if ({probe}({handle})) {{"));
+            out.extend(many.iter().map(|c| format!("    {c}")));
+            out.push("}".to_string());
+            out
+        }
+    }
+}
+
+/// The same guard on one line, for suggest-mode messages (spec §8.1).
+pub(crate) fn guard_inline(ctx: &Ctx<'_, '_>, handle: &str, calls: &[String]) -> String {
+    format!(
+        "if ({}({handle})) {{ {} }}",
+        ctx.profile.is_initialized_fn(),
+        calls.join(" ")
+    )
+}
+
+/// The body statements of a spec §8.1 initialization guard: an else-less
+/// `if` whose condition is a call to the trusted profile's initialization
+/// probe (`FHE.isInitialized(...)`). Spec §8.6 makes such a guard
+/// transparent to the window scan — its body's statements count as if they
+/// stood in the window directly — so a re-transpile of guarded output
+/// recognizes the grants it inserted and `T(T(x)) == T(x)` holds (spec
+/// §1.4). The condition's argument is deliberately not compared, matching
+/// the §8.6 rule for the zero-address guard.
+fn init_guard_body<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+) -> Option<&'ast [ast::Stmt<'ast>]> {
+    let ast::StmtKind::If(cond, then, None) = &stmt.kind else {
+        return None;
+    };
+    let ast::ExprKind::Call(callee, _) = &cond.peel_parens().kind else {
+        return None;
+    };
+    let ast::ExprKind::Member(base, name) = &callee.peel_parens().kind else {
+        return None;
+    };
+    let probe = ctx.profile.is_initialized_fn();
+    let probe_name = probe.rsplit('.').next().unwrap_or(&probe);
+    if name.as_str() != probe_name {
+        return None;
+    }
+    // Same trust rule library-syntax grants get (spec §8.6): the base must
+    // be the checker-confirmed profile library, not a same-named impostor.
+    if !matches!(
+        ctx.checked.types.get(base.span),
+        Some(Ty::Plain(PlainTy::FheLib))
+    ) {
+        return None;
+    }
+    Some(match &then.kind {
+        ast::StmtKind::Block(b) => b,
+        _ => std::slice::from_ref(then),
+    })
+}
+
+/// Applies `matches` to a window statement directly and, when the statement
+/// is a §8.1 initialization guard, to each statement of the guard's body
+/// (one level — spec §8.6 guard transparency).
+fn matches_through_guard<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+    matches: &dyn Fn(&'ast ast::Stmt<'ast>) -> bool,
+) -> bool {
+    if matches(stmt) {
+        return true;
+    }
+    init_guard_body(ctx, stmt).is_some_and(|body| body.iter().any(matches))
 }
 
 fn is_ident_text(s: &str) -> bool {

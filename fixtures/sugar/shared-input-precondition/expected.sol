@@ -18,7 +18,9 @@ contract SharedInputPrecondition {
         }
         euint64 amount = FHE.receiveEuint64Param(amount_shared);
         balances[msg.sender] = amount;
-        FHE.allowThis(balances[msg.sender]);
-        FHE.allowSender(balances[msg.sender]);
+        if (FHE.isInitialized(balances[msg.sender])) {
+            FHE.allowThis(balances[msg.sender]);
+            FHE.allowSender(balances[msg.sender]);
+        }
     }
 }

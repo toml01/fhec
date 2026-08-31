@@ -8,6 +8,6 @@ contract CoercePlain {
 
     function f(uint32 p) public {
         a = FHE.add(a, FHE.asEuint32(p));
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
     }
 }

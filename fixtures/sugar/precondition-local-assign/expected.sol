@@ -25,6 +25,6 @@ contract PreconditionLocalAssign {
         euint32 amount = FHE.asEuint32(amount_input, inputProof);
         limit = requested;
         balance = amount;
-        FHE.allowThis(balance);
+        if (FHE.isInitialized(balance)) { FHE.allowThis(balance); }
     }
 }

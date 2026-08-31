@@ -23,9 +23,9 @@ contract DistinctLiteralKeys {
                 __fhe_else_4 = b;
             }
             byId[1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_1);
-            FHE.allowThis(byId[1]);
+            if (FHE.isInitialized(byId[1])) { FHE.allowThis(byId[1]); }
             byId[2] = FHE.select(__fhe_cond_0, __fhe_pre_2, __fhe_else_4);
-            FHE.allowThis(byId[2]);
+            if (FHE.isInitialized(byId[2])) { FHE.allowThis(byId[2]); }
         }
     }
 }

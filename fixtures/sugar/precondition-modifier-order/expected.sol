@@ -29,6 +29,6 @@ contract PreconditionModifierOrder {
         euint32 amount = euint32.wrap(__fhe_hashes_1[0]);
         euint32 fee = euint32.wrap(__fhe_hashes_1[1]);
         balance = FHE.add(amount, fee);
-        FHE.allowThis(balance);
+        if (FHE.isInitialized(balance)) { FHE.allowThis(balance); }
     }
 }

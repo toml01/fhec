@@ -13,7 +13,7 @@ contract SugarImplicitInMultiline {
     ) external {
         euint64 amount = FHE.asEuint64(amount_input, inputProof);
         a = amount;
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         to;
     }
 }

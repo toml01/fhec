@@ -21,8 +21,10 @@ contract PolicyOnMerge {
                 __fhe_then_3 = v;
             }
             balances[__fhe_key_1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_2);
-            FHE.allowThis(balances[__fhe_key_1]);
-            if (__fhe_key_1 != address(0)) FHE.allow(balances[__fhe_key_1], __fhe_key_1);
+            if (FHE.isInitialized(balances[__fhe_key_1])) {
+                FHE.allowThis(balances[__fhe_key_1]);
+                if (__fhe_key_1 != address(0)) FHE.allow(balances[__fhe_key_1], __fhe_key_1);
+            }
         }
     }
 }

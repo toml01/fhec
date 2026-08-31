@@ -19,6 +19,6 @@ contract PreconditionAbsent {
         euint32 amount = FHE.asEuint32(amount_input, inputProof);
         if (!isOperator(from, msg.sender)) revert UnauthorizedSpender(from, msg.sender);
         balance = amount;
-        FHE.allowThis(balance);
+        if (FHE.isInitialized(balance)) { FHE.allowThis(balance); }
     }
 }

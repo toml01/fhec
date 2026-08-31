@@ -181,7 +181,7 @@ fn add_with_acl() {
     golden_body(
         "        a = a + b;",
         "        a = FHE.add(a, b);\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -190,7 +190,7 @@ fn literal_coercion() {
     golden_body(
         "        a = a + 1;",
         "        a = FHE.add(a, FHE.asEuint32(1));\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -199,7 +199,7 @@ fn plain_operand_coercion() {
     golden_body(
         "        a = a * p;",
         "        a = FHE.mul(a, FHE.asEuint32(p));\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -208,7 +208,7 @@ fn widening_picks_wider_side() {
     golden_body(
         "        a = a8 + a;",
         "        a = FHE.add(FHE.asEuint32(a8), a);\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -217,7 +217,7 @@ fn nested_expression_single_patch() {
     golden_body(
         "        a = a + b * a8;",
         "        a = FHE.add(a, FHE.mul(b, FHE.asEuint32(a8)));\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -229,9 +229,9 @@ fn comparison_and_not() {
         "        eb = a < b;\n\
          \x20       eb = !eb;",
         "        eb = FHE.lt(a, b);\n\
-         \x20       FHE.allowThis(eb);\n\
+         \x20       if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }\n\
          \x20       eb = FHE.not(eb);\n\
-         \x20       FHE.allowThis(eb);",
+         \x20       if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }",
     );
 }
 
@@ -240,7 +240,7 @@ fn boolean_and_no_short_circuit() {
     golden_body(
         "        eb = eb && FHE.eq(a, b);",
         "        eb = FHE.and(eb, FHE.eq(a, b));\n\
-         \x20       FHE.allowThis(eb);",
+         \x20       if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }",
     );
 }
 
@@ -249,7 +249,7 @@ fn ternary_to_select() {
     golden_body(
         "        a = eb ? a : b;",
         "        a = FHE.select(eb, a, b);\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -258,7 +258,7 @@ fn compound_assignment() {
     golden_body(
         "        a += b;",
         "        a = FHE.add(a, b);\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -267,7 +267,7 @@ fn increment_statement() {
     golden_body(
         "        a++;",
         "        a = FHE.add(a, FHE.asEuint32(1));\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -304,7 +304,7 @@ fn dedupe_inserts_only_missing_call() {
         "        balances[msg.sender] = a;\n\
          \x20       FHE.allowThis(balances[msg.sender]);",
         "        balances[msg.sender] = a;\n\
-         \x20       FHE.allowSender(balances[msg.sender]);\n\
+         \x20       if (FHE.isInitialized(balances[msg.sender])) { FHE.allowSender(balances[msg.sender]); }\n\
          \x20       FHE.allowThis(balances[msg.sender]);",
     );
 }
@@ -336,7 +336,7 @@ fn non_sender_key_warns_and_withholds_the_sender_grant() {
         out.files[0].1,
         contract(
             "        balances[addr] = a;\n\
-             \x20       FHE.allowThis(balances[addr]);"
+             \x20       if (FHE.isInitialized(balances[addr])) { FHE.allowThis(balances[addr]); }"
         )
     );
 }
@@ -356,8 +356,10 @@ fn msg_sender_key_still_receives_both_grants() {
         out.files[0].1,
         contract(
             "        balances[msg.sender] = a;\n\
-             \x20       FHE.allowThis(balances[msg.sender]);\n\
-             \x20       FHE.allowSender(balances[msg.sender]);"
+             \x20       if (FHE.isInitialized(balances[msg.sender])) {\n\
+             \x20           FHE.allowThis(balances[msg.sender]);\n\
+             \x20           FHE.allowSender(balances[msg.sender]);\n\
+             \x20       }"
         )
     );
 }
@@ -380,7 +382,7 @@ fn simple_var_warns_and_withholds_the_sender_grant() {
         out.files[0].1,
         contract(
             "        a = b;\n\
-             \x20       FHE.allowThis(a);"
+             \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }"
         )
     );
 }
@@ -403,7 +405,7 @@ fn non_address_mapping_key_warns_and_withholds_the_sender_grant() {
         out.files[0].1,
         contract(
             "        byId[1] = a;\n\
-             \x20       FHE.allowThis(byId[1]);"
+             \x20       if (FHE.isInitialized(byId[1])) { FHE.allowThis(byId[1]); }"
         )
     );
 }
@@ -453,7 +455,7 @@ fn r2_identifier_arg_and_callee() {
     golden(
         &r2_contract("        vault.deposit(a);"),
         &r2_contract(
-            "        FHE.allowTransient(a, address(vault));\n\
+            "        if (FHE.isInitialized(a)) { FHE.allowTransient(a, address(vault)); }\n\
              \x20       vault.deposit(a);",
         ),
     );
@@ -465,7 +467,7 @@ fn r2_complex_arg_hoists() {
         &r2_contract("        vault.deposit(a + b);"),
         &r2_contract(
             "        euint32 __fhe_val_0 = FHE.add(a, b);\n\
-             \x20       FHE.allowTransient(__fhe_val_0, address(vault));\n\
+             \x20       if (FHE.isInitialized(__fhe_val_0)) { FHE.allowTransient(__fhe_val_0, address(vault)); }\n\
              \x20       vault.deposit(__fhe_val_0);",
         ),
     );
@@ -553,7 +555,7 @@ fn r3_hoists_and_grants() {
         &r3_contract(
             "public",
             "        euint32 __fhe_ret_0 = a;\n\
-             \x20       FHE.allowTransient(__fhe_ret_0, msg.sender);\n\
+             \x20       if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }\n\
              \x20       return __fhe_ret_0;",
         ),
     );
@@ -646,7 +648,7 @@ fn r3_skips_public_library_function_but_still_fires_on_the_host() {
          \x20   euint32 a;\n\
          \x20   function run() public returns (euint32) {\n\
          \x20       euint32 __fhe_ret_0 = L.work(a);\n\
-         \x20       FHE.allowTransient(__fhe_ret_0, msg.sender);\n\
+         \x20       if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }\n\
          \x20       return __fhe_ret_0;\n\
          \x20   }\n\
          }\n",
@@ -723,7 +725,7 @@ fn sugar_expands_param_and_conversion() {
          \x20   function setA(externalEuint32 amount_input, bytes memory inputProof) external {\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -757,7 +759,7 @@ fn sugar_appends_proof_on_its_own_line_in_a_multiline_param_list() {
          \x20   ) external {\n\
          \x20       euint64 amount = FHE.asEuint64(amount_input, inputProof);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       to;\n\
          \x20   }\n\
          }\n",
@@ -792,7 +794,7 @@ fn sugar_appends_proof_after_the_last_param_of_a_multiline_list() {
          \x20   ) external {\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       to;\n\
          \x20   }\n\
          }\n",
@@ -827,7 +829,7 @@ fn sugar_does_not_put_the_comma_inside_a_trailing_line_comment() {
          \x20   ) external {\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -861,7 +863,7 @@ fn sugar_multiline_trailing_comment_with_non_ascii_does_not_panic() {
          \x20   ) external {\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -892,7 +894,7 @@ fn sugar_appends_proof_on_its_own_line_in_a_multiline_constructor() {
          \x20   ) {\n\
          \x20       euint32 seed = FHE.asEuint32(seed_input, inputProof);\n\
          \x20       a = seed;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -947,7 +949,7 @@ fn sugar_binder_uses_the_bound_proof_and_appends_nothing() {
          \x20   {\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, sig);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       data;\n\
          \x20   }\n\
          }\n",
@@ -987,9 +989,9 @@ fn sugar_binder_batches_in_encrypted_parameter_order() {
          \x20       euint32 x = euint32.wrap(__fhe_hashes_1[0]);\n\
          \x20       euint32 y = euint32.wrap(__fhe_hashes_1[1]);\n\
          \x20       a = x;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       a = y;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -1018,7 +1020,7 @@ fn sugar_binder_expands_a_constructor_parameter_list() {
          \x20   constructor(bytes memory sig, externalEuint32 seed_input, uint256 tag) {\n\
          \x20       euint32 seed = FHE.asEuint32(seed_input, sig);\n\
          \x20       a = seed;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       tag;\n\
          \x20   }\n\
          }\n",
@@ -1063,7 +1065,7 @@ fn shared_input_receives_at_body_entry() {
         "\x20   function setA(sharedEuint32 amount_shared, uint256 tag) external {\n\
          \x20       euint32 amount = FHE.receiveEuint32Param(amount_shared);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       tag;\n\
          \x20   }\n",
     );
@@ -1082,9 +1084,9 @@ fn several_shared_inputs_receive_one_by_one_in_parameter_order() {
          \x20       euint64 second = FHE.receiveEuint64Param(second_shared);\n\
          \x20       euint32 first = FHE.receiveEuint32Param(first_shared);\n\
          \x20       b = second;\n\
-         \x20       FHE.allowThis(b);\n\
+         \x20       if (FHE.isInitialized(b)) { FHE.allowThis(b); }\n\
          \x20       a = first;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n",
     );
 }
@@ -1127,7 +1129,7 @@ fn shared_return_keeps_the_r2_grant() {
          \x20       }\n\
          \x20   }\n",
         "\x20   function drain() public returns (sharedEuint64) {\n\
-         \x20       FHE.allowTransient(b, address(vault));\n\
+         \x20       if (FHE.isInitialized(b)) { FHE.allowTransient(b, address(vault)); }\n\
          \x20       try vault.pull(b) returns (euint64 pulled) {\n\
          \x20           return FHE.shareEuint64(pulled, msg.sender);\n\
          \x20       } catch {\n\
@@ -1293,7 +1295,7 @@ fn precondition_moves_the_conversion_after_the_block() {
          \x20       }\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -1334,9 +1336,9 @@ fn precondition_batches_several_inputs_after_the_block() {
          \x20       euint32 x = euint32.wrap(__fhe_hashes_1[0]);\n\
          \x20       euint32 y = euint32.wrap(__fhe_hashes_1[1]);\n\
          \x20       a = x;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       a = y;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -1381,7 +1383,7 @@ fn precondition_local_declarations_stay_inside_the_block() {
          \x20       uint256 cap = n;\n\
          \x20       cap;\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -1429,7 +1431,7 @@ fn precondition_moves_a_bound_conversion_after_the_block() {
          \x20       }\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, sig);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -1478,7 +1480,7 @@ fn precondition_sits_between_modifier_prelude_and_body() {
          \x20       }\n\
          \x20       euint32 amount = FHE.asEuint32(amount_input, inputProof);\n\
          \x20       a = amount;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -1515,7 +1517,7 @@ fn precondition_guards_a_constructor() {
          \x20       }\n\
          \x20       euint32 seed = FHE.asEuint32(seed_input, inputProof);\n\
          \x20       a = seed;\n\
-         \x20       FHE.allowThis(a);\n\
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20   }\n\
          }\n",
     );
@@ -1558,7 +1560,7 @@ fn if_else_simple() {
          \x20       }",
         "        {\n\
          \x20           a = FHE.select(eb, FHE.add(a, FHE.asEuint32(1)), b);\n\
-         \x20           FHE.allowThis(a);\n\
+         \x20           if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       }",
     );
 }
@@ -1577,7 +1579,7 @@ fn if_without_else_merges_with_pre() {
          \x20               __fhe_then_2 = b;\n\
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);\n\
-         \x20           FHE.allowThis(a);\n\
+         \x20           if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       }",
     );
 }
@@ -1595,7 +1597,7 @@ fn if_else_without_an_incoming_value_omits_pre() {
         "        euint32 x;\n\
          \x20       x = FHE.select(eb, a, b);\n\
          \x20       a = x;\n\
-         \x20       FHE.allowThis(a);",
+         \x20       if (FHE.isInitialized(a)) { FHE.allowThis(a); }",
     );
 }
 
@@ -1626,7 +1628,7 @@ fn if_mapping_write_hoists_key() {
              \x20               __fhe_then_3 = a;\n\
              \x20           }\n\
              \x20           balances[__fhe_key_1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_2);\n\
-             \x20           FHE.allowThis(balances[__fhe_key_1]);\n\
+             \x20           if (FHE.isInitialized(balances[__fhe_key_1])) { FHE.allowThis(balances[__fhe_key_1]); }\n\
              \x20       }"
         )
     );
@@ -1665,7 +1667,7 @@ fn if_merge_to_simple_var_warns_and_withholds_the_sender_grant() {
              \x20               __fhe_then_2 = b;\n\
              \x20           }\n\
              \x20           a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);\n\
-             \x20           FHE.allowThis(a);\n\
+             \x20           if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
              \x20       }"
         )
     );
@@ -1703,7 +1705,7 @@ fn if_merge_shadowed_msg_param_withholds_the_sender_grant() {
     );
     let text = &out.files[0].1;
     assert!(
-        text.contains("FHE.allowThis(balances[__fhe_key_1]);"),
+        text.contains("if (FHE.isInitialized(balances[__fhe_key_1])) { FHE.allowThis(balances[__fhe_key_1]); }"),
         "output: {text}"
     );
     assert!(
@@ -1740,6 +1742,10 @@ fn if_merge_parenthesized_msg_sender_still_receives_both_grants() {
     );
     let text = &out.files[0].1;
     assert!(
+        text.contains("if (FHE.isInitialized(balances[__fhe_key_1])) {"),
+        "output: {text}"
+    );
+    assert!(
         text.contains("FHE.allowThis(balances[__fhe_key_1]);"),
         "output: {text}"
     );
@@ -1774,6 +1780,10 @@ fn if_merge_nested_mapping_sender_key_at_top_level_receives_both_grants() {
         out.lower_diag_codes
     );
     let text = &out.files[0].1;
+    assert!(
+        text.contains("if (FHE.isInitialized(m[__fhe_key_1][__fhe_key_2])) {"),
+        "output: {text}"
+    );
     assert!(
         text.contains("FHE.allowThis(m[__fhe_key_1][__fhe_key_2]);"),
         "output: {text}"
@@ -1841,9 +1851,9 @@ fn if_distinct_literal_keys_are_distinct_locations() {
          \x20               __fhe_else_4 = b;\n\
          \x20           }\n\
          \x20           byId[1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_1);\n\
-         \x20           FHE.allowThis(byId[1]);\n\
+         \x20           if (FHE.isInitialized(byId[1])) { FHE.allowThis(byId[1]); }\n\
          \x20           byId[2] = FHE.select(__fhe_cond_0, __fhe_pre_2, __fhe_else_4);\n\
-         \x20           FHE.allowThis(byId[2]);\n\
+         \x20           if (FHE.isInitialized(byId[2])) { FHE.allowThis(byId[2]); }\n\
          \x20       }",
     );
 }
@@ -1904,7 +1914,7 @@ fn if_else_multi_write_keeps_temps() {
          \x20               __fhe_else_4 = b;\n\
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_else_4);\n\
-         \x20           FHE.allowThis(a);\n\
+         \x20           if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       }",
     );
 }
@@ -1926,7 +1936,7 @@ fn if_read_after_write_uses_version() {
          \x20               __fhe_then_3 = FHE.add(__fhe_then_2, FHE.asEuint32(1));\n\
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_1);\n\
-         \x20           FHE.allowThis(a);\n\
+         \x20           if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       }",
     );
 }
@@ -1947,7 +1957,7 @@ fn if_branch_local_stays_direct() {
          \x20               __fhe_then_2 = t;\n\
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_2, __fhe_pre_1);\n\
-         \x20           FHE.allowThis(a);\n\
+         \x20           if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       }",
     );
 }
@@ -1979,7 +1989,7 @@ fn nested_ifs_compose_innermost_first() {
          \x20               }\n\
          \x20           }\n\
          \x20           a = FHE.select(__fhe_cond_0, __fhe_then_6, __fhe_pre_1);\n\
-         \x20           FHE.allowThis(a);\n\
+         \x20           if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n\
          \x20       }",
     );
 }
@@ -2022,8 +2032,10 @@ fn if_same_key_text_shares_one_temp() {
          \x20               __fhe_else_4 = b;\n\
          \x20           }\n\
          \x20           balances[__fhe_key_1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_else_4);\n\
-         \x20           FHE.allowThis(balances[__fhe_key_1]);\n\
-         \x20           FHE.allowSender(balances[__fhe_key_1]);\n\
+         \x20           if (FHE.isInitialized(balances[__fhe_key_1])) {\n\
+         \x20               FHE.allowThis(balances[__fhe_key_1]);\n\
+         \x20               FHE.allowSender(balances[__fhe_key_1]);\n\
+         \x20           }\n\
          \x20       }",
     );
 }
@@ -2076,7 +2088,7 @@ fn r2_cast_callee_hoists_with_declared_type() {
                     \x20   address vaultAddr;\n\
                     \x20   function f() public {\n\
                     \x20       IVault __fhe_callee_0 = IVault(vaultAddr);\n\
-                    \x20       FHE.allowTransient(a, address(__fhe_callee_0));\n\
+                    \x20       if (FHE.isInitialized(a)) { FHE.allowTransient(a, address(__fhe_callee_0)); }\n\
                     \x20       __fhe_callee_0.deposit(a);\n\
                     \x20   }\n\
                     }\n";
@@ -2218,7 +2230,7 @@ fn braceless_branch_body_is_wrapped_before_r2_grants() {
                \x20   euint32 a;\n\
                \x20   IVault vault;\n\
                \x20   function f(bool notPaused) public {\n\
-               \x20       if (notPaused) { FHE.allowTransient(a, address(vault));\n\
+               \x20       if (notPaused) { if (FHE.isInitialized(a)) { FHE.allowTransient(a, address(vault)); }\n\
                \x20       vault.deposit(a);\n\
                \x20       }\n\
                \x20   }\n\
@@ -2246,8 +2258,10 @@ fn braceless_branch_body_is_wrapped_after_r1_grants() {
                \x20   mapping(address => euint32) bal;\n\
                \x20   function f(bool ok, euint32 amt) public {\n\
                \x20       if (ok) { bal[msg.sender] = amt;\n\
-               \x20       FHE.allowThis(bal[msg.sender]);\n\
-               \x20       FHE.allowSender(bal[msg.sender]);\n\
+               \x20       if (FHE.isInitialized(bal[msg.sender])) {\n\
+               \x20           FHE.allowThis(bal[msg.sender]);\n\
+               \x20           FHE.allowSender(bal[msg.sender]);\n\
+               \x20       }\n\
                \x20       }\n\
                \x20   }\n\
                }\n";
@@ -2320,8 +2334,8 @@ fn r1_grants_land_inside_the_r3_return_rewrite() {
                \x20   euint32 balance;\n\
                \x20   function set(euint32 amount) public returns (euint32) {\n\
                \x20       euint32 __fhe_ret_0 = balance = amount;\n\
-               \x20       FHE.allowThis(balance);\n\
-               \x20       FHE.allowTransient(__fhe_ret_0, msg.sender);\n\
+               \x20       if (FHE.isInitialized(balance)) { FHE.allowThis(balance); }\n\
+               \x20       if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }\n\
                \x20       return __fhe_ret_0;\n\
                \x20   }\n\
                }\n";
@@ -2382,7 +2396,7 @@ fn r1_dedupe_broad_grant_on_stored_local_suppresses_only_allow_this() {
             "        euint32 ptr = a;\n\
              \x20       FHE.{grant}(ptr);\n\
              \x20       balances[msg.sender] = ptr;\n\
-             \x20       FHE.allowSender(balances[msg.sender]);"
+             \x20       if (FHE.isInitialized(balances[msg.sender])) {{ FHE.allowSender(balances[msg.sender]); }}"
         ));
         golden(&src, &expected);
     }
@@ -2410,7 +2424,8 @@ fn r1_broad_grant_window_stops_at_writes_in_nested_statements() {
              {barrier}\n\
              \x20       a = ptr;"
         );
-        let expected = format!("{input}\n        FHE.allowThis(a);");
+        let expected =
+            format!("{input}\n        if (FHE.isInitialized(a)) {{ FHE.allowThis(a); }}");
         golden_body(&input, &expected);
     }
 }
@@ -2425,7 +2440,8 @@ fn r1_broad_grant_window_stops_at_tuple_component_write() {
              \x20       (ptr, other) = (other, ptr);\n\
              \x20       a = ptr;"
         );
-        let expected = format!("{input}\n        FHE.allowThis(a);");
+        let expected =
+            format!("{input}\n        if (FHE.isInitialized(a)) {{ FHE.allowThis(a); }}");
         golden_body(&input, &expected);
     }
 }
@@ -2452,7 +2468,7 @@ fn r1_broad_grant_requires_a_trusted_fhe_library_base() {
         );
         let expected = src.replace(
             "        a = ptr;\n",
-            "        a = ptr;\n        FHE.allowThis(a);\n",
+            "        a = ptr;\n        if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n",
         );
         golden(&src, &expected);
     }
@@ -2498,7 +2514,7 @@ fn r1_broad_grant_method_syntax_requires_a_trusted_using_binding() {
         );
         let expected = src.replace(
             "        a = ptr;\n",
-            "        a = ptr;\n        FHE.allowThis(a);\n",
+            "        a = ptr;\n        if (FHE.isInitialized(a)) { FHE.allowThis(a); }\n",
         );
         golden(&src, &expected);
     }
@@ -2532,8 +2548,10 @@ fn r1_dedupe_stops_at_a_reassignment_of_the_local() {
          \x20       FHE.allowSender(ptr);\n\
          \x20       ptr = b;\n\
          \x20       balances[msg.sender] = ptr;\n\
-         \x20       FHE.allowThis(balances[msg.sender]);\n\
-         \x20       FHE.allowSender(balances[msg.sender]);",
+         \x20       if (FHE.isInitialized(balances[msg.sender])) {\n\
+         \x20           FHE.allowThis(balances[msg.sender]);\n\
+         \x20           FHE.allowSender(balances[msg.sender]);\n\
+         \x20       }",
     );
     let out = transpile(&[("t.fsol", &src)]);
     assert_eq!(out.files[0].1, expected);
@@ -2556,8 +2574,10 @@ fn r1_broad_grant_window_stops_at_a_comment_decorated_reassignment() {
          \x20       FHE.allowPublic(ptr);\n\
          \x20       (/*reassigned*/ ptr) = b;\n\
          \x20       balances[msg.sender] = ptr;\n\
-         \x20       FHE.allowThis(balances[msg.sender]);\n\
-         \x20       FHE.allowSender(balances[msg.sender]);",
+         \x20       if (FHE.isInitialized(balances[msg.sender])) {\n\
+         \x20           FHE.allowThis(balances[msg.sender]);\n\
+         \x20           FHE.allowSender(balances[msg.sender]);\n\
+         \x20       }",
     );
     let out = transpile(&[("t.fsol", &src)]);
     assert_eq!(out.files[0].1, expected);
@@ -2589,8 +2609,10 @@ fn r1_broad_grant_on_a_state_variable_does_not_survive_an_opaque_call() {
     let expected = src.replace(
         "        balances[msg.sender] = a;\n",
         "        balances[msg.sender] = a;\n        \
-         FHE.allowThis(balances[msg.sender]);\n        \
-         FHE.allowSender(balances[msg.sender]);\n",
+         if (FHE.isInitialized(balances[msg.sender])) {\n            \
+         FHE.allowThis(balances[msg.sender]);\n            \
+         FHE.allowSender(balances[msg.sender]);\n        \
+         }\n",
     );
     golden(src, &expected);
 }
@@ -2666,7 +2688,7 @@ fn r2_leaves_the_statement_to_pass_one_when_it_rewrote_nothing() {
                \x20   euint32 b;\n\
                \x20   IVault vault;\n\
                \x20   function f() internal returns (euint32 out) {\n\
-               \x20       FHE.allowTransient(a, address(vault));\n\
+               \x20       if (FHE.isInitialized(a)) { FHE.allowTransient(a, address(vault)); }\n\
                \x20       out = FHE.add(euint32.wrap(vault.ping(a)), b);\n\
                \x20   }\n\
                }\n";
@@ -2703,7 +2725,7 @@ fn r2_renders_a_site_that_straddles_a_hoisted_argument() {
                \x20   IVault vault;\n\
                \x20   function f() internal returns (euint32 out) {\n\
                \x20       euint32 __fhe_val_0 = FHE.add(a, b);\n\
-               \x20       FHE.allowTransient(__fhe_val_0, address(vault));\n\
+               \x20       if (FHE.isInitialized(__fhe_val_0)) { FHE.allowTransient(__fhe_val_0, address(vault)); }\n\
                \x20       out = FHE.add(euint32.wrap(vault.ping(__fhe_val_0)), a);\n\
                \x20   }\n\
                }\n";
@@ -2734,8 +2756,10 @@ fn r4_direct_write_grants_the_named_key_binder() {
         \x20   mapping(address account => euint32) balances;\n\
         \x20   function set(address to, euint32 v) public {\n\
         \x20       balances[to] = v;\n\
-        \x20       FHE.allowThis(balances[to]);\n\
-        \x20       if (to != address(0)) FHE.allow(balances[to], to);\n\
+        \x20       if (FHE.isInitialized(balances[to])) {\n\
+        \x20           FHE.allowThis(balances[to]);\n\
+        \x20           if (to != address(0)) FHE.allow(balances[to], to);\n\
+        \x20       }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -2783,7 +2807,7 @@ fn r4_this_reader_produces_only_the_unconditional_allow_this() {
         \x20   euint32 total;\n\
         \x20   function add(euint32 v) public {\n\
         \x20       total = FHE.add(total, v);\n\
-        \x20       FHE.allowThis(total);\n\
+        \x20       if (FHE.isInitialized(total)) { FHE.allowThis(total); }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -2809,8 +2833,10 @@ fn r4_public_reader_renders_allow_public_and_replaces_the_list() {
         \x20   euint32 total;\n\
         \x20   function add(euint32 v) public {\n\
         \x20       total = FHE.add(total, v);\n\
-        \x20       FHE.allowThis(total);\n\
-        \x20       FHE.allowPublic(total);\n\
+        \x20       if (FHE.isInitialized(total)) {\n\
+        \x20           FHE.allowThis(total);\n\
+        \x20           FHE.allowPublic(total);\n\
+        \x20       }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -2854,8 +2880,10 @@ fn r4_struct_field_policy_binds_through_the_erc7201_pointer() {
         \x20   function set(address to, euint32 v) public {\n\
         \x20       Storage storage $ = _getStorage();\n\
         \x20       $._balances[to] = v;\n\
-        \x20       FHE.allowThis($._balances[to]);\n\
-        \x20       if (to != address(0)) FHE.allow($._balances[to], to);\n\
+        \x20       if (FHE.isInitialized($._balances[to])) {\n\
+        \x20           FHE.allowThis($._balances[to]);\n\
+        \x20           if (to != address(0)) FHE.allow($._balances[to], to);\n\
+        \x20       }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -2916,6 +2944,10 @@ fn r4_merge_write_binds_readers_to_the_hoisted_key_not_the_source_expression() {
     );
     let text = &out.files[0].1;
     assert!(
+        text.contains("if (FHE.isInitialized(balances[__fhe_key_1])) {"),
+        "output: {text}"
+    );
+    assert!(
         text.contains("FHE.allowThis(balances[__fhe_key_1]);"),
         "output: {text}"
     );
@@ -2954,9 +2986,11 @@ fn r5_event_policy_grants_both_named_readers_before_the_emit() {
         \x20   /// @custom:fhe-allow amount: from, to\n\
         \x20   event ConfidentialTransfer(address indexed from, address indexed to, euint32 indexed amount);\n\
         \x20   function transfer(address from, address to, euint32 amount) public {\n\
-        \x20       FHE.allowThis(amount);\n\
-        \x20       if (from != address(0)) FHE.allow(amount, from);\n\
-        \x20       if (to != address(0)) FHE.allow(amount, to);\n\
+        \x20       if (FHE.isInitialized(amount)) {\n\
+        \x20           FHE.allowThis(amount);\n\
+        \x20           if (from != address(0)) FHE.allow(amount, from);\n\
+        \x20           if (to != address(0)) FHE.allow(amount, to);\n\
+        \x20       }\n\
         \x20       emit ConfidentialTransfer(from, to, amount);\n\
         \x20   }\n\
         }\n";
@@ -3024,8 +3058,10 @@ fn reapply_gated_public_on_the_reveal_flip() {
         \x20   euint32 secret;\n\
         \x20   function reveal() public {\n\
         \x20       revealed = true;\n\
-        \x20       FHE.allowThis(secret);\n\
-        \x20       if (revealed) FHE.allowPublic(secret);\n\
+        \x20       if (FHE.isInitialized(secret)) {\n\
+        \x20           FHE.allowThis(secret);\n\
+        \x20           if (revealed) FHE.allowPublic(secret);\n\
+        \x20       }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -3053,8 +3089,10 @@ fn reapply_named_observer_on_a_plain_state_var() {
         \x20   euint32 secret;\n\
         \x20   function setObserver(address o) public {\n\
         \x20       observer = o;\n\
-        \x20       FHE.allowThis(secret);\n\
-        \x20       if (observer != address(0)) FHE.allow(secret, observer);\n\
+        \x20       if (FHE.isInitialized(secret)) {\n\
+        \x20           FHE.allowThis(secret);\n\
+        \x20           if (observer != address(0)) FHE.allow(secret, observer);\n\
+        \x20       }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -3171,8 +3209,10 @@ fn r4_struct_field_reached_directly_through_a_state_variable() {
         \x20   Config config;\n\
         \x20   function setSecret(euint32 v) public {\n\
         \x20       config.secret = v;\n\
-        \x20       FHE.allowThis(config.secret);\n\
-        \x20       if (observer != address(0)) FHE.allow(config.secret, observer);\n\
+        \x20       if (FHE.isInitialized(config.secret)) {\n\
+        \x20           FHE.allowThis(config.secret);\n\
+        \x20           if (observer != address(0)) FHE.allow(config.secret, observer);\n\
+        \x20       }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -3210,8 +3250,10 @@ fn reapply_struct_field_via_direct_state_variable() {
         \x20   Config config;\n\
         \x20   function setObserver(address o) public {\n\
         \x20       observer = o;\n\
-        \x20       FHE.allowThis(config.secret);\n\
-        \x20       if (observer != address(0)) FHE.allow(config.secret, observer);\n\
+        \x20       if (FHE.isInitialized(config.secret)) {\n\
+        \x20           FHE.allowThis(config.secret);\n\
+        \x20           if (observer != address(0)) FHE.allow(config.secret, observer);\n\
+        \x20       }\n\
         \x20   }\n\
         }\n";
     golden(src, expected);
@@ -3432,4 +3474,101 @@ fn fhe4014_does_not_fire_when_a_real_operation_wraps_the_result() {
     );
     let text = &out.files[0].1;
     assert!(text.contains("FHE.allowThis(stored);"), "output: {text}");
+}
+
+// ---------------------------------------------------------------------------
+// The initialization guard (spec §8.1, issue #103 follow-up): a handle whose
+// provenance the transpiler cannot see gets its grants guarded at runtime.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn guard_r1_covers_a_wrap_derived_handle_passed_through_a_parameter() {
+    // The reporter's MockFHESafeMath shape: the `.wrap` sentinel is one call
+    // frame away (`_record(s, u, euint64.wrap(bytes32(0)))` → param → write),
+    // so the FHE4014 static withhold cannot see it. The inserted grant MUST
+    // be guarded so the zero handle skips it instead of reverting.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract T {\n\
+        \x20   euint64 spent;\n\
+        \x20   function reset() external {\n\
+        \x20       _store(euint64.wrap(bytes32(0)));\n\
+        \x20   }\n\
+        \x20   function _store(euint64 sp) private {\n\
+        \x20       spent = sp;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract T {\n\
+        \x20   euint64 spent;\n\
+        \x20   function reset() external {\n\
+        \x20       _store(euint64.wrap(bytes32(0)));\n\
+        \x20   }\n\
+        \x20   function _store(euint64 sp) private {\n\
+        \x20       spent = sp;\n\
+        \x20       if (FHE.isInitialized(spent)) { FHE.allowThis(spent); }\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4014")),
+        "the static withhold must not fire one frame away: {:?}",
+        out.lower_diag_codes
+    );
+    golden(src, expected);
+}
+
+#[test]
+fn guard_dedupe_sees_a_grant_inside_an_author_written_guard() {
+    // The hand-written idiom from the corpus that motivated the guard: the
+    // author already guards their own grants with `FHE.isInitialized`. The
+    // window scan must look through that guard (spec §8.6) — R1's
+    // `allowThis` is subsumed by the guarded broad grant on the local, and
+    // nothing may be inserted.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract T {\n\
+        \x20   euint64 spent;\n\
+        \x20   function record(euint64 sp) public {\n\
+        \x20       if (FHE.isInitialized(sp)) { FHE.allowThis(sp); FHE.allowGlobal(sp); }\n\
+        \x20       spent = sp;\n\
+        \x20   }\n\
+        }\n";
+    golden(src, src);
+}
+
+#[test]
+fn guard_dedupe_does_not_see_through_an_untrusted_guard_base() {
+    // The guard transparency rule carries the same §8.6 trust requirement as
+    // grants themselves: an `isInitialized` on a base that is not the
+    // profile library is not the §8.1 guard, and the grants inside its body
+    // must not count as present.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        library FakeAcl {\n\
+        \x20   function isInitialized(euint64) internal pure returns (bool) {\n\
+        \x20       return true;\n\
+        \x20   }\n\
+        }\n\
+        \n\
+        contract T {\n\
+        \x20   euint64 spent;\n\
+        \x20   function record(euint64 sp) public {\n\
+        \x20       spent = sp;\n\
+        \x20       if (FakeAcl.isInitialized(sp)) { FHE.allowThis(spent); }\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("if (FHE.isInitialized(spent)) { FHE.allowThis(spent); }"),
+        "an untrusted guard must not suppress the insertion: {text}"
+    );
 }

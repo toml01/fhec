@@ -17,7 +17,7 @@ contract PreconditionTightBrace {
 
     function deposit(externalEuint32 amount_input, bytes memory inputProof) public {
         { require(operators[msg.sender], "not an operator"); }
-        euint32 amount = FHE.asEuint32(amount_input, inputProof);FHE.allowTransient(amount, address(vault));
+        euint32 amount = FHE.asEuint32(amount_input, inputProof);if (FHE.isInitialized(amount)) { FHE.allowTransient(amount, address(vault)); }
         vault.push(amount, 1);
     }
 }

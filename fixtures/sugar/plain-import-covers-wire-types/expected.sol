@@ -11,12 +11,12 @@ contract PlainImport {
     function deposit(externalEuint64 amount_input, bytes memory inputProof) public {
         euint64 amount = FHE.asEuint64(amount_input, inputProof);
         stored = amount;
-        FHE.allowThis(stored);
+        if (FHE.isInitialized(stored)) { FHE.allowThis(stored); }
     }
 
     function receiveShared(sharedEuint64 amount_shared) external {
         euint64 amount = FHE.receiveEuint64Param(amount_shared);
         stored = amount;
-        FHE.allowThis(stored);
+        if (FHE.isInitialized(stored)) { FHE.allowThis(stored); }
     }
 }

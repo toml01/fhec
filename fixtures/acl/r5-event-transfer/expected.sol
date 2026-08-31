@@ -11,9 +11,11 @@ contract PolicyOnEvent {
     event ConfidentialTransfer(address indexed from, address indexed to, euint32 indexed amount);
 
     function transfer(address from, address to, euint32 amount) public {
-        FHE.allowThis(amount);
-        if (from != address(0)) FHE.allow(amount, from);
-        if (to != address(0)) FHE.allow(amount, to);
+        if (FHE.isInitialized(amount)) {
+            FHE.allowThis(amount);
+            if (from != address(0)) FHE.allow(amount, from);
+            if (to != address(0)) FHE.allow(amount, to);
+        }
         emit ConfidentialTransfer(from, to, amount);
     }
 }

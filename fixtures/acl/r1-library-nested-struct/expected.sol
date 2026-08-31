@@ -15,6 +15,6 @@ library L {
 
     function f(D storage d, euint64 v) public {
         d.bal = v;
-        FHE.allowThis(d.bal);
+        if (FHE.isInitialized(d.bal)) { FHE.allowThis(d.bal); }
     }
 }

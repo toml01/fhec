@@ -12,7 +12,7 @@ contract SugarProofBinderFirst {
     function setOne(bytes calldata proof, externalEuint8 v_input) public {
         euint8 v = FHE.asEuint8(v_input, proof);
         small = v;
-        FHE.allowThis(small);
+        if (FHE.isInitialized(small)) { FHE.allowThis(small); }
     }
 
     function setBoth(
@@ -27,8 +27,8 @@ contract SugarProofBinderFirst {
         euint8 a = euint8.wrap(__fhe_hashes_1[0]);
         euint16 b = euint16.wrap(__fhe_hashes_1[1]);
         small = a;
-        FHE.allowThis(small);
+        if (FHE.isInitialized(small)) { FHE.allowThis(small); }
         mid = b;
-        FHE.allowThis(mid);
+        if (FHE.isInitialized(mid)) { FHE.allowThis(mid); }
     }
 }

@@ -678,19 +678,26 @@ fn append_policy_grants(
         &loc.display,
         &rendering,
     )?;
+    let call_texts: Vec<String> = calls.into_iter().map(|c| c.text).collect();
     if ictx.acl_insert {
-        for call in calls {
-            lines.push(call.text);
-        }
+        // Spec §8.1 initialization guard, uniform with a direct R4 write.
+        // The merged value is the merge's own `FHE.select` result, so the
+        // guard is provably true here — it is kept anyway: a provably-true
+        // guard costs a comparison, a freshness proof that is ever wrong
+        // reintroduces the revert.
+        lines.extend(crate::pass_acl::guard_lines(
+            ictx.ctx,
+            &loc.display,
+            &call_texts,
+        ));
     } else {
-        let joined: String = calls.iter().map(|c| format!("{} ", c.text)).collect();
         ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
             code: crate::codes::SUGGEST_POLICY_GRANT,
             severity: Severity::Note,
             span: loc.first_write,
             message: format!(
                 "ACL suggestion: after the merged write, add `{}`",
-                joined.trim_end()
+                crate::pass_acl::guard_inline(ictx.ctx, &loc.display, &call_texts)
             ),
             fixits: Vec::new(),
             rule: Some("§8.9"),
@@ -729,41 +736,35 @@ fn append_ownership_grants(
     } else {
         &[FheOp::AllowThis, FheOp::AllowSender]
     };
-    if ictx.acl_insert {
-        for &op in ops {
-            let call = ictx
-                .ctx
+    let calls: Vec<String> = ops
+        .iter()
+        .map(|op| {
+            ictx.ctx
                 .profile
-                .render_call(op, &[loc.ty], &[&loc.display])
-                .map_err(|e| LowerFailure {
-                    span: stmt_span,
-                    message: format!("profile refused an ACL call: {e} (internal)"),
-                    code: None,
-                })?;
-            lines.push(format!("{call};"));
-        }
+                .render_call(*op, &[loc.ty], &[&loc.display])
+                .map(|c| format!("{c};"))
+        })
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| LowerFailure {
+            span: stmt_span,
+            message: format!("profile refused an ACL call: {e} (internal)"),
+            code: None,
+        })?;
+    if ictx.acl_insert {
+        // Spec §8.1 initialization guard, uniform with a direct R1 write.
+        // The merged value is the merge's own `FHE.select` result, so the
+        // guard is provably true here — it is kept anyway: a provably-true
+        // guard costs a comparison, a freshness proof that is ever wrong
+        // reintroduces the revert.
+        lines.extend(crate::pass_acl::guard_lines(ictx.ctx, &loc.display, &calls));
     } else {
-        let calls: String = ops
-            .iter()
-            .map(|op| {
-                ictx.ctx
-                    .profile
-                    .render_call(*op, &[loc.ty], &[&loc.display])
-                    .map(|c| format!("{c}; "))
-            })
-            .collect::<std::result::Result<_, _>>()
-            .map_err(|e| LowerFailure {
-                span: stmt_span,
-                message: format!("profile refused an ACL call: {e} (internal)"),
-                code: None,
-            })?;
         ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
             code: "FHE4010",
             severity: Severity::Note,
             span: loc.first_write,
             message: format!(
                 "ACL suggestion: after the merged write, add `{}`",
-                calls.trim_end()
+                crate::pass_acl::guard_inline(ictx.ctx, &loc.display, &calls)
             ),
             fixits: Vec::new(),
             rule: Some("§8.1"),

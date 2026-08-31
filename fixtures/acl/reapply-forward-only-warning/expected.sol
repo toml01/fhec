@@ -15,8 +15,10 @@ contract ForwardOnlyObserver {
 
     function credit(address to, euint32 v) public {
         _balances[to] = v;
-        FHE.allowThis(_balances[to]);
-        if (to != address(0)) FHE.allow(_balances[to], to);
-        if (_observer != address(0)) FHE.allow(_balances[to], _observer);
+        if (FHE.isInitialized(_balances[to])) {
+            FHE.allowThis(_balances[to]);
+            if (to != address(0)) FHE.allow(_balances[to], to);
+            if (_observer != address(0)) FHE.allow(_balances[to], _observer);
+        }
     }
 }

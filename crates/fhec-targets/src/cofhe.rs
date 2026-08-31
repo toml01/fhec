@@ -357,6 +357,12 @@ impl TargetProfile for CofheProfile {
         self.lookup(op).map(|e| e.name.to_string())
     }
 
+    fn is_initialized_fn(&self) -> String {
+        // FHE.sol (every 0.2.x release): `isInitialized(T v) internal pure`,
+        // `eT.unwrap(v) != 0`.
+        format!("{}.isInitialized", self.lib)
+    }
+
     fn external_input_type(&self, ty: EType) -> String {
         ty.external_name().to_string()
     }

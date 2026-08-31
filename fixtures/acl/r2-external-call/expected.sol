@@ -12,7 +12,7 @@ contract R2External {
     IVault vault;
 
     function f() public {
-        FHE.allowTransient(a, address(vault));
+        if (FHE.isInitialized(a)) { FHE.allowTransient(a, address(vault)); }
         vault.push(a, 1);
     }
 }

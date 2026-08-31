@@ -25,7 +25,7 @@ contract Nested {
                 }
             }
             a = FHE.select(__fhe_cond_0, __fhe_then_5, __fhe_pre_1);
-            FHE.allowThis(a);
+            if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         }
     }
 }

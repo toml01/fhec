@@ -10,10 +10,10 @@ contract BooleanOps {
 
     function f() public {
         eb = FHE.and(eb, (FHE.lt(a, b)));
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
         eb = FHE.or(eb, eb);
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
         eb = FHE.not(eb);
-        FHE.allowThis(eb);
+        if (FHE.isInitialized(eb)) { FHE.allowThis(eb); }
     }
 }

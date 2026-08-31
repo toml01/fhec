@@ -10,6 +10,6 @@ contract CastArgNestedOp {
 
     function check() public {
         flag = FHE.asEbool(FHE.add(x, y));
-        FHE.allowThis(flag);
+        if (FHE.isInitialized(flag)) { FHE.allowThis(flag); }
     }
 }

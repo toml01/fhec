@@ -23,10 +23,10 @@ contract R2Ownership {
     // A plain-identifier argument needs no rewrite, so pass 1 keeps the
     // statement and lowers the other operator.
     function plainArg() public returns (euint64) {
-        FHE.allowTransient(a, address(vault));
+        if (FHE.isInitialized(a)) { FHE.allowTransient(a, address(vault)); }
         euint64 x = FHE.add(euint64.wrap(vault.ping(a)), b);
         euint64 __fhe_ret_0 = x;
-        FHE.allowTransient(__fhe_ret_0, msg.sender);
+        if (FHE.isInitialized(__fhe_ret_0)) { FHE.allowTransient(__fhe_ret_0, msg.sender); }
         return __fhe_ret_0;
     }
 
@@ -34,10 +34,10 @@ contract R2Ownership {
     // whole site with the temp substituted.
     function hoistedArg() public returns (euint64) {
         euint64 __fhe_val_0 = FHE.add(a, b);
-        FHE.allowTransient(__fhe_val_0, address(vault));
+        if (FHE.isInitialized(__fhe_val_0)) { FHE.allowTransient(__fhe_val_0, address(vault)); }
         euint64 y = FHE.add(euint64.wrap(vault.ping(__fhe_val_0)), c);
         euint64 __fhe_ret_1 = y;
-        FHE.allowTransient(__fhe_ret_1, msg.sender);
+        if (FHE.isInitialized(__fhe_ret_1)) { FHE.allowTransient(__fhe_ret_1, msg.sender); }
         return __fhe_ret_1;
     }
 }

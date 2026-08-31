@@ -12,6 +12,6 @@ contract SimpleVarKey {
 
     function add(euint32 amount) public {
         total = amount;
-        FHE.allowThis(total);
+        if (FHE.isInitialized(total)) { FHE.allowThis(total); }
     }
 }

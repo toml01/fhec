@@ -22,7 +22,7 @@ contract GrantOnLocal {
         FHE.allowThis(ptr);
         ptr = other;
         total = ptr;
-        FHE.allowThis(total);
+        if (FHE.isInitialized(total)) { FHE.allowThis(total); }
     }
 
     // Only one of the two grants is present.
@@ -30,6 +30,6 @@ contract GrantOnLocal {
         euint32 ptr = amount;
         FHE.allowThis(ptr);
         bal[msg.sender] = ptr;
-        FHE.allowSender(bal[msg.sender]);
+        if (FHE.isInitialized(bal[msg.sender])) { FHE.allowSender(bal[msg.sender]); }
     }
 }

@@ -9,14 +9,14 @@ contract Arith {
 
     function f() public {
         a = FHE.add(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.sub(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.mul(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.div(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
         a = FHE.rem(a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
     }
 }

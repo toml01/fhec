@@ -24,9 +24,11 @@ contract PolicyOnStruct {
     function mint(address to, euint32 amount) public {
         Storage storage $ = _getStorage();
         $._balances[to] = amount;
-        FHE.allowThis($._balances[to]);
-        if (to != address(0)) FHE.allow($._balances[to], to);
+        if (FHE.isInitialized($._balances[to])) {
+            FHE.allowThis($._balances[to]);
+            if (to != address(0)) FHE.allow($._balances[to], to);
+        }
         $._totalSupply = FHE.add($._totalSupply, amount);
-        FHE.allowThis($._totalSupply);
+        if (FHE.isInitialized($._totalSupply)) { FHE.allowThis($._totalSupply); }
     }
 }

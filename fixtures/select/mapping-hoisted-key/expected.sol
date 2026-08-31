@@ -18,7 +18,7 @@ contract MappingHoistedKey {
                 __fhe_then_3 = a;
             }
             balances[__fhe_key_1] = FHE.select(__fhe_cond_0, __fhe_then_3, __fhe_pre_2);
-            FHE.allowThis(balances[__fhe_key_1]);
+            if (FHE.isInitialized(balances[__fhe_key_1])) { FHE.allowThis(balances[__fhe_key_1]); }
         }
     }
 }

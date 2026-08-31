@@ -146,6 +146,15 @@ pub trait TargetProfile {
     /// the ACL pass for dedupe matching (spec §8.6). `None` for non-ACL ops.
     fn acl_fn_name(&self, op: FheOp) -> Option<String>;
 
+    /// The library's initialization probe, fully qualified for a rendered
+    /// call (e.g. `"FHE.isInitialized"`). The probe takes one handle of any
+    /// encrypted type and returns plain `bool` (`handle != 0`). The ACL pass
+    /// wraps every inserted grant sequence in `if (<probe>(<handle>)) { … }`
+    /// (spec §8.1 initialization guard) and recognizes that shape when
+    /// deduping (spec §8.6); the probe's unqualified name is the text after
+    /// the last `.`.
+    fn is_initialized_fn(&self) -> String;
+
     /// The external-input handle parameter type for an encrypted type
     /// (e.g. `"externalEuint32"`, spec §2.3).
     fn external_input_type(&self, ty: EType) -> String;

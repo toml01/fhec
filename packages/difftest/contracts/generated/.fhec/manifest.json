@@ -10,7 +10,7 @@
         {
           "output_range": [
             899,
-            929
+            963
           ],
           "source_range": [
             899,
@@ -21,8 +21,8 @@
         },
         {
           "output_range": [
-            968,
-            996
+            1002,
+            1062
           ],
           "source_range": [
             938,
@@ -33,8 +33,8 @@
         },
         {
           "output_range": [
-            1268,
-            1296
+            1334,
+            1362
           ],
           "source_range": [
             1210,
@@ -44,8 +44,8 @@
         },
         {
           "output_range": [
-            1296,
-            1321
+            1362,
+            1387
           ],
           "source_range": [
             1227,
@@ -55,8 +55,8 @@
         },
         {
           "output_range": [
-            1343,
-            1409
+            1409,
+            1475
           ],
           "source_range": [
             1249,
@@ -66,8 +66,8 @@
         },
         {
           "output_range": [
-            1433,
-            1455
+            1499,
+            1521
           ],
           "source_range": [
             1273,
@@ -77,8 +77,8 @@
         },
         {
           "output_range": [
-            1465,
-            1776
+            1531,
+            1876
           ],
           "source_range": [
             1297,
@@ -88,8 +88,8 @@
         },
         {
           "output_range": [
-            1919,
-            1959
+            2019,
+            2059
           ],
           "source_range": [
             1494,
@@ -99,8 +99,8 @@
         },
         {
           "output_range": [
-            1960,
-            1990
+            2060,
+            2124
           ],
           "source_range": [
             1512,
@@ -163,7 +163,7 @@
         {
           "output_range": [
             783,
-            828
+            838
           ],
           "source_range": [
             673,
@@ -174,8 +174,8 @@
         },
         {
           "output_range": [
-            828,
-            875
+            838,
+            887
           ],
           "source_range": [
             673,
@@ -186,8 +186,32 @@
         },
         {
           "output_range": [
-            1495,
-            1523
+            887,
+            938
+          ],
+          "source_range": [
+            673,
+            673
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            938,
+            948
+          ],
+          "source_range": [
+            673,
+            673
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
+        },
+        {
+          "output_range": [
+            1568,
+            1596
           ],
           "source_range": [
             1293,
@@ -197,8 +221,8 @@
         },
         {
           "output_range": [
-            1523,
-            1548
+            1596,
+            1621
           ],
           "source_range": [
             1310,
@@ -208,8 +232,8 @@
         },
         {
           "output_range": [
-            1560,
-            1626
+            1633,
+            1699
           ],
           "source_range": [
             1322,
@@ -219,8 +243,8 @@
         },
         {
           "output_range": [
-            1793,
-            1821
+            1866,
+            1894
           ],
           "source_range": [
             1489,
@@ -230,8 +254,8 @@
         },
         {
           "output_range": [
-            1831,
-            2296
+            1904,
+            2451
           ],
           "source_range": [
             1520,
@@ -241,8 +265,8 @@
         },
         {
           "output_range": [
-            2305,
-            2708
+            2460,
+            2913
           ],
           "source_range": [
             1605,
@@ -252,8 +276,8 @@
         },
         {
           "output_range": [
-            2861,
-            2985
+            3066,
+            3230
           ],
           "source_range": [
             1824,
@@ -264,8 +288,8 @@
         },
         {
           "output_range": [
-            3159,
-            3338
+            3404,
+            3623
           ],
           "source_range": [
             2026,
@@ -276,8 +300,8 @@
         },
         {
           "output_range": [
-            3338,
-            3352
+            3623,
+            3637
           ],
           "source_range": [
             2026,
@@ -287,14 +311,45 @@
         },
         {
           "output_range": [
-            3360,
-            3371
+            3645,
+            3656
           ],
           "source_range": [
             2055,
             2075
           ],
           "rule": "§8.2 R2 arg-hoist"
+        }
+      ]
+    },
+    {
+      "output": "WrapParamDialect.sol",
+      "source": "WrapParamDialect.fsol",
+      "no_op": false,
+      "mappings": [
+        {
+          "output_range": [
+            1181,
+            1330
+          ],
+          "source_range": [
+            1181,
+            1194
+          ],
+          "rule": "§8.3 R3",
+          "code": "FHE4012"
+        },
+        {
+          "output_range": [
+            1399,
+            1463
+          ],
+          "source_range": [
+            1263,
+            1263
+          ],
+          "rule": "§8.1 R1",
+          "code": "FHE4010"
         }
       ]
     }

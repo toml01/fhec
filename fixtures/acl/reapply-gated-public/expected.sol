@@ -15,13 +15,17 @@ contract GatedReveal {
 
     function setSecret(euint32 v) public {
         secret = v;
-        FHE.allowThis(secret);
-        if (revealed) FHE.allowPublic(secret);
+        if (FHE.isInitialized(secret)) {
+            FHE.allowThis(secret);
+            if (revealed) FHE.allowPublic(secret);
+        }
     }
 
     function reveal() public {
         revealed = true;
-        FHE.allowThis(secret);
-        if (revealed) FHE.allowPublic(secret);
+        if (FHE.isInitialized(secret)) {
+            FHE.allowThis(secret);
+            if (revealed) FHE.allowPublic(secret);
+        }
     }
 }

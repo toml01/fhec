@@ -10,6 +10,6 @@ contract Ternary {
 
     function f() public {
         a = FHE.select(eb, a, b);
-        FHE.allowThis(a);
+        if (FHE.isInitialized(a)) { FHE.allowThis(a); }
     }
 }
