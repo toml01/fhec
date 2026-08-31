@@ -17,7 +17,7 @@
     "check:types": "tsc --noEmit"
   },
   "devDependencies": {
-    "@cofhe/mock-contracts": "0.7.0",
+    "@cofhe/mock-contracts": "0.7.1",
     "@fhenixprotocol/cofhe-contracts": "0.2.0",
     "fhenix-confidential-contracts": "0.4.0",
     "@nomicfoundation/hardhat-chai-matchers": "2.1.2",
