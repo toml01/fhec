@@ -165,6 +165,7 @@ pub fn lower<'ast>(
                     let ictx = pass_if::IfCtx {
                         ctx: &ctx,
                         namer: &namer,
+                        function,
                         if_span: site.span,
                         acl_insert,
                         diags: &diags,

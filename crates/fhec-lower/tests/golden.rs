@@ -2885,3 +2885,48 @@ fn r4_reapplication_target_unbindable_pointer_rejects_with_fhe4006() {
     );
     assert_eq!(out.failed_files, 1);
 }
+
+#[test]
+fn r4_merge_write_binds_readers_to_the_hoisted_key_not_the_source_expression() {
+    // Spec §8.9 "Encrypted-branch merges": the merge hoists every key of the
+    // written location into a temp before the write, and a reader path must
+    // bind to that temp, not the author's key expression — re-rendering the
+    // source would evaluate it a second time (spec §4.4). This is the path
+    // where issue #81 found a live disclosure.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow balances: account\n\
+        \x20   mapping(address account => euint32) balances;\n\
+        \x20   function f(ebool eb, address other, euint32 v) public {\n\
+        \x20       if (eb) {\n\
+        \x20           balances[other] = v;\n\
+        \x20       }\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    let text = &out.files[0].1;
+    assert!(
+        text.contains("FHE.allowThis(balances[__fhe_key_1]);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains(
+            "if (__fhe_key_1 != address(0)) FHE.allow(balances[__fhe_key_1], __fhe_key_1);"
+        ),
+        "reader must bind to the hoisted key temp: {text}"
+    );
+    assert!(
+        !text.contains("FHE.allow(balances[__fhe_key_1], other)"),
+        "must not re-evaluate the source key expression: {text}"
+    );
+}

@@ -58,7 +58,26 @@ pub(crate) fn bind_write<'p, 'ast>(
     function: FunctionId,
     lvalue: &'ast ast::Expr<'ast>,
 ) -> Result<Option<BoundWrite<'p>>> {
-    let Some(decomposed) = decompose(ctx, function, lvalue) else {
+    bind_write_with_keys(ctx, checked_policies, function, lvalue, &|k| {
+        strip_parens(&ctx.snippet(k.span)).to_string()
+    })
+}
+
+/// Like [`bind_write`], but renders each mapping/array key through
+/// `key_text` instead of its raw source snippet. A §5.2 merge hoists every
+/// key of the written location into a temp before the write, and a policy's
+/// reader path MUST bind to that temp, never to the re-evaluated source
+/// expression (spec §8.9 "Encrypted-branch merges" — re-rendering the
+/// original expression would evaluate it a second time, which §4.4
+/// forbids).
+pub(crate) fn bind_write_with_keys<'p, 'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    checked_policies: &'p fhec_check::PolicyTable,
+    function: FunctionId,
+    lvalue: &'ast ast::Expr<'ast>,
+    key_text: &dyn Fn(&'ast ast::Expr<'ast>) -> String,
+) -> Result<Option<BoundWrite<'p>>> {
+    let Some(decomposed) = decompose(ctx, lvalue, key_text) else {
         return Ok(None);
     };
     bind_decomposed(ctx, checked_policies, function, lvalue.span, &decomposed)
@@ -166,8 +185,8 @@ fn render_self_and_keys(
 
 fn decompose<'ast>(
     ctx: &Ctx<'_, 'ast>,
-    function: FunctionId,
     e: &'ast ast::Expr<'ast>,
+    key_text: &dyn Fn(&'ast ast::Expr<'ast>) -> String,
 ) -> Option<Decomposed> {
     match &e.peel_parens().kind {
         ast::ExprKind::Ident(id) => match ctx.unit.resolve(*id) {
@@ -181,7 +200,6 @@ fn decompose<'ast>(
                 if ctx.unit.var(*v).decl.data_location != Some(ast::DataLocation::Storage) {
                     return None;
                 }
-                let _ = function;
                 Some(Decomposed {
                     root_var: *v,
                     root_text: strip_parens(&ctx.snippet(e.span)).to_string(),
@@ -192,14 +210,13 @@ fn decompose<'ast>(
             _ => None,
         },
         ast::ExprKind::Member(base, name) => {
-            let mut d = decompose(ctx, function, base)?;
+            let mut d = decompose(ctx, base, key_text)?;
             d.steps.push(Step::Field(name.to_string()));
             Some(d)
         }
         ast::ExprKind::Index(base, ast::IndexKind::Index(Some(k))) => {
-            let mut d = decompose(ctx, function, base)?;
-            d.steps
-                .push(Step::Key(strip_parens(&ctx.snippet(k.span)).to_string()));
+            let mut d = decompose(ctx, base, key_text)?;
+            d.steps.push(Step::Key(key_text(k)));
             Some(d)
         }
         _ => None,

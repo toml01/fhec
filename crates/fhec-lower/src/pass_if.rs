@@ -192,6 +192,9 @@ impl Env<'_> {
 pub(crate) struct IfCtx<'r, 'a, 'ast> {
     pub ctx: &'r Ctx<'a, 'ast>,
     pub namer: &'r RefCell<TempNamer>,
+    /// The enclosing function (spec §8.9 policy binding needs it to prove a
+    /// storage-pointer local's single-assignment shape).
+    pub function: fhec_bind::FunctionId,
     /// The top-level `if` statement span (branch-local detection boundary).
     pub if_span: Span,
     /// Insert vs suggest (spec §8).
@@ -353,7 +356,11 @@ fn render_frame<'ast>(
         let is_direct = target == loc.display;
         merge_lines.push(format!("{target} = {select};"));
         if loc.is_storage && is_direct {
-            append_storage_acl(ictx, loc, stmt.span, &mut merge_lines)?;
+            let key_text = |k: &'ast ast::Expr<'ast>| -> String {
+                let canon = strip_parens(&ctx.snippet(k.span)).to_string();
+                keys.lookup(&canon).map(|t| t.to_string()).unwrap_or(canon)
+            };
+            append_storage_acl(ictx, loc, stmt.span, &mut merge_lines, &key_text)?;
         }
     }
 
@@ -501,7 +508,12 @@ fn try_direct_select<'ast>(
     let is_direct = target == loc.display;
     let mut lines = vec![format!("{target} = {select};")];
     if loc.is_storage && is_direct {
-        append_storage_acl(ictx, &loc, stmt.span, &mut lines)?;
+        // No key was ever hoisted on this path (`keys.rows` is empty — the
+        // guard above already refused otherwise), so the source snippet is
+        // the only text a key could need.
+        let key_text =
+            |k: &'ast ast::Expr<'ast>| strip_parens(&ictx.ctx.snippet(k.span)).to_string();
+        append_storage_acl(ictx, &loc, stmt.span, &mut lines, &key_text)?;
     }
     if lines.len() == 1 {
         return Ok(Some(lines.pop().expect("one merge line")));
@@ -622,7 +634,72 @@ fn call_callee_is_select_safe<'ast>(
     }
 }
 
-fn append_storage_acl(
+fn append_storage_acl<'ast>(
+    ictx: &IfCtx<'_, '_, 'ast>,
+    loc: &Loc,
+    stmt_span: Span,
+    lines: &mut Vec<String>,
+    key_text: &dyn Fn(&'ast ast::Expr<'ast>) -> String,
+) -> Result<()> {
+    // R4 (spec §8.9): a policy on the written slot replaces this rule's
+    // ownership decision entirely, exactly as it does at a direct write —
+    // this is the merge path where issue #81 found a live disclosure.
+    if let Some(node) = crate::pass_acl::find_expr(ictx.ctx, ictx.function, loc.first_write) {
+        if let Some(bound) = crate::policy_bind::bind_write_with_keys(
+            ictx.ctx,
+            &ictx.ctx.checked.policies,
+            ictx.function,
+            node,
+            key_text,
+        )? {
+            return append_policy_grants(ictx, loc, &bound, lines);
+        }
+    }
+    append_ownership_grants(ictx, loc, stmt_span, lines)
+}
+
+fn append_policy_grants(
+    ictx: &IfCtx<'_, '_, '_>,
+    loc: &Loc,
+    bound: &crate::policy_bind::BoundWrite<'_>,
+    lines: &mut Vec<String>,
+) -> Result<()> {
+    let rendering = crate::policy_bind::render_readers(
+        ictx.ctx,
+        ictx.function,
+        bound.policy,
+        &bound.self_text,
+        &bound.key_texts,
+    )?;
+    let calls = crate::policy_bind::render_call_lines(
+        ictx.ctx,
+        loc.first_write,
+        loc.ty,
+        &loc.display,
+        &rendering,
+    )?;
+    if ictx.acl_insert {
+        for call in calls {
+            lines.push(call.text);
+        }
+    } else {
+        let joined: String = calls.iter().map(|c| format!("{} ", c.text)).collect();
+        ictx.diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4013",
+            severity: Severity::Note,
+            span: loc.first_write,
+            message: format!(
+                "ACL suggestion: after the merged write, add `{}`",
+                joined.trim_end()
+            ),
+            fixits: Vec::new(),
+            rule: Some("§8.9"),
+        });
+    }
+    Ok(())
+}
+
+fn append_ownership_grants(
     ictx: &IfCtx<'_, '_, '_>,
     loc: &Loc,
     stmt_span: Span,
