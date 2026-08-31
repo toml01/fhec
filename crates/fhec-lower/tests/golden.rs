@@ -2709,3 +2709,179 @@ fn r2_renders_a_site_that_straddles_a_hoisted_argument() {
                }\n";
     golden(src, expected);
 }
+
+// ---------------------------------------------------------------------------
+// R4 — policy grants at storage writes (spec §8.9)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn r4_direct_write_grants_the_named_key_binder() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow balances: account\n\
+        \x20   mapping(address account => euint32) balances;\n\
+        \x20   function set(address to, euint32 v) public {\n\
+        \x20       balances[to] = v;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow balances: account\n\
+        \x20   mapping(address account => euint32) balances;\n\
+        \x20   function set(address to, euint32 v) public {\n\
+        \x20       balances[to] = v;\n\
+        \x20       FHE.allowThis(balances[to]);\n\
+        \x20       if (to != address(0)) FHE.allow(balances[to], to);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r4_no_fhe4001_when_a_policy_governs_the_write() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow balances: account\n\
+        \x20   mapping(address account => euint32) balances;\n\
+        \x20   function set(address to, euint32 v) public {\n\
+        \x20       balances[to] = v;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4001")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+}
+
+#[test]
+fn r4_this_reader_produces_only_the_unconditional_allow_this() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow total: this\n\
+        \x20   euint32 total;\n\
+        \x20   function add(euint32 v) public {\n\
+        \x20       total = FHE.add(total, v);\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow total: this\n\
+        \x20   euint32 total;\n\
+        \x20   function add(euint32 v) public {\n\
+        \x20       total = FHE.add(total, v);\n\
+        \x20       FHE.allowThis(total);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r4_public_reader_renders_allow_public_and_replaces_the_list() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow total: public\n\
+        \x20   euint32 total;\n\
+        \x20   function add(euint32 v) public {\n\
+        \x20       total = FHE.add(total, v);\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow total: public\n\
+        \x20   euint32 total;\n\
+        \x20   function add(euint32 v) public {\n\
+        \x20       total = FHE.add(total, v);\n\
+        \x20       FHE.allowThis(total);\n\
+        \x20       FHE.allowPublic(total);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r4_struct_field_policy_binds_through_the_erc7201_pointer() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow _balances: account\n\
+        \x20   /// @custom:fhe-allow _totalSupply: this\n\
+        \x20   struct Storage {\n\
+        \x20       mapping(address account => euint32) _balances;\n\
+        \x20       euint32 _totalSupply;\n\
+        \x20   }\n\
+        \x20   Storage _storage;\n\
+        \x20   function _getStorage() internal view returns (Storage storage $) {\n\
+        \x20       $ = _storage;\n\
+        \x20   }\n\
+        \x20   function set(address to, euint32 v) public {\n\
+        \x20       Storage storage $ = _getStorage();\n\
+        \x20       $._balances[to] = v;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow _balances: account\n\
+        \x20   /// @custom:fhe-allow _totalSupply: this\n\
+        \x20   struct Storage {\n\
+        \x20       mapping(address account => euint32) _balances;\n\
+        \x20       euint32 _totalSupply;\n\
+        \x20   }\n\
+        \x20   Storage _storage;\n\
+        \x20   function _getStorage() internal view returns (Storage storage $) {\n\
+        \x20       $ = _storage;\n\
+        \x20   }\n\
+        \x20   function set(address to, euint32 v) public {\n\
+        \x20       Storage storage $ = _getStorage();\n\
+        \x20       $._balances[to] = v;\n\
+        \x20       FHE.allowThis($._balances[to]);\n\
+        \x20       if (to != address(0)) FHE.allow($._balances[to], to);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r4_reapplication_target_unbindable_pointer_rejects_with_fhe4006() {
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow _balances: account\n\
+        \x20   struct Storage {\n\
+        \x20       mapping(address account => euint32) _balances;\n\
+        \x20   }\n\
+        \x20   function set(Storage storage $, address to, euint32 v) public {\n\
+        \x20       $._balances[to] = v;\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|d| d.starts_with("FHE4006")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+    assert_eq!(out.failed_files, 1);
+}

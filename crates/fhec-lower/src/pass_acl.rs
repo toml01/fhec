@@ -120,6 +120,17 @@ fn rule_r1(
     }
     let lvalue = strip_parens(&ctx.snippet(w.lvalue_span)).to_string();
 
+    // R4 (spec §8.9): a policy on the written slot replaces this rule's
+    // ownership decision entirely, and FHE4001 is not emitted — the author
+    // has stated who owns the value, so nothing is being withheld.
+    if let Some(node) = find_expr(ctx, w.function, w.lvalue_span) {
+        if let Some(bound) =
+            crate::policy_bind::bind_write(ctx, &ctx.checked.policies, w.function, node)?
+        {
+            return rule_r4(ctx, w, &lvalue, &bound, acl_insert, diags, plan, outcome);
+        }
+    }
+
     // Whether the slot's owner is provably `msg.sender`. Only a mapping
     // keyed exactly by `msg.sender` earns that proof; every other slot kind
     // — a simple state variable (no key at all), an array element or struct
@@ -258,6 +269,88 @@ fn rule_r1(
                 safe: true,
             }],
             rule: Some("§8.1"),
+        });
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// R4 — policy grants at storage writes (spec §8.9)
+// ---------------------------------------------------------------------------
+
+/// Replaces R1's ownership decision for a write whose slot carries a reader
+/// policy: `allowThis` unconditionally, then every resolved reader, in
+/// policy order (spec §8.9). Dedupe (§8.6), the return-site handover to R3,
+/// brace-wrapping, and suggest-mode all apply exactly as they do for R1.
+#[allow(clippy::too_many_arguments)]
+fn rule_r4(
+    ctx: &Ctx<'_, '_>,
+    w: &EncryptedStorageWrite,
+    lvalue: &str,
+    bound: &crate::policy_bind::BoundWrite<'_>,
+    acl_insert: bool,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+    plan: &mut FilePlan,
+    outcome: &mut AclOutcome,
+) -> Result<()> {
+    let rendering = crate::policy_bind::render_readers(
+        ctx,
+        w.function,
+        bound.policy,
+        &bound.self_text,
+        &bound.key_texts,
+    )?;
+    let lines =
+        crate::policy_bind::render_call_lines(ctx, w.lvalue_span, w.value_ty, lvalue, &rendering)?;
+
+    let window = forward_window(ctx, w.function, w.stmt_span, lvalue);
+    let missing: Vec<&crate::policy_bind::CallLine> = lines
+        .iter()
+        .filter(|c| {
+            !window.iter().any(|s| {
+                policy_call_matches(ctx, w.function, s, &c.fn_name, &c.arg0, c.arg1.as_deref())
+            })
+        })
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let indent = ctx.line_indent(w.file, ctx.range(w.stmt_span).start);
+    let at = after_stmt_offset(ctx.text(w.file), ctx.range(w.stmt_span).end);
+    let calls: Vec<String> = missing.iter().map(|c| c.text.clone()).collect();
+    if acl_insert {
+        // Same R1/R3 handover as the plain-ownership path (spec §8.0).
+        if is_return_site(ctx, w.function, w.stmt_span) {
+            outcome
+                .pending_r1
+                .push((w.stmt_span, w.file, w.function, calls));
+            return Ok(());
+        }
+        brace_lone_stmt(ctx, w.function, w.stmt_span, plan, outcome)?;
+        for call in calls {
+            plan.push(Patch::insert(
+                at,
+                format!("\n{indent}{call}"),
+                Provenance::new("§8.9 R4", ctx.range(w.stmt_span)).with_code("FHE4013"),
+            ));
+        }
+    } else {
+        let insertion: String = calls.iter().map(|c| format!("\n{indent}{c}")).collect();
+        diags.borrow_mut().push(fhec_check::Diagnostic {
+            code: "FHE4013",
+            severity: Severity::Note,
+            span: w.stmt_span,
+            message: format!(
+                "ACL suggestion: after this write, add `{}`",
+                calls.join(" ")
+            ),
+            fixits: vec![fhec_check::FixIt {
+                span: zero_width_at(w.stmt_span),
+                replacement: insertion,
+                safe: true,
+            }],
+            rule: Some("§8.9"),
         });
     }
     Ok(())
@@ -1046,7 +1139,7 @@ fn local_grant_window<'ast>(
 
 /// What [`writes_to`] compares a candidate lvalue against.
 #[derive(Clone, Copy)]
-enum WriteTarget<'a> {
+pub(crate) enum WriteTarget<'a> {
     /// An arbitrary source-text lvalue path (a state variable, a mapping or
     /// array element, a struct field, ...). Compared by snippet text only —
     /// there is no single resolved identity for a structural path.
@@ -1075,7 +1168,7 @@ impl WriteTarget<'_> {
 /// This is deliberately conservative: assembly and parser-recovery nodes are
 /// barriers because proving that they leave the tracked value untouched would
 /// require semantics this pass does not model (spec §1.3).
-fn writes_to<'ast>(
+pub(crate) fn writes_to<'ast>(
     ctx: &Ctx<'_, 'ast>,
     stmt: &'ast ast::Stmt<'ast>,
     target: WriteTarget<'_>,
@@ -1303,6 +1396,34 @@ fn callee_type_text<'ast>(ctx: &Ctx<'_, 'ast>, e: &'ast ast::Expr<'ast>) -> Opti
     }
 }
 
+/// Like [`acl_call_matches`], but also recognizes the call as the sole
+/// statement inside an else-less `if`'s body (spec §8.9's zero-address
+/// guard, and a `public if <condition>` gate, spec §8.11):
+/// `if (<anything>) FHE.<name>(<args>);`. The guard's own condition text is
+/// not compared for dedupe purposes — any single wrapped statement that
+/// itself matches states the same fact §8.6 already recognizes ungated.
+pub(crate) fn policy_call_matches<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    function: FunctionId,
+    stmt: &'ast ast::Stmt<'ast>,
+    name: &str,
+    arg0: &str,
+    arg1: Option<&str>,
+) -> bool {
+    if acl_call_matches(ctx, function, stmt, name, arg0, arg1) {
+        return true;
+    }
+    let ast::StmtKind::If(_, then, None) = &stmt.kind else {
+        return false;
+    };
+    let inner = match &then.kind {
+        ast::StmtKind::Block(b) if b.len() == 1 => &b[0],
+        ast::StmtKind::Block(_) => return false,
+        _ => then,
+    };
+    acl_call_matches(ctx, function, inner, name, arg0, arg1)
+}
+
 /// Whether a statement is an ACL call `FHE.<name>(arg0[, arg1])` or
 /// `arg0.<name>([arg1])` with the given argument texts (spec §8.6).
 fn acl_call_matches<'ast>(
@@ -1359,7 +1480,7 @@ fn acl_call_matches<'ast>(
 // ---------------------------------------------------------------------------
 
 /// Finds the expression node with exactly this span in a function body.
-fn find_expr<'ast>(
+pub(crate) fn find_expr<'ast>(
     ctx: &Ctx<'_, 'ast>,
     function: fhec_bind::FunctionId,
     span: Span,

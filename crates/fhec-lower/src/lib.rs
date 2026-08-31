@@ -53,6 +53,7 @@ mod imports;
 mod pass_acl;
 mod pass_if;
 mod pass_ops;
+mod policy_bind;
 
 use ctx::Ctx;
 
