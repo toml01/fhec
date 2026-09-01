@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Version** | 0.10.1 |
+| **Version** | 0.11.0 |
 | **Status** | Draft |
 | **Date** | 2026-08-31 |
 | **Applies to** | `fhec` transpiler, target profile family `cofhe` |
@@ -633,7 +633,7 @@ A policy is a NatSpec `@custom:fhe-allow` item. It adds no grammar, no parser pr
 policy    := '@custom:fhe-allow' target ':' readers
 target    := identifier
 readers   := reader (',' reader)*
-reader    := 'this' | 'public' [ 'if' condition ] | path
+reader    := 'this' | 'global' | 'public' [ 'if' condition ] | path
 path      := name ( '.' name | '[' subscript ']' )*
 subscript := name
 name      := identifier
@@ -657,7 +657,7 @@ These names exist only inside the policy; they declare nothing in the contract. 
 **Reader resolution.** A `path`'s first `name` MUST resolve, in this order, to exactly one of:
 
 1. a bound key, index, or `self` (above);
-2. `this` — the contract, rendered `FHE.allowThis`;
+2. `this` — the contract, rendered `FHE.allowThis` — or `global` — every contract, rendered `FHE.allowGlobal` (both are literal readers of the grammar, so a state variable named `global` cannot be named as a reader);
 3. `public` — everyone, rendered `FHE.allowPublic`;
 4. for an `event` target, a parameter of that same event;
 5. a state variable, or a field of the struct the policy is attached to.
@@ -672,7 +672,8 @@ Nothing else resolves. A local, a function parameter of an unrelated function, a
 4. `target` MUST resolve to a declaration of the stated kind, and two policies in one declaration MUST NOT name the same target.
 5. The target's type MUST contain an encrypted type of the pinned profile (§1.5), directly or through a mapping, array, or struct.
 6. `msg.sender`, `tx.origin`, and any path rooted at `msg`, `tx`, or `block` are refused inside `readers`. A declaration is not a call site. A policy naming the caller would apply to every write of that slot, including writes made on another account's behalf — which is exactly the inference §8.1 refuses to make.
-7. `public` MUST be the only reader in its list. It MAY carry an `if` condition (§8.11).
+7. `public` MUST be the only reader in its list. It MAY carry an `if` condition (§8.11). `global` is NOT exclusive: it is an ordinary list member and MAY coexist with other readers, exactly as `this` may — it widens *computation* (any contract may use the handle as an operand) without disclosing the value, so the rest of the list still states who may read it.
+
 8. A reader path MUST NOT name the target itself.
 
 **No-op.** A policy is a comment. §2.5 reproduces comments byte for byte, and the grants it produces are ordinary profile calls, so a re-transpile of the output finds explicit grants, suppresses reinsertion under §8.6, and `T(T(x)) == T(x)` holds. Generated `.sol` output carries no policy, which is why restriction 2 exists.
@@ -707,6 +708,8 @@ FHE.allow(<lvalue>, <reader>);   // once per reader, in policy order
 `allowThis` is emitted first and unconditionally. The profile refuses a grant made by a contract that is not itself allowed on the handle, so the contract's own grant MUST precede every other grant on that handle. A policy naming `this` explicitly produces no second call.
 
 A `public` reader renders `FHE.allowPublic(<lvalue>)` and replaces the whole reader list.
+
+A `global` reader renders `FHE.allowGlobal(<lvalue>)` in its list position: every contract may compute on the handle, while the value itself stays undecryptable — a different grant from `public`, which makes the plaintext publicly decryptable. It takes no reader address, so the zero-address guard below does not apply to it, and it does not replace the list. §8.5 is unchanged by it: `allowGlobal` is only ever transcribed from an author's stated `global` reader, never inferred.
 
 **Zero-address guard.** A reader that is not a compile-time constant MUST be emitted as
 
@@ -980,3 +983,4 @@ A case passes when (a) produced diagnostics equal the expected set (order-insens
 - **0.9.0 (2026-08-31)** — §8.1 adds the **initialization guard**, generalizing 0.8.0's fix: re-testing against the reference corpus showed the same unpermissioned zero handle arriving with no syntactic marker at all — `euint64.wrap(bytes32(0))` passed through a call argument into a parameter and then written, or returned from a branch that never assigned it — and whether a handle carries a permission is a runtime property no static provenance rule closes. Every grant inserted by R1–R5 or §8.11 re-application that is not withheld under FHE4014 is now wrapped in `if (FHE.isInitialized(<handle>)) { … }` on the handle the grants are about: one guard per handle per trigger, hoist declarations outside it, the §8.9 zero-address guard nested inside it, suggest-mode fix-its carrying the same guard. The guard is uniform — emitted even where the handle is provably fresh, such as a §5.2 merge's own `FHE.select` result — because a provably-true guard costs a comparison while a wrong freshness proof reintroduces the revert. The direct `.wrap` case keeps 0.8.0's full withholding and FHE4014: a `.wrap` of a non-zero value passes `isInitialized` and still reverts every grant, so a guard alone cannot protect it. §8.6 makes the guard transparent to the dedupe window scan — an else-less `if` on the trusted profile's `isInitialized` contributes its body's statements to the window directly, one level, condition argument uncompared — which is what keeps §1.4 idempotence byte-for-byte on the new guarded shape and prevents a second pass from nesting a second guard. No new diagnostic: skipping a grant on an uninitialized handle is silent, always-correct behavior — the handle holds no value and has no readers to serve, so nothing observable is dropped.
 - **0.10.0 (2026-08-31)** — §8.10 closes a silent-drop gap found against the `fhenix-confidential-contracts` port (issue #104): an event policy declared in an inherited interface was silently ignored at the emit site when the emitting contract also inherits an unresolvable base ahead of the interface in lookup order — the `emit` then resolves to the incomplete-inheritance fallback instead of the event, and R5 did nothing, with no diagnostic. R5 still inserts nothing there (reading the policy through the fallback would be a guess, and refusing every emit of an externally-inherited event would break the common case where the event carries no policy), but it now warns with new code FHE4015 whenever such an `emit` carries an independently encrypted argument: a policy on the true declaration, if any, is not transcribed. A plaintext-only `emit` stays silent, on §8.2's conservative under-grant principle.
 - **0.10.1 (2026-08-31)** — §8.10 states explicitly that a state-variable reader (§8.8 resolution rule 5) is valid on an event-attached policy and renders at the emit site exactly as R4 renders it at a write — the reference implementation refused it with a misworded internal error (issue #105), though the check-time resolution already accepted it, matching rule 5's generic wording. The same paragraph pins the inverse: rule 1's binders do not exist at an emit, so `self` — which binds the location a storage write addresses — does not resolve on an event target and is refused with FHE4005 at the declaration (it previously slipped through check and died as the same internal error).
+- **0.11.0 (2026-08-31)** — §8.8 adds the `global` reader (issue #106): `reader := 'this' | 'global' | 'public' ['if' condition] | path`. `global` states the profile's `allowGlobal` grant — every contract may compute on the handle while the value stays undecryptable — which no reader form could previously express (`public` states the different `allowPublic` grant, public decryptability). It renders `FHE.allowGlobal(<lvalue>)` at every R4 and R5 site of its policy, in list position, with no reader address and therefore no zero-address guard; like `this`, and unlike `public`, it is an ordinary list member and may coexist with other readers. §8.5 is unchanged: `allowGlobal` is transcribed only from an author's stated `global` reader, never inferred.

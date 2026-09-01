@@ -87,8 +87,10 @@ pub enum FheOp {
     /// ACL: transient allowance for an account (spec §8.2, §8.3).
     /// Two arguments: the handle and the account expression.
     AllowTransient,
-    /// ACL: global allowance. Never auto-inserted (spec §8.5); present so
-    /// existing calls can be typed and rendered.
+    /// ACL: global allowance — every contract may compute on the handle
+    /// (spec §8.9 `global` reader). One argument: the handle. Only ever
+    /// inserted where an author-stated reader policy (§8.8) says `global`;
+    /// §8.5 forbids inferring it.
     AllowGlobal,
     /// ACL: allow a named reader (spec §8.9 R4/R5, §8.10). Two arguments:
     /// the handle and the reader's address expression. Only ever inserted
