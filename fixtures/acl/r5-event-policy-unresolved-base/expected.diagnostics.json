@@ -1,0 +1,17 @@
+[
+  {
+    "code": "FHE4015",
+    "severity": "warning",
+    "span": {
+      "file": "input.fsol",
+      "start_byte": 1368,
+      "end_byte": 1412,
+      "start_line": 28,
+      "start_col": 9,
+      "end_line": 28,
+      "end_col": 53
+    },
+    "message": "cannot determine whether event `ConfidentialTransfer`'s declaration carries a `@custom:fhe-allow` reader policy: this contract's inheritance is incomplete (a base or import is not resolvable), so the declaration this `emit` resolves to is not visible to this analysis; if it does carry a policy, its grants are NOT inserted here — write them explicitly before the `emit`, or make every base of this contract resolvable (spec §8.10)",
+    "rule": "§8.10"
+  }
+]
