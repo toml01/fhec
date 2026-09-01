@@ -854,6 +854,16 @@ fn resolve_root<'ast>(
     root_text: &str,
 ) -> Option<ReaderRoot> {
     if root_text == "self" {
+        if matches!(tc.owner, PolicyOwner::Event(_)) {
+            ctx.refuse(
+                span,
+                "`self` binds the target location a storage write addresses; an \
+                 event-attached policy has no write site, so `self` does not resolve there \
+                 (spec §8.8, §8.10) — name a parameter of the event instead"
+                    .to_string(),
+            );
+            return None;
+        }
         return Some(ReaderRoot::SelfRef);
     }
     if let Some(pos) = resolve_key_binder(tc, root_text) {

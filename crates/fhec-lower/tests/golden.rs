@@ -3118,6 +3118,69 @@ fn r5_grants_through_a_completely_resolvable_inherited_interface() {
     );
 }
 
+#[test]
+fn r5_renders_a_state_variable_reader_like_r4_does() {
+    // Issue #105: an event-attached policy may name a state variable (spec
+    // §8.8 resolution rule 5); it renders under the §8.9 zero-address
+    // guard, after the event-parameter readers, in policy order.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   address _observer;\n\
+        \x20   /// @custom:fhe-allow amount: from, to, _observer\n\
+        \x20   event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);\n\
+        \x20   function transfer(address from, address to, euint64 amount) public {\n\
+        \x20       emit ConfidentialTransfer(from, to, amount);\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   address _observer;\n\
+        \x20   /// @custom:fhe-allow amount: from, to, _observer\n\
+        \x20   event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);\n\
+        \x20   function transfer(address from, address to, euint64 amount) public {\n\
+        \x20       if (FHE.isInitialized(amount)) {\n\
+        \x20           FHE.allowThis(amount);\n\
+        \x20           if (from != address(0)) FHE.allow(amount, from);\n\
+        \x20           if (to != address(0)) FHE.allow(amount, to);\n\
+        \x20           if (_observer != address(0)) FHE.allow(amount, _observer);\n\
+        \x20       }\n\
+        \x20       emit ConfidentialTransfer(from, to, amount);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r5_refuses_a_state_variable_reader_shadowed_at_the_emit() {
+    // The §8.9 emit-time twin of source-name resolution applies to R5's
+    // state-variable readers unchanged: a shadowing parameter must refuse
+    // (FHE4006), never silently retarget the grant.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   address _observer;\n\
+        \x20   /// @custom:fhe-allow amount: _observer\n\
+        \x20   event Paid(address indexed to, euint64 amount);\n\
+        \x20   function pay(address _observer, euint64 amount) public {\n\
+        \x20       emit Paid(_observer, amount);\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 1, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        out.lower_diag_codes
+            .iter()
+            .any(|c| c.starts_with("FHE4006")),
+        "diags: {:?}",
+        out.lower_diag_codes
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Re-application and gated disclosure (spec §8.11)
 // ---------------------------------------------------------------------------
