@@ -54,6 +54,10 @@ pub(crate) mod codes {
     /// site would insert is withheld because it would revert rather than
     /// grant (spec §8.1).
     pub(crate) const ACL_GRANT_ON_UNPERMISSIONED_HANDLE: &str = "FHE4014";
+    /// An `emit` whose event declaration is not visible (an unresolvable
+    /// base or import) carries an encrypted argument: a policy on the true
+    /// declaration cannot be seen, so R5 inserts nothing (spec §8.10).
+    pub(crate) const ACL_EVENT_POLICY_INDETERMINATE: &str = "FHE4015";
 }
 
 mod ctx;

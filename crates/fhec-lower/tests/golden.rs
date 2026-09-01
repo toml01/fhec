@@ -3030,6 +3030,94 @@ fn r5_hoists_a_non_identifier_governed_argument() {
     );
 }
 
+#[test]
+fn fhe4015_r5_warns_when_the_event_declaration_is_not_visible() {
+    // Issue #104: the unseen base (`Ownable`) precedes the policy-carrying
+    // interface in C3 lookup order, so the `emit` resolves to the
+    // incomplete-inheritance fallback, not the event. R5 must not read the
+    // policy through the fallback and must not stay silent either.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        import \"@openzeppelin/contracts/access/Ownable.sol\";\n\
+        \n\
+        interface IERC7984 {\n\
+        \x20   /// @custom:fhe-allow amount: from, to\n\
+        \x20   event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);\n\
+        \x20   event PlainMoved(address indexed from, address indexed to);\n\
+        }\n\
+        \n\
+        abstract contract Token is IERC7984, Ownable {\n\
+        \x20   function transfer(address from, address to, euint64 amount) public {\n\
+        \x20       emit ConfidentialTransfer(from, to, amount);\n\
+        \x20   }\n\
+        \x20   function move(address from, address to) public {\n\
+        \x20       emit PlainMoved(from, to);\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    let warnings: Vec<&String> = out
+        .lower_diag_codes
+        .iter()
+        .filter(|c| c.starts_with("FHE4015"))
+        .collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "exactly one FHE4015 — the encrypted emit, never the plaintext one: {:?}",
+        out.lower_diag_codes
+    );
+    let span = &out.lower_diag_spans[out
+        .lower_diag_codes
+        .iter()
+        .position(|c| c.starts_with("FHE4015"))
+        .unwrap()];
+    assert!(
+        span.starts_with("emit ConfidentialTransfer(from, to, amount)"),
+        "span: {span}"
+    );
+    assert_eq!(out.files[0].1, src, "no grants may be inserted on a guess");
+}
+
+#[test]
+fn r5_grants_through_a_completely_resolvable_inherited_interface() {
+    // Regression guard for the fix above: with every base visible, an
+    // interface-declared event policy binds at the emit site exactly as a
+    // same-contract one does, and no FHE4015 fires.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        interface IERC7984 {\n\
+        \x20   /// @custom:fhe-allow amount: from, to\n\
+        \x20   event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);\n\
+        }\n\
+        \n\
+        abstract contract Token is IERC7984 {\n\
+        \x20   function transfer(address from, address to, euint64 amount) public {\n\
+        \x20       emit ConfidentialTransfer(from, to, amount);\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    assert!(
+        !out.lower_diag_codes
+            .iter()
+            .any(|c| c.starts_with("FHE4015")),
+        "a fully visible declaration must not warn: {:?}",
+        out.lower_diag_codes
+    );
+    let text = &out.files[0].1;
+    assert!(text.contains("FHE.allowThis(amount);"), "output: {text}");
+    assert!(
+        text.contains("if (from != address(0)) FHE.allow(amount, from);"),
+        "output: {text}"
+    );
+    assert!(
+        text.contains("if (to != address(0)) FHE.allow(amount, to);"),
+        "output: {text}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Re-application and gated disclosure (spec §8.11)
 // ---------------------------------------------------------------------------

@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// R5 through a COMPLETE inheritance chain (spec §8.10): the emitting
+// contract inherits the policy-carrying interface directly and every base
+// is visible, so the `emit` resolves to the interface's declaration and
+// its policy's grants are inserted — with no FHE4015 warning (that code is
+// only for an emit whose declaration is not visible).
+interface IERC7984 {
+    /// @custom:fhe-allow amount: from, to
+    event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);
+}
+
+abstract contract Token is IERC7984 {
+    function transfer(address from, address to, euint64 amount) public {
+        if (FHE.isInitialized(amount)) {
+            FHE.allowThis(amount);
+            if (from != address(0)) FHE.allow(amount, from);
+            if (to != address(0)) FHE.allow(amount, to);
+        }
+        emit ConfidentialTransfer(from, to, amount);
+    }
+}

@@ -1246,10 +1246,28 @@ fn rule_r5<'a, 'ast>(
         return Ok(());
     };
     let first = path.segments()[0];
-    let Some(fhec_bind::Resolution::Event(eid)) = ctx.unit.resolve_span(first.span) else {
-        return Ok(());
+    let eid = match ctx.unit.resolve_span(first.span) {
+        Some(fhec_bind::Resolution::Event(eid)) => *eid,
+        // The declaration this `emit` names is not visible: the emitting
+        // contract inherits a base the binder cannot see, or the event
+        // comes through an unresolvable import. A policy on the true
+        // declaration cannot be read from here, and per the
+        // `IncompleteInheritance` contract its fallback is not a
+        // resolution — inserting grants from it would be a guess, and R5's
+        // insertion is a positive action, unlike the read-only
+        // classification decisions that may consult it. Warn (FHE4015)
+        // when the emit carries an encrypted argument instead of staying
+        // silent (spec §8.10).
+        Some(fhec_bind::Resolution::Unresolved(_)) | None => {
+            warn_event_policy_indeterminate(ctx, stmt, first.as_str(), call_args, diags);
+            return Ok(());
+        }
+        // A qualified `emit A.Ev(...)` resolves its first segment to the
+        // contract, not the event: not a shape this revision binds
+        // (documented scope decision, like the named-argument arity case
+        // below) — leave untouched rather than guess.
+        Some(_) => return Ok(()),
     };
-    let eid = *eid;
     let event = ctx.unit.event(eid);
     let params = &event.ast.parameters.vars;
     let arg_nodes = crate::expr::call_arg_exprs(call_args);
@@ -1462,6 +1480,42 @@ fn rule_r5<'a, 'ast>(
         outcome.owned_stmts.push(stmt.span);
     }
     Ok(())
+}
+
+/// FHE4015 (spec §8.10): an `emit` that does not resolve to a visible event
+/// declaration carries an encrypted argument. If the invisible declaration
+/// carries a reader policy, its grants are not generated, and nothing else
+/// would say so. When no argument is independently encrypted the emit stays
+/// silent — no policy could govern a plaintext-only position (the same
+/// conservative under-grant §8.2 applies to an `Unknown` callee).
+fn warn_event_policy_indeterminate<'ast>(
+    ctx: &Ctx<'_, 'ast>,
+    stmt: &'ast ast::Stmt<'ast>,
+    event_name: &str,
+    call_args: &'ast ast::CallArgs<'ast>,
+    diags: &RefCell<Vec<fhec_check::Diagnostic>>,
+) {
+    let any_encrypted = crate::expr::call_arg_exprs(call_args)
+        .iter()
+        .any(|e| matches!(ctx.checked.types.get(e.span), Some(Ty::Encrypted(_))));
+    if !any_encrypted {
+        return;
+    }
+    diags.borrow_mut().push(fhec_check::Diagnostic {
+        code: crate::codes::ACL_EVENT_POLICY_INDETERMINATE,
+        severity: Severity::Warning,
+        span: stmt.span,
+        message: format!(
+            "cannot determine whether event `{event_name}`'s declaration carries a \
+             `@custom:fhe-allow` reader policy: this contract's inheritance is incomplete \
+             (a base or import is not resolvable), so the declaration this `emit` resolves \
+             to is not visible to this analysis; if it does carry a policy, its grants are \
+             NOT inserted here — write them explicitly before the `emit`, or make every \
+             base of this contract resolvable (spec §8.10)"
+        ),
+        fixits: Vec::new(),
+        rule: Some("§8.10"),
+    });
 }
 
 /// Renders one event-attached policy's readers at its emit site: a bound
