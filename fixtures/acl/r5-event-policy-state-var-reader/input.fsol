@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// R5 with a state-variable reader (spec §8.8 resolution rule 5, §8.10,
+// issue #105): an event-attached policy may name a state variable — here a
+// compliance observer — and it renders at the emit site exactly as R4
+// renders it at a write: `FHE.allow(<argument>, _observer)` under the
+// §8.9 zero-address guard (an unset observer is skipped, not granted).
+contract ObservedToken {
+    address _observer;
+
+    /// @custom:fhe-allow amount: from, to, _observer
+    event ConfidentialTransfer(address indexed from, address indexed to, euint64 indexed amount);
+
+    function transfer(address from, address to, euint64 amount) public {
+        emit ConfidentialTransfer(from, to, amount);
+    }
+}

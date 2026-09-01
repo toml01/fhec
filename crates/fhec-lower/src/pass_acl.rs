@@ -1399,7 +1399,7 @@ fn rule_r5<'a, 'ast>(
             continue;
         }
         let target_text = &arg_text[i];
-        let rendering = render_event_policy(policy, &args, &arg_text)?;
+        let rendering = render_event_policy(ctx, function, policy, &args, &arg_text)?;
         let calls =
             crate::policy_bind::render_call_lines(ctx, a.node.span, ty, target_text, &rendering)?;
         let missing: Vec<String> = calls
@@ -1518,11 +1518,16 @@ fn warn_event_policy_indeterminate<'ast>(
     });
 }
 
-/// Renders one event-attached policy's readers at its emit site: a bound
-/// key/`self` never arises for an event target (event params have no
-/// mapping/array nesting to key into), and an `EventParam` root renders the
-/// corresponding argument's (possibly hoisted) text.
+/// Renders one event-attached policy's readers at its emit site: an
+/// `EventParam` root renders the corresponding argument's (possibly
+/// hoisted) text, and a `StateVar` root renders exactly as R4 does — the
+/// variable's name, re-confirmed unshadowed at the emitting function's
+/// scope (spec §8.8 resolution rule 5, §8.9). A bound key, `self`, or a
+/// sibling field never arrives here: check-time resolution refuses or
+/// cannot produce them for an event target.
 fn render_event_policy<'ast, 'p>(
+    ctx: &Ctx<'_, 'ast>,
+    function: fhec_bind::FunctionId,
     policy: &fhec_check::Policy,
     args: &[EmitArg<'ast, 'p>],
     arg_text: &[String],
@@ -1549,22 +1554,40 @@ fn render_event_policy<'ast, 'p>(
                 match reader {
                     PolicyReader::This => {}
                     PolicyReader::Path(p) => {
-                        let ReaderRoot::EventParam(name) = &p.root else {
-                            return fail_coded(
-                                p.span,
-                                "an event-attached policy's readers may only name `this` or \
-                                 another parameter of the same event (spec §8.8 resolution \
-                                 rule 4)"
-                                    .to_string(),
-                                "FHE9001",
-                                None,
-                            );
+                        let mut text = match &p.root {
+                            ReaderRoot::EventParam(name) => {
+                                let j = args
+                                    .iter()
+                                    .position(|a| a.param_name.as_deref() == Some(name.as_str()))
+                                    .expect("resolved at check time");
+                                arg_text[j].clone()
+                            }
+                            ReaderRoot::StateVar(vid) => {
+                                let name = ctx
+                                    .unit
+                                    .var(*vid)
+                                    .name
+                                    .map(|n| n.as_str().to_string())
+                                    .ok_or_else(|| lost(p.span, "policy state-variable reader"))?;
+                                crate::policy_bind::confirm_state_var_in_scope(
+                                    ctx, function, *vid, &name, p.span,
+                                )?;
+                                name
+                            }
+                            ReaderRoot::Key(_)
+                            | ReaderRoot::SelfRef
+                            | ReaderRoot::SiblingField(_) => {
+                                return fail_coded(
+                                    p.span,
+                                    "this reader root cannot arise for an event-attached \
+                                     policy: an event target binds no keys, has no `self` \
+                                     location, and has no sibling fields (internal)"
+                                        .to_string(),
+                                    "FHE9001",
+                                    None,
+                                );
+                            }
                         };
-                        let j = args
-                            .iter()
-                            .position(|a| a.param_name.as_deref() == Some(name.as_str()))
-                            .expect("resolved at check time");
-                        let mut text = arg_text[j].clone();
                         for seg in &p.tail {
                             text.push('.');
                             text.push_str(seg);

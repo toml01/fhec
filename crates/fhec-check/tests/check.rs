@@ -4612,6 +4612,52 @@ mod policy_tests {
     }
 
     #[test]
+    fn self_on_an_event_policy_is_rejected() {
+        // `self` binds the location a storage write addresses; an event
+        // target has no write site (spec §8.8, §8.10 — issue #105).
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                /// @custom:fhe-allow amount: self.owner
+                event Paid(address indexed owner, euint64 amount);
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            let codes: Vec<&str> = c.diagnostics.iter().map(|d| d.code).collect();
+            assert_eq!(codes, vec!["FHE4005"], "{:?}", c.diagnostics);
+        });
+    }
+
+    #[test]
+    fn state_variable_reader_on_an_event_policy_resolves() {
+        // Resolution rule 5 is generic: an event-attached policy may name a
+        // state variable (issue #105).
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                address _observer;
+                /// @custom:fhe-allow amount: to, _observer
+                event Paid(address indexed to, euint64 amount);
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+            let amount = c.policies.by_event_param.values().next().expect("policy");
+            match &amount.readers {
+                PolicyReaders::List(list) => {
+                    assert_eq!(list.len(), 2);
+                    assert!(list.iter().any(
+                        |r| matches!(r, PolicyReader::Path(p) if matches!(p.root, ReaderRoot::StateVar(_)))
+                    ));
+                }
+                other => panic!("expected a reader list, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
     fn orphaned_tag_in_a_plain_comment_is_rejected() {
         let src = format!(
             r#"{PREAMBLE}

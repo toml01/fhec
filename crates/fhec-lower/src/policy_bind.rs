@@ -604,7 +604,7 @@ fn strip_written_field(self_text: &str) -> &str {
 /// insertion site's scope, to the same declaration the policy resolved at
 /// its declaration site (spec §1.3: a shadowing local/param in *this*
 /// function must not silently retarget the grant).
-fn confirm_state_var_in_scope(
+pub(crate) fn confirm_state_var_in_scope(
     ctx: &Ctx<'_, '_>,
     function: FunctionId,
     expected: VarId,
