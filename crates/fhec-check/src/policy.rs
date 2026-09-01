@@ -101,6 +101,11 @@ pub enum PolicyReader {
     /// `allowThis` first regardless (spec §8.9); a policy naming `this`
     /// explicitly produces no *second* call for it.
     This,
+    /// `global` — every contract may compute on the handle (the value
+    /// itself stays undecryptable), rendered `FHE.allowGlobal` (spec §8.8,
+    /// §8.9). Unlike `public` it is an ordinary list member and may
+    /// coexist with other readers.
+    Global,
     /// A resolved path.
     Path(ReaderPath),
 }
@@ -747,6 +752,10 @@ fn parse_readers<'ast>(
     for p in parts {
         if p == "this" {
             readers.push(PolicyReader::This);
+            continue;
+        }
+        if p == "global" {
+            readers.push(PolicyReader::Global);
             continue;
         }
         let path = resolve_reader_path(ctx, tc, span, p)?;

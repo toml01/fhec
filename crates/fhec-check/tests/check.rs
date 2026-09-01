@@ -4658,6 +4658,35 @@ mod policy_tests {
     }
 
     #[test]
+    fn global_parses_as_an_ordinary_list_member() {
+        // `global` states the allowGlobal grant and, unlike `public`, may
+        // coexist with other readers (spec §8.8, issue #106).
+        let src = format!(
+            r#"{PREAMBLE}
+            contract C {{
+                /// @custom:fhe-allow amount: this, global, to
+                event Deposited(address indexed to, euint64 amount);
+            }}
+            "#
+        );
+        with_checked(&[("C.fsol", &src)], |c, _| {
+            assert!(c.diagnostics.is_empty(), "{:?}", c.diagnostics);
+            let amount = c.policies.by_event_param.values().next().expect("policy");
+            match &amount.readers {
+                PolicyReaders::List(list) => {
+                    assert_eq!(list.len(), 3);
+                    assert!(matches!(list[0], PolicyReader::This));
+                    assert!(matches!(list[1], PolicyReader::Global));
+                    assert!(
+                        matches!(&list[2], PolicyReader::Path(p) if matches!(&p.root, ReaderRoot::EventParam(n) if n == "to"))
+                    );
+                }
+                other => panic!("expected a reader list, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
     fn orphaned_tag_in_a_plain_comment_is_rejected() {
         let src = format!(
             r#"{PREAMBLE}

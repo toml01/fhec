@@ -190,7 +190,7 @@ fn reapply_triggers(
                 .iter()
                 .filter_map(|r| match r {
                     PolicyReader::Path(pp) => Some(&pp.root),
-                    PolicyReader::This => None,
+                    PolicyReader::This | PolicyReader::Global => None,
                 })
                 .collect(),
         };
@@ -1553,6 +1553,7 @@ fn render_event_policy<'ast, 'p>(
             for reader in list {
                 match reader {
                     PolicyReader::This => {}
+                    PolicyReader::Global => out.push(RenderedReader::Global),
                     PolicyReader::Path(p) => {
                         let mut text = match &p.root {
                             ReaderRoot::EventParam(name) => {

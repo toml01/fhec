@@ -3181,6 +3181,97 @@ fn r5_refuses_a_state_variable_reader_shadowed_at_the_emit() {
     );
 }
 
+#[test]
+fn r4_global_reader_renders_allow_global_without_a_zero_guard() {
+    // Issue #106: `global` states the profile's allowGlobal grant — every
+    // contract may compute on the handle; there is no reader address to
+    // guard against zero.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow _total: global\n\
+        \x20   euint64 _total;\n\
+        \x20   function set(euint64 v) public {\n\
+        \x20       _total = v;\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow _total: global\n\
+        \x20   euint64 _total;\n\
+        \x20   function set(euint64 v) public {\n\
+        \x20       _total = v;\n\
+        \x20       if (FHE.isInitialized(_total)) {\n\
+        \x20           FHE.allowThis(_total);\n\
+        \x20           FHE.allowGlobal(_total);\n\
+        \x20       }\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r5_global_reader_coexists_with_named_readers_in_list_order() {
+    // Issue #106: unlike `public`, `global` is an ordinary list member;
+    // `this` still produces no second call, and the named reader keeps its
+    // §8.9 zero-address guard.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow amount: this, global, from\n\
+        \x20   event Deposited(address indexed from, euint64 amount);\n\
+        \x20   function deposit(address from, euint64 v) public {\n\
+        \x20       emit Deposited(from, v);\n\
+        \x20   }\n\
+        }\n";
+    let expected = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow amount: this, global, from\n\
+        \x20   event Deposited(address indexed from, euint64 amount);\n\
+        \x20   function deposit(address from, euint64 v) public {\n\
+        \x20       if (FHE.isInitialized(v)) {\n\
+        \x20           FHE.allowThis(v);\n\
+        \x20           FHE.allowGlobal(v);\n\
+        \x20           if (from != address(0)) FHE.allow(v, from);\n\
+        \x20       }\n\
+        \x20       emit Deposited(from, v);\n\
+        \x20   }\n\
+        }\n";
+    golden(src, expected);
+}
+
+#[test]
+fn r4_author_written_allow_global_suppresses_the_policy_grant() {
+    // §8.6 dedupe applies to a `global` reader unchanged: an equivalent
+    // author-written call in the window suppresses the insertion.
+    let src = "pragma solidity ^0.8.25;\n\
+        import \"@fhenixprotocol/cofhe-contracts/FHE.sol\";\n\
+        \n\
+        contract C {\n\
+        \x20   /// @custom:fhe-allow _total: global\n\
+        \x20   euint64 _total;\n\
+        \x20   function set(euint64 v) public {\n\
+        \x20       _total = v;\n\
+        \x20       FHE.allowThis(_total);\n\
+        \x20       FHE.allowGlobal(_total);\n\
+        \x20   }\n\
+        }\n";
+    let out = transpile(&[("t.fsol", src)]);
+    assert_eq!(out.failed_files, 0, "diags: {:?}", out.lower_diag_codes);
+    let text = &out.files[0].1;
+    assert_eq!(
+        text.matches("FHE.allowGlobal(_total)").count(),
+        1,
+        "the author's call must suppress the policy's: {text}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Re-application and gated disclosure (spec §8.11)
 // ---------------------------------------------------------------------------

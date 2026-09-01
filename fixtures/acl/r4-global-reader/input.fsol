@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.25;
+
+import "@fhenixprotocol/cofhe-contracts/FHE.sol";
+
+// R4 with a `global` reader (spec §8.8, §8.9, issue #106): the author
+// states the profile's `allowGlobal` grant — every contract may compute on
+// the handle, while the value stays undecryptable. It renders with no
+// reader address, so no zero-address guard wraps it (only the §8.1
+// initialization guard does).
+contract GlobalTotal {
+    /// @custom:fhe-allow _total: global
+    euint64 _total;
+
+    function set(euint64 v) public {
+        _total = v;
+    }
+}

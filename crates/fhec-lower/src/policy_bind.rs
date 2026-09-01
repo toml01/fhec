@@ -306,13 +306,17 @@ fn is_bindable_storage_pointer(ctx: &Ctx<'_, '_>, function: FunctionId, var: Var
 // Rendering a resolved reader to concrete text (spec §8.9)
 // ---------------------------------------------------------------------------
 
-/// One reader ready to render: `None` for `this` (R4/R5 emit its
+/// One reader ready to render (`this` never arrives here: R4/R5 emit its
 /// unconditional `allowThis` separately and unconditionally).
 pub(crate) enum RenderedReader {
+    /// A named address expression, granted with `FHE.allow`.
     Named {
         text: String,
         is_const_nonzero: bool,
     },
+    /// The `global` reader, granted with `FHE.allowGlobal` — no reader
+    /// address, so no §8.9 zero-address guard applies (spec §8.9).
+    Global,
 }
 
 // ---------------------------------------------------------------------------
@@ -352,18 +356,28 @@ enum ReaderSetId {
     /// No reader beyond the contract itself.
     ThisOnly,
     Public,
-    Named(Vec<ReaderRoot>),
+    Named(Vec<NamedReader>),
+}
+
+/// One §8.12-comparable member of an explicit reader list beyond `this`.
+#[derive(PartialEq)]
+enum NamedReader {
+    /// The `global` reader (every contract).
+    Global,
+    /// A resolved path root.
+    Root(ReaderRoot),
 }
 
 fn reader_set_id(p: &Policy) -> ReaderSetId {
     match &p.readers {
         PolicyReaders::Public { .. } => ReaderSetId::Public,
         PolicyReaders::List(list) => {
-            let named: Vec<ReaderRoot> = list
+            let named: Vec<NamedReader> = list
                 .iter()
                 .filter_map(|r| match r {
                     PolicyReader::This => None,
-                    PolicyReader::Path(p) => Some(p.root.clone()),
+                    PolicyReader::Global => Some(NamedReader::Global),
+                    PolicyReader::Path(p) => Some(NamedReader::Root(p.root.clone())),
                 })
                 .collect();
             if named.is_empty() {
@@ -417,6 +431,7 @@ pub(crate) fn render_readers(
             for reader in list {
                 match reader {
                     PolicyReader::This => {}
+                    PolicyReader::Global => out.push(RenderedReader::Global),
                     PolicyReader::Path(path) => {
                         let (text, is_const) =
                             render_path(ctx, function, self_text, key_texts, path)?;
@@ -502,29 +517,50 @@ pub(crate) fn render_call_lines(
                 .acl_fn_name(fhec_ir::FheOp::Allow)
                 .unwrap_or_default();
             for r in readers {
-                let RenderedReader::Named {
-                    text: reader_text,
-                    is_const_nonzero,
-                } = r;
-                let call = ctx
-                    .profile
-                    .render_call(
-                        fhec_ir::FheOp::Allow,
-                        &[value_ty],
-                        &[target_text, reader_text],
-                    )
-                    .map_err(|e| internal(target_span, e))?;
-                let text = if *is_const_nonzero {
-                    format!("{call};")
-                } else {
-                    format!("if ({reader_text} != address(0)) {call};")
-                };
-                out.push(CallLine {
-                    fn_name: name.clone(),
-                    arg0: target_text.to_string(),
-                    arg1: Some(reader_text.clone()),
-                    text,
-                });
+                match r {
+                    RenderedReader::Named {
+                        text: reader_text,
+                        is_const_nonzero,
+                    } => {
+                        let call = ctx
+                            .profile
+                            .render_call(
+                                fhec_ir::FheOp::Allow,
+                                &[value_ty],
+                                &[target_text, reader_text],
+                            )
+                            .map_err(|e| internal(target_span, e))?;
+                        let text = if *is_const_nonzero {
+                            format!("{call};")
+                        } else {
+                            format!("if ({reader_text} != address(0)) {call};")
+                        };
+                        out.push(CallLine {
+                            fn_name: name.clone(),
+                            arg0: target_text.to_string(),
+                            arg1: Some(reader_text.clone()),
+                            text,
+                        });
+                    }
+                    RenderedReader::Global => {
+                        // No reader address exists, so the §8.9
+                        // zero-address guard does not apply.
+                        let global_name = ctx
+                            .profile
+                            .acl_fn_name(fhec_ir::FheOp::AllowGlobal)
+                            .unwrap_or_default();
+                        let call = ctx
+                            .profile
+                            .render_call(fhec_ir::FheOp::AllowGlobal, &[value_ty], &[target_text])
+                            .map_err(|e| internal(target_span, e))?;
+                        out.push(CallLine {
+                            fn_name: global_name,
+                            arg0: target_text.to_string(),
+                            arg1: None,
+                            text: format!("{call};"),
+                        });
+                    }
+                }
             }
         }
     }
